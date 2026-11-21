@@ -1,0 +1,15 @@
+# 构建产物
+build/
+*.elf
+*.nacp
+*.o
+
+# 依赖包解压残留
+deps/drl/
+deps/stb/
+*.tar.gz
+
+# 内部开发脚本
+replace_*.py
+preview_*.py
+dl.tmp

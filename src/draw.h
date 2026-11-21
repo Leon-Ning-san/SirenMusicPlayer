@@ -1,0 +1,47 @@
+#pragma once
+#include <stdint.h>
+#include <stddef.h>
+
+typedef struct {
+    int w, h;
+    uint32_t* px; // RGBA8888, memory bytes: R,G,B,A
+} Canvas;
+
+#define COL(r,g,b,a) (((uint32_t)(a)<<24)|((uint32_t)(b)<<16)|((uint32_t)(g)<<8)|(uint32_t)(r))
+
+Canvas* canvas_new(int w, int h);
+void canvas_free(Canvas* c);
+void canvas_clear(Canvas* c, uint32_t col);
+void fill_rect(Canvas* c, int x, int y, int w, int h, uint32_t col);
+void fill_rect_a(Canvas* c, int x, int y, int w, int h, uint32_t col, uint8_t alpha);
+void hline(Canvas* c, int x, int y, int len, uint32_t col);
+void vline(Canvas* c, int x, int y, int len, uint32_t col);
+void fill_tri(Canvas* c, int x0, int y0, int x1, int y1, int x2, int y2, uint32_t col);
+// blend RGBA src onto canvas
+void blit_rgba(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, int sh);
+// blend with rounded-corner mask (radius = corner)
+void blit_rgba_round(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, int sh, int corner);
+// 带整体透明度的 blit（a=0 完全透明，255 完全不透明），用于交叉淡化
+void blit_rgba_a(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, int sh, uint8_t a);
+void blit_rgba_round_a(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, int sh, int corner, uint8_t a);
+// bilinear resample RGBA
+void resample_bilinear(const uint32_t* src, int sw, int sh, uint32_t* dst, int dw, int dh);
+// horizontal+vertical box blur in place (RGBA, alpha ignored)
+void box_blur(uint32_t* img, int w, int h, int radius, int passes);
+// multiply rgb by factor, keep alpha
+void scale_rgb(uint32_t* img, int n, float f);
+
+// ---- text ----
+typedef struct Font Font;
+Font* font_load(const void* data, size_t len);
+void font_free(Font* f);
+int  text_width(Font* f, float px, const char* utf8);
+// draw single line, top-anchored at y
+void draw_text(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8);
+// centered horizontally in [x0,x1]
+void draw_text_centered(Canvas* c, Font* f, float px, int x0, int x1, int y, uint32_t col, const char* utf8);
+// right-aligned at x1
+void draw_text_right(Canvas* c, Font* f, float px, int x1, int y, uint32_t col, const char* utf8);
+// truncate with ellipsis if wider than max_w; returns 1 if truncated
+int  draw_text_max(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8, int max_w);
+int  text_width_max(Font* f, float px, const char* utf8, int max_w);

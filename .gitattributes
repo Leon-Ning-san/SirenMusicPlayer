@@ -1,0 +1,8 @@
+* text=auto
+Makefile eol=lf
+*.S eol=lf
+*.s eol=lf
+*.c eol=lf
+*.h eol=lf
+*.py eol=lf
+*.md eol=lf
