@@ -1,6 +1,7 @@
 #include "draw.h"
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 static int in_round_mask(int px, int py, int sw, int sh, int r);
 
@@ -123,31 +124,38 @@ void blit_rgba_a(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, int s
     }
 }
 
-void blit_rgba_round_a(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, int sh, int corner, uint8_t a) {
-    for (int j = 0; j < sh; j++) {
-        int ty = dy + j;
-        if (ty < 0 || ty >= dst->h) continue;
-        for (int i = 0; i < sw; i++) {
-            if (!in_round_mask(i, j, sw, sh, corner)) continue;
-            int tx = dx + i;
-            if (tx < 0 || tx >= dst->w) continue;
-            uint32_t* d = &dst->px[(size_t)ty * dst->w + tx];
-            *d = blend_px_a(*d, src[(size_t)j * sw + i], a);
-        }
-    }
-}
-
-static int in_round_mask(int px, int py, int sw, int sh, int r) {
-    if (r <= 0) return 1;
-    if (px >= r && px < sw - r) return 1;
-    if (py >= r && py < sh - r) return 1;
+// 圆角覆盖度蒙版（0..255 抗锯齿）：内部 255，角部按距离计算覆盖度
+static int round_mask_cov(int px, int py, int sw, int sh, int r) {
+    if (r <= 0) return 255;
+    if (px >= r && px < sw - r) return 255;
+    if (py >= r && py < sh - r) return 255;
     int cx, cy;
     if (px < r && py < r) { cx = r; cy = r; }
     else if (px >= sw - r && py < r) { cx = sw - r; cy = r; }
     else if (px < r && py >= sh - r) { cx = r; cy = sh - r; }
     else { cx = sw - r; cy = sh - r; }
-    int ddx = px - cx, ddy = py - cy;
-    return ddx * ddx + ddy * ddy <= r * r;
+    float ddx = (float)(px - cx), ddy = (float)(py - cy);
+    float d = sqrtf(ddx * ddx + ddy * ddy);
+    float cov = (float)r - d + 0.5f;
+    if (cov <= 0) return 0;
+    if (cov > 1) cov = 1;
+    return (int)(cov * 255.0f + 0.5f);
+}
+
+void blit_rgba_round_a(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, int sh, int corner, uint8_t a) {
+    for (int j = 0; j < sh; j++) {
+        int ty = dy + j;
+        if (ty < 0 || ty >= dst->h) continue;
+        for (int i = 0; i < sw; i++) {
+            int cov = round_mask_cov(i, j, sw, sh, corner);
+            if (cov == 0) continue;
+            int tx = dx + i;
+            if (tx < 0 || tx >= dst->w) continue;
+            uint32_t* d = &dst->px[(size_t)ty * dst->w + tx];
+            uint8_t ea = (uint8_t)((cov * a) / 255);
+            *d = blend_px_a(*d, src[(size_t)j * sw + i], ea);
+        }
+    }
 }
 
 void blit_rgba_round(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, int sh, int corner) {
@@ -155,10 +163,17 @@ void blit_rgba_round(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, i
         int ty = dy + j;
         if (ty < 0 || ty >= dst->h) continue;
         for (int i = 0; i < sw; i++) {
-            if (!in_round_mask(i, j, sw, sh, corner)) continue;
+            int cov = round_mask_cov(i, j, sw, sh, corner);
+            if (cov == 0) continue;
             int tx = dx + i;
             if (tx < 0 || tx >= dst->w) continue;
-            dst->px[(size_t)ty * dst->w + tx] = blend_px(dst->px[(size_t)ty * dst->w + tx], src[(size_t)j * sw + i]);
+            uint32_t* d = &dst->px[(size_t)ty * dst->w + tx];
+            uint32_t s = src[(size_t)j * sw + i];
+            if (cov >= 255) {
+                *d = blend_px(*d, s);
+            } else {
+                *d = blend_px_a(*d, s, (uint8_t)cov);
+            }
         }
     }
 }
@@ -247,5 +262,100 @@ void scale_rgb(uint32_t* img, int n, float f) {
         uint32_t g = (uint32_t)(((c >> 8) & 0xFF) * f);
         uint32_t b = (uint32_t)(((c >> 16) & 0xFF) * f);
         img[i] = 0xFF000000u | (r > 255 ? 255 : r) | ((g > 255 ? 255 : g) << 8) | ((b > 255 ? 255 : b) << 16);
+    }
+}
+
+// ================= 抗锯齿原语 =================
+// 单像素混合（col 为不带 alpha 的 RGB，a 为覆盖度 0..255）
+static inline void px_blend(Canvas* c, int x, int y, uint32_t col, uint8_t a) {
+    if (x < 0 || y < 0 || x >= c->w || y >= c->h) return;
+    if (a >= 255) {
+        c->px[(size_t)y * c->w + x] = col | 0xFF000000u;
+        return;
+    }
+    if (a == 0) return;
+    uint32_t sc = (col & 0x00FFFFFF) | ((uint32_t)a << 24);
+    uint32_t* d = &c->px[(size_t)y * c->w + x];
+    *d = blend_px(*d, sc);
+}
+
+void fill_round_rect_aa(Canvas* c, int x, int y, int w, int h, int r, uint32_t col) {
+    if (w <= 0 || h <= 0) return;
+    if (r < 1) { fill_rect(c, x, y, w, h, col); return; }
+    if (r > w / 2) r = w / 2;
+    if (r > h / 2) r = h / 2;
+    // 内部与直边走快速路径（不透明）
+    fill_rect(c, x + r, y, w - 2 * r, h, col);
+    fill_rect(c, x, y + r, r, h - 2 * r, col);
+    fill_rect(c, x + w - r, y + r, r, h - 2 * r, col);
+    // 四个角按覆盖度抗锯齿
+    for (int j = 0; j < r; j++) {
+        for (int i = 0; i < r; i++) {
+            float dx = (float)(r - i) - 0.5f;
+            float dy = (float)(r - j) - 0.5f;
+            float d = sqrtf(dx * dx + dy * dy);
+            float cov = (float)r - d + 0.5f;
+            if (cov <= 0) continue;
+            if (cov > 1) cov = 1;
+            uint8_t a = (uint8_t)(cov * 255.0f + 0.5f);
+            px_blend(c, x + i,         y + j,         col, a);   // 左上
+            px_blend(c, x + w - 1 - i, y + j,         col, a);   // 右上
+            px_blend(c, x + i,         y + h - 1 - j, col, a);   // 左下
+            px_blend(c, x + w - 1 - i, y + h - 1 - j, col, a);   // 右下
+        }
+    }
+}
+
+void fill_ellipse_aa(Canvas* c, int cx, int cy, int rx, int ry, uint32_t col) {
+    if (rx < 1 || ry < 1) return;
+    float minr = (rx < ry ? rx : ry);
+    for (int j = -ry; j <= ry; j++) {
+        for (int i = -rx; i <= rx; i++) {
+            float d = sqrtf((float)(i * i) / (float)(rx * rx) +
+                            (float)(j * j) / (float)(ry * ry));
+            float cov = minr * (1.0f - d) + 0.5f;
+            if (cov <= 0) continue;
+            if (cov > 1) cov = 1;
+            px_blend(c, cx + i, cy + j, col, (uint8_t)(cov * 255.0f + 0.5f));
+        }
+    }
+}
+
+void fill_circle_a(Canvas* c, int cx, int cy, int r, uint32_t col, uint8_t a) {
+    if (r < 1 || a == 0) return;
+    for (int j = -r; j <= r; j++) {
+        int y = cy + j;
+        if (y < 0 || y >= c->h) continue;
+        for (int i = -r; i <= r; i++) {
+            int x = cx + i;
+            if (x < 0 || x >= c->w) continue;
+            float d = sqrtf((float)(i * i + j * j));
+            float cov = (float)r - d + 0.5f;
+            if (cov <= 0) continue;
+            if (cov > 1) cov = 1;
+            uint8_t aa = (uint8_t)(cov * (a / 255.0f) * 255.0f + 0.5f);
+            if (aa == 0) continue;
+            px_blend(c, x, y, col, aa);
+        }
+    }
+}
+
+void fill_circle_clip_a(Canvas* c, int cx, int cy, int r, uint32_t col, uint8_t a,
+                        int clipx, int clipy, int clipw, int cliph) {
+    if (r < 1 || a == 0 || clipw <= 0 || cliph <= 0) return;
+    int x0 = cx - r > clipx ? cx - r : clipx;
+    int y0 = cy - r > clipy ? cy - r : clipy;
+    int x1 = cx + r < clipx + clipw - 1 ? cx + r : clipx + clipw - 1;
+    int y1 = cy + r < clipy + cliph - 1 ? cy + r : clipy + cliph - 1;
+    for (int j = y0; j <= y1; j++) {
+        for (int i = x0; i <= x1; i++) {
+            float d = sqrtf((float)((i - cx) * (i - cx) + (j - cy) * (j - cy)));
+            float cov = (float)r - d + 0.5f;
+            if (cov <= 0) continue;
+            if (cov > 1) cov = 1;
+            uint8_t aa = (uint8_t)(cov * (a / 255.0f) * 255.0f + 0.5f);
+            if (aa == 0) continue;
+            px_blend(c, i, j, col, aa);
+        }
     }
 }
