@@ -7,7 +7,9 @@
 #include "stb_truetype.h"
 
 #define GLYPH_CACHE_PER_SIZE 768
-#define MAX_BUCKETS 10
+// 字号缓存桶上限：应用横屏+竖屏合计用到 15+ 种字号，
+// 上限过低会导致 glyph_get 返回 NULL、文字静默丢失（竖屏字体错误）。
+#define MAX_BUCKETS 48
 
 typedef struct {
     uint32_t cp;
