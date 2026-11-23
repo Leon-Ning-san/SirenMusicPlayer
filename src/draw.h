@@ -34,8 +34,12 @@ void scale_rgb(uint32_t* img, int n, float f);
 // ---- 抗锯齿原语（消除 UI 锯齿） ----
 // 抗锯齿圆角矩形填充（内部快速路径，边缘按覆盖度混合）
 void fill_round_rect_aa(Canvas* c, int x, int y, int w, int h, int r, uint32_t col);
+// 抗锯齿圆角矩形 + 整体透明度（Material 半透明卡片）
+void fill_round_rect_aa_a(Canvas* c, int x, int y, int w, int h, int r, uint32_t col, uint8_t alpha);
 // 抗锯齿椭圆填充
 void fill_ellipse_aa(Canvas* c, int cx, int cy, int rx, int ry, uint32_t col);
+// 抗锯齿三角形填充（播放/切歌等图标）
+void fill_tri_aa(Canvas* c, int x0, int y0, int x1, int y1, int x2, int y2, uint32_t col);
 // 抗锯齿圆形（带透明度），用于 Material 水波纹 / 触点反馈
 void fill_circle_a(Canvas* c, int cx, int cy, int r, uint32_t col, uint8_t a);
 // 抗锯齿圆形（带透明度 + 矩形裁剪）：水波纹只在卡片范围内扩散

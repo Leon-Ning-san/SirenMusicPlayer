@@ -149,6 +149,7 @@ static int loading = 0;
 
 static Font* font = NULL;
 static Canvas* screen = NULL;
+static Canvas* list_bg = NULL;   // 列表页渐变背景缓存（半透明卡片透出）
 
 // 播放页资源
 static TrackMeta meta;
@@ -191,7 +192,8 @@ static double show_pos = 0;
 // Material 水波纹
 static float ripple_t = 1.0f;      // >=1 表示无水波纹
 static int ripple_x, ripple_y;
-static int ripple_cx0, ripple_cy0, ripple_cw, ripple_ch;
+static int ripple_row = -1;        // 触发行（绘制时按滚动动画位置实时换算，滚动中不漂移）
+static int ripple_cw, ripple_ch;
 
 // 播放页交互布局（draw_player 填充，handle_touch_player 使用）
 static int ui_px0, ui_px1, ui_py;      // 进度条
@@ -258,6 +260,8 @@ static void apply_orientation(int o) {
     touch_fx_alpha = 0;
     touch_drag = 0;
     touch_press_idx = -1;
+    // 背景（模糊封面 / 渐变）随尺寸变化重建
+    if (list_bg) { canvas_free(list_bg); list_bg = NULL; }
     // 竖/横切换后立即重建模糊背景，避免黑屏
     if (!bg && cover_ready && cover) build_bg_from(cover, 380, 380);
 }
@@ -383,39 +387,30 @@ static void hsv2rgb(float h, float s, float v, uint8_t* r, uint8_t* g, uint8_t* 
     *r = (uint8_t)(rr * 255); *g = (uint8_t)(gg * 255); *b = (uint8_t)(bb * 255);
 }
 
-static void draw_ellipse(Canvas* c, int cx, int cy, int rx, int ry, uint32_t col) {
-    if (rx < 1 || ry < 1) return;
-    for (int dy = -ry; dy <= ry; dy++) {
-        double t = (double)dy / (double)ry;
-        int dx = (int)(rx * sqrt(1.0 - t * t));
-        hline(c, cx - dx, cy + dy, dx * 2 + 1, col);
-    }
-}
-
 static void draw_note(Canvas* c, int x, int y, int s, uint32_t col) {
     int r = s / 7;
     if (r < 1) return;
-    draw_ellipse(c, x + s * 3 / 10, y + s * 4 / 5, r, (int)(r * 0.8), col);
-    draw_ellipse(c, x + s * 7 / 10, y + s * 3 / 4, r, (int)(r * 0.8), col);
+    fill_ellipse_aa(c, x + s * 3 / 10, y + s * 4 / 5, r, (int)(r * 0.8), col);
+    fill_ellipse_aa(c, x + s * 7 / 10, y + s * 3 / 4, r, (int)(r * 0.8), col);
     fill_rect(c, x + s * 3 / 10 + r - 2, y + s / 6, s / 16 + 2, s * 4 / 5 - s / 6, col);
     fill_rect(c, x + s * 7 / 10 + r - 2, y + s / 12, s / 16 + 2, s * 3 / 4 - s / 12, col);
-    fill_tri(c, x + s * 3 / 10 + r - 4, y + s / 6 - 2, x + s * 7 / 10 + r - 4, y + s / 12 - 2,
-             x + s * 7 / 10 + r - 4, y + s / 12 + s / 9, col);
-    fill_tri(c, x + s * 3 / 10 + r - 4, y + s / 6 - 2, x + s * 7 / 10 + r - 4, y + s / 12 + s / 9,
-             x + s * 3 / 10 + r - 4, y + s / 6 + s / 9, col);
+    fill_tri_aa(c, x + s * 3 / 10 + r - 4, y + s / 6 - 2, x + s * 7 / 10 + r - 4, y + s / 12 - 2,
+                x + s * 7 / 10 + r - 4, y + s / 12 + s / 9, col);
+    fill_tri_aa(c, x + s * 3 / 10 + r - 4, y + s / 6 - 2, x + s * 7 / 10 + r - 4, y + s / 12 + s / 9,
+                x + s * 3 / 10 + r - 4, y + s / 6 + s / 9, col);
 }
 
 // ---------- 图标 ----------
 static void icon_prev(Canvas* c, int x, int y, int s, uint32_t col) {
-    fill_tri(c, x + s * 3 / 4, y, x + s * 3 / 4, y + s, x + s / 8, y + s / 2, col);
+    fill_tri_aa(c, x + s * 3 / 4, y, x + s * 3 / 4, y + s, x + s / 8, y + s / 2, col);
     fill_rect(c, x, y, s / 8, s, col);
 }
 static void icon_next(Canvas* c, int x, int y, int s, uint32_t col) {
-    fill_tri(c, x + s / 4, y, x + s * 7 / 8, y + s / 2, x + s / 4, y + s, col);
+    fill_tri_aa(c, x + s / 4, y, x + s * 7 / 8, y + s / 2, x + s / 4, y + s, col);
     fill_rect(c, x + s * 7 / 8, y, s / 8, s, col);
 }
 static void icon_play(Canvas* c, int x, int y, int s, uint32_t col) {
-    fill_tri(c, x, y, x, y + s, x + s, y + s / 2, col);
+    fill_tri_aa(c, x, y, x, y + s, x + s, y + s / 2, col);
 }
 static void icon_pause(Canvas* c, int x, int y, int s, uint32_t col) {
     fill_rect(c, x, y, s * 3 / 10, s, col);
@@ -423,9 +418,9 @@ static void icon_pause(Canvas* c, int x, int y, int s, uint32_t col) {
 }
 static void icon_heart(Canvas* c, int x, int y, int s, uint32_t col) {
     int rx = s / 4;
-    draw_ellipse(c, x + s * 3 / 10, y + s * 3 / 10, rx, rx, col);
-    draw_ellipse(c, x + s * 7 / 10, y + s * 3 / 10, rx, rx, col);
-    fill_tri(c, x + s / 10, y + s * 2 / 5, x + s * 9 / 10, y + s * 2 / 5, x + s / 2, y + s, col);
+    fill_ellipse_aa(c, x + s * 3 / 10, y + s * 3 / 10, rx, rx, col);
+    fill_ellipse_aa(c, x + s * 7 / 10, y + s * 3 / 10, rx, rx, col);
+    fill_tri_aa(c, x + s / 10, y + s * 2 / 5, x + s * 9 / 10, y + s * 2 / 5, x + s / 2, y + s, col);
 }
 static void icon_speaker(Canvas* c, int x, int y, int s, uint32_t col) {
     fill_rect(c, x, y + s / 3, s / 4, s / 3, col);
@@ -812,8 +807,7 @@ static void handle_touch_list(TouchInfo* t) {
             // Material 水波纹：从触点在被按的卡片内扩散
             ripple_x = x;
             ripple_y = y;
-            ripple_cx0 = L_M;
-            ripple_cy0 = L_TOP + (pos - scroll) * L_ROW + 6;
+            ripple_row = pos;
             ripple_cw = cardw;
             ripple_ch = L_ROW - 12;
             ripple_t = 0;
@@ -878,19 +872,50 @@ static void draw_touch_feedback(void) {
 
 // Material 水波纹：从触点在被按卡片内扩散并淡出
 static void draw_ripples(void) {
-    if (ripple_t >= 1) return;
+    if (ripple_t >= 1 || ripple_row < 0) return;
     float t = ease_out(ripple_t);
     int rmax = (ripple_cw > ripple_ch ? ripple_cw : ripple_ch) * 6 / 5 + 40;
     int r = (int)(rmax * t) + 10;
     uint8_t a = (uint8_t)(95 * (1.0f - ripple_t));
-    if (a > 0)
+    if (a > 0) {
+        // 裁剪框按当前滚动动画位置实时换算，滚动时水波纹跟随卡片
+        int cy0 = L_TOP + (int)((ripple_row - anim_scroll) * L_ROW) + 6;
         fill_circle_clip_a(screen, ripple_x, ripple_y, r, C_PRIMARY, a,
-                           ripple_cx0, ripple_cy0, ripple_cw, ripple_ch);
+                           L_M, cy0, ripple_cw, ripple_ch);
+    }
+}
+
+// Material 渐变壁纸（缓存一次）：半透明卡片透出背景产生层次感
+static void build_list_bg(void) {
+    if (list_bg && list_bg->w == SCR_W && list_bg->h == SCR_H) return;
+    if (list_bg) { canvas_free(list_bg); list_bg = NULL; }
+    list_bg = canvas_new(SCR_W, SCR_H);
+    uint32_t bgr = C_BG & 0xFF, bgg = (C_BG >> 8) & 0xFF, bgb = (C_BG >> 16) & 0xFF;
+    uint32_t sfr = C_SURFACE & 0xFF, sfg = (C_SURFACE >> 8) & 0xFF, sfb = (C_SURFACE >> 16) & 0xFF;
+    uint32_t prr = C_PRIMARY & 0xFF, prg = (C_PRIMARY >> 8) & 0xFF, prb = (C_PRIMARY >> 16) & 0xFF;
+    for (int y = 0; y < SCR_H; y++) {
+        float t = (float)y / (SCR_H - 1);
+        uint32_t r = (uint32_t)(bgr + (sfr - bgr) * t);
+        uint32_t g = (uint32_t)(bgg + (sfg - bgg) * t);
+        uint32_t b = (uint32_t)(bgb + (sfb - bgb) * t);
+        hline(list_bg, 0, y, SCR_W, COL((uint8_t)r, (uint8_t)g, (uint8_t)b, 255));
+    }
+    // 大面积低透明度主色光斑，Material 壁纸质感
+    fill_circle_a(list_bg, SCR_W * 4 / 5, L_TOP + 60, 320, COL((uint8_t)prr, (uint8_t)prg, (uint8_t)prb, 255), 13);
+    fill_circle_a(list_bg, SCR_W / 6, SCR_H - L_BAR - 140, 260, COL((uint8_t)prr, (uint8_t)prg, (uint8_t)prb, 255), 10);
 }
 
 // ---------- 列表页（Material 大卡片单列 + 底部播放条） ----------
 static void draw_list(void) {
-    canvas_clear(screen, C_BG);
+    // 背景：正在播放时用模糊封面加深色叠加，否则用缓存的 Material 渐变壁纸；
+    // 卡片半透明后背景会透出，形成层次感
+    if (bg) {
+        memcpy(screen->px, bg->px, (size_t)SCR_W * SCR_H * 4);
+        fill_rect_a(screen, 0, 0, SCR_W, SCR_H, C_BG, 165);
+    } else {
+        build_list_bg();
+        memcpy(screen->px, list_bg->px, (size_t)SCR_W * SCR_H * 4);
+    }
     ensure_visible_thumbs();
 
     int rows = rows_visible();
@@ -911,7 +936,7 @@ static void draw_list(void) {
         return;
     }
 
-    // 歌曲大卡片列表
+    // 第一遍：卡片与内容（半透明，透出背景）
     int i0 = (int)floorf(anim_scroll) - 1;
     if (i0 < 0) i0 = 0;
     for (int i = i0; i < rows + i0 + 2; i++) {
@@ -926,16 +951,13 @@ static void draw_list(void) {
         int is_sel = (idx == sel);
         int is_press = (touch_drag && touch_press_idx == i);
 
-        // 选中 / 播放：主色描边（外扩 3px），一目了然
-        if (is_sel || is_playing)
-            fill_round_rect_aa(screen, L_M - 3, cy0 - 3, cardw + 6, ch + 6, 22, C_PRIMARY);
-
-        // Google Material：统一卡片底色，按压/选中/播放分别提亮或着色
+        // Google Material：半透明卡片底色，按压/选中/播放分别提亮或着色
         uint32_t card = C_CARD;
-        if (is_playing) card = C_PLAYBG;
-        else if (is_press) card = C_SURF2;
-        else if (is_sel) card = C_CARD2;
-        fill_round_rect_aa(screen, L_M, cy0, cardw, ch, 20, card);
+        uint8_t card_a = 205;
+        if (is_playing) { card = C_PLAYBG; card_a = 232; }
+        else if (is_press) { card = C_SURF2; card_a = 240; }
+        else if (is_sel) { card = C_CARD2; card_a = 226; }
+        fill_round_rect_aa_a(screen, L_M, cy0, cardw, ch, 20, card, card_a);
 
         // 大封面缩略图（抗锯齿圆角）
         int tsize = ch - 20;
@@ -968,11 +990,21 @@ static void draw_list(void) {
         }
     }
 
+    // 第二遍：选中 / 播放描边（最后绘制，避免下滑时被相邻卡片覆盖——图层修正）
+    for (int i = i0; i < rows + i0 + 2; i++) {
+        int idx = vis_at(i);
+        if (idx < 0) break;
+        if (idx != sel && idx != playing_idx) continue;
+        int y = L_TOP + (int)((i - anim_scroll) * L_ROW);
+        if (y + L_ROW < L_TOP - 4 || y > list_bottom - 4) continue;
+        fill_round_rect_aa(screen, L_M - 3, y + 3, cardw + 6, L_ROW - 6, 22, C_PRIMARY);
+    }
+
     draw_ripples();
 
-    // 底部播放条：当前歌曲 + 顶部细进度线，点击进沉浸页
+    // 底部播放条：当前歌曲 + 顶部细进度线，点击进沉浸页（半透明）
     int by = SCR_H - L_BAR;
-    fill_rect(screen, 0, by, SCR_W, L_BAR, C_SURFACE);
+    fill_rect_a(screen, 0, by, SCR_W, L_BAR, C_SURFACE, 232);
     fill_rect(screen, 0, by, SCR_W, 1, C_LINE);
     if (playing_idx >= 0 && audio_duration() > 0) {
         float p = (float)(audio_position() / audio_duration());
@@ -990,7 +1022,7 @@ static void draw_list(void) {
                           C_TXT3, p_artist, SCR_W - 140);
         // 右侧播放 / 暂停状态图标
         if (audio_paused())
-            fill_tri(screen, SCR_W - 58, midy - 11, SCR_W - 58, midy + 11, SCR_W - 40, midy, C_PRIMARY);
+            fill_tri_aa(screen, SCR_W - 58, midy - 11, SCR_W - 58, midy + 11, SCR_W - 40, midy, C_PRIMARY);
         else {
             fill_rect(screen, SCR_W - 62, midy - 11, 5, 22, C_PRIMARY);
             fill_rect(screen, SCR_W - 51, midy - 11, 5, 22, C_PRIMARY);
@@ -1145,7 +1177,7 @@ static void draw_controls(int cy) {
     icon_prev(screen, ui_cx - ui_gap - 11, cy - 11, 22, C_TXT);
     fill_ellipse_aa(screen, ui_cx, cy, 32, 32, C_PRIMARY);
     if (audio_paused()) {
-        fill_tri(screen, ui_cx - 9, cy - 12, ui_cx - 9, cy + 12, ui_cx + 10, cy, C_ONPRIM);
+        fill_tri_aa(screen, ui_cx - 9, cy - 12, ui_cx - 9, cy + 12, ui_cx + 10, cy, C_ONPRIM);
     } else {
         fill_rect(screen, ui_cx - 11, cy - 12, 6, 24, C_ONPRIM);
         fill_rect(screen, ui_cx + 4, cy - 12, 6, 24, C_ONPRIM);
@@ -1495,6 +1527,7 @@ int main(int argc, char** argv) {
     if (font) font_free(font);
     if (screen) canvas_free(screen);
     if (bg) canvas_free(bg);
+    if (list_bg) canvas_free(list_bg);
     if (cover) free(cover);
     if (cover_prev) free(cover_prev);
     if (trans_shot) canvas_free(trans_shot);

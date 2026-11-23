@@ -280,15 +280,19 @@ static inline void px_blend(Canvas* c, int x, int y, uint32_t col, uint8_t a) {
 }
 
 void fill_round_rect_aa(Canvas* c, int x, int y, int w, int h, int r, uint32_t col) {
-    if (w <= 0 || h <= 0) return;
-    if (r < 1) { fill_rect(c, x, y, w, h, col); return; }
+    fill_round_rect_aa_a(c, x, y, w, h, r, col, 255);
+}
+
+void fill_round_rect_aa_a(Canvas* c, int x, int y, int w, int h, int r, uint32_t col, uint8_t alpha) {
+    if (w <= 0 || h <= 0 || alpha == 0) return;
+    if (r < 1) { fill_rect_a(c, x, y, w, h, col, alpha); return; }
     if (r > w / 2) r = w / 2;
     if (r > h / 2) r = h / 2;
-    // 内部与直边走快速路径（不透明）
-    fill_rect(c, x + r, y, w - 2 * r, h, col);
-    fill_rect(c, x, y + r, r, h - 2 * r, col);
-    fill_rect(c, x + w - r, y + r, r, h - 2 * r, col);
-    // 四个角按覆盖度抗锯齿
+    // 内部与直边走快速路径
+    fill_rect_a(c, x + r, y, w - 2 * r, h, col, alpha);
+    fill_rect_a(c, x, y + r, r, h - 2 * r, col, alpha);
+    fill_rect_a(c, x + w - r, y + r, r, h - 2 * r, col, alpha);
+    // 四个角按覆盖度抗锯齿（覆盖度 x 整体透明度）
     for (int j = 0; j < r; j++) {
         for (int i = 0; i < r; i++) {
             float dx = (float)(r - i) - 0.5f;
@@ -297,11 +301,50 @@ void fill_round_rect_aa(Canvas* c, int x, int y, int w, int h, int r, uint32_t c
             float cov = (float)r - d + 0.5f;
             if (cov <= 0) continue;
             if (cov > 1) cov = 1;
-            uint8_t a = (uint8_t)(cov * 255.0f + 0.5f);
+            uint8_t a = (uint8_t)(cov * (alpha / 255.0f) * 255.0f + 0.5f);
+            if (a == 0) continue;
             px_blend(c, x + i,         y + j,         col, a);   // 左上
             px_blend(c, x + w - 1 - i, y + j,         col, a);   // 右上
             px_blend(c, x + i,         y + h - 1 - j, col, a);   // 左下
             px_blend(c, x + w - 1 - i, y + h - 1 - j, col, a);   // 右下
+        }
+    }
+}
+
+// 抗锯齿三角形：对每个像素求到三条边的带符号距离，取最小值估算覆盖度
+static inline double tri_edge_dist(double ax, double ay, double bx, double by,
+                                   double px, double py) {
+    double ex = bx - ax, ey = by - ay;
+    double len = sqrt(ex * ex + ey * ey);
+    if (len < 1e-9) return 1e9;
+    return ((ey * (px - ax) - ex * (py - ay))) / len;
+}
+
+void fill_tri_aa(Canvas* c, int x0, int y0, int x1, int y1, int x2, int y2, uint32_t col) {
+    double area = (double)(x1 - x0) * (y2 - y0) - (double)(x2 - x0) * (y1 - y0);
+    if (area == 0) return;
+    double sgn = area > 0 ? 1.0 : -1.0;
+    int minx = x0 < x1 ? (x0 < x2 ? x0 : x2) : (x1 < x2 ? x1 : x2);
+    int maxx = x0 > x1 ? (x0 > x2 ? x0 : x2) : (x1 > x2 ? x1 : x2);
+    int miny = y0 < y1 ? (y0 < y2 ? y0 : y2) : (y1 < y2 ? y1 : y2);
+    int maxy = y0 > y1 ? (y0 > y2 ? y0 : y2) : (y1 > y2 ? y1 : y2);
+    if (minx < 1) minx = 1;
+    if (miny < 1) miny = 1;
+    if (maxx >= c->w - 1) maxx = c->w - 2;
+    if (maxy >= c->h - 1) maxy = c->h - 2;
+    for (int y = miny; y <= maxy; y++) {
+        double py = y + 0.5;
+        for (int x = minx; x <= maxx; x++) {
+            double px = x + 0.5;
+            double d0 = tri_edge_dist(x0, y0, x1, y1, px, py) * sgn;
+            double d1 = tri_edge_dist(x1, y1, x2, y2, px, py) * sgn;
+            double d2 = tri_edge_dist(x2, y2, x0, y0, px, py) * sgn;
+            double dmin = d0 < d1 ? d0 : d1;
+            if (d2 < dmin) dmin = d2;
+            double cov = 0.5 + dmin;   // 距离以像素为单位
+            if (cov <= 0) continue;
+            if (cov > 1) cov = 1;
+            px_blend(c, x, y, col, (uint8_t)(cov * 255.0 + 0.5));
         }
     }
 }
