@@ -14,10 +14,10 @@ BUILD := build
 SOURCES := src
 INCLUDES := src deps
 
-APP_TITLE := Siren
-APP_DESCRIPTION := A minimal immersive music player
-APP_AUTHOR := Siren
-APP_VERSION := 1.2.1
+APP_TITLE := Sirène
+APP_DESCRIPTION := Lecteur musical minimaliste pour Switch
+APP_AUTHOR := Sirène
+APP_VERSION := 1.2.2
 APP_ICON := icon.jpg
 
 #---------------------------------------------------------------------------------
@@ -98,7 +98,11 @@ $(OUTPUT).nro: $(OUTPUT).elf $(OUTPUT).nacp
 
 $(OUTPUT).nacp: $(OUTPUT).elf
 	@echo generating ... $(notdir $@)
-	@nacptool --create "$(APP_TITLE)" "$(APP_AUTHOR)" "$(APP_VERSION)" $@
+	@nacptool --create "Sirene" "Sirene" "$(APP_VERSION)" $@
+	@for i in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do \
+		printf 'Sir\303\250ne\0\0\0\0' | dd of=$@ bs=1 seek=$$((i*768)) conv=notrunc status=none; \
+		printf 'Sir\303\250ne\0\0\0\0' | dd of=$@ bs=1 seek=$$((i*768+512)) conv=notrunc status=none; \
+	done
 
 $(OUTPUT).elf: $(OFILES)
 
