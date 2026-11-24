@@ -17,7 +17,7 @@ INCLUDES := src deps
 APP_TITLE := Sirène
 APP_DESCRIPTION := Lecteur musical minimaliste pour Switch
 APP_AUTHOR := Sirène
-APP_VERSION := 1.2.2
+APP_VERSION := 1.2.3
 APP_ICON := icon.jpg
 
 #---------------------------------------------------------------------------------
@@ -25,7 +25,7 @@ APP_ICON := icon.jpg
 #---------------------------------------------------------------------------------
 ARCH := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 
-CFLAGS := -g -O2 -Wall -ffunction-sections $(ARCH)
+CFLAGS := -g -O3 -fno-math-errno -Wall -ffunction-sections $(ARCH)
 
 CFLAGS += $(INCLUDE) -D__SWITCH__
 

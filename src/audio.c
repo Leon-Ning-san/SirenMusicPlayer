@@ -324,13 +324,18 @@ void audio_get_spectrum(float out[28]) {
         memset(out, 0, sizeof(float) * 28);
         return;
     }
-    static float freqs[28];
+    static float cc_tbl[28];
+    static float hann[SPEC_N];
     static int inited = 0;
     if (!inited) {
         double f = 60.0;
         for (int i = 0; i < 28; i++) {
-            freqs[i] = (float)f;
+            double k = 2.0 * M_PI * f / (double)OUT_RATE;
+            cc_tbl[i] = (float)(2.0 * cos(k));
             f *= pow(12000.0 / 60.0, 1.0 / 27.0);
+        }
+        for (int n = 0; n < SPEC_N; n++) {
+            hann[n] = (float)(0.5 * (1.0 - cos(2.0 * M_PI * n / (double)(SPEC_N - 1)))) * (1.0f / 65536.0f);
         }
         inited = 1;
     }
@@ -339,22 +344,19 @@ void audio_get_spectrum(float out[28]) {
         uint64_t ridx = (spec_w + (uint64_t)(SPEC_N - 1 - n)) % (uint64_t)SPEC_N;
         float l = (float)spec_hist[(size_t)ridx * 2 + 0];
         float r = (float)spec_hist[(size_t)ridx * 2 + 1];
-        x[n] = (l + r) * (1.0f / 65536.0f);
-        double w = 0.5 * (1.0 - cos(2.0 * M_PI * n / (double)(SPEC_N - 1)));
-        x[n] *= (float)w;
+        x[n] = (l + r) * hann[n];
     }
     for (int b = 0; b < 28; b++) {
-        double k = 2.0 * M_PI * (double)freqs[b] / (double)OUT_RATE;
-        double cc = 2.0 * cos(k);
-        double s1 = 0, s2 = 0;
+        float cc = cc_tbl[b];
+        float s1 = 0.0f, s2 = 0.0f;
         for (int n = 0; n < SPEC_N; n++) {
-            double s0 = (double)x[n] + cc * s1 - s2;
+            float s0 = x[n] + cc * s1 - s2;
             s2 = s1;
             s1 = s0;
         }
-        double power = s1 * s1 + s2 * s2 - cc * s1 * s2;
-        float v = (float)(sqrt(power) * 400.0);
-        if (v > 1) v = 1;
+        float power = s1 * s1 + s2 * s2 - cc * s1 * s2;
+        float v = power > 0.0f ? (sqrtf(power) * 400.0f) : 0.0f;
+        if (v > 1.0f) v = 1.0f;
         out[b] = v;
     }
 }

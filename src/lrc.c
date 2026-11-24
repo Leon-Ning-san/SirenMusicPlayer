@@ -319,7 +319,7 @@ static Lyrics* parse_lyrics_utf8(const char* raw_text, const char* source_name) 
             if (w > 0 && fabs(l->lines[w - 1].t - l->lines[i].t) < 0.015) {
                 if (strcmp(l->lines[w - 1].text, l->lines[i].text) != 0) {
                     char merged[256];
-                    snprintf(merged, sizeof(merged), "%s · %s", l->lines[w - 1].text, l->lines[i].text);
+                    snprintf(merged, sizeof(merged), "%.120s · %.120s", l->lines[w - 1].text, l->lines[i].text);
                     memcpy(l->lines[w - 1].text, merged, sizeof(l->lines[w - 1].text));
                 }
                 continue;

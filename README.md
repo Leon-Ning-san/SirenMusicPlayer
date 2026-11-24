@@ -2,7 +2,7 @@
   <img src="icon.jpg" width="128" alt="Sirène Icon" />
 </p>
 
-<h1 align="center">Sirène · Switch 本地音乐播放器（v1.2.2）</h1>
+<h1 align="center">Sirène · Switch 本地音乐播放器（v1.2.3）</h1>
 
 <p align="center">
   为破解版 Nintendo Switch（Atmosphère / Hekate）打造的本地无损音乐播放器（<code>.nro</code>）<br/>
@@ -41,7 +41,8 @@
 
 ## 版本归档（独立 Release）
 
-- **v1.2.2（最新）**：`Sirène` 法语命名 + 乔布斯 Click Wheel × 现代 Apple × Material You 融合 UI + 无手柄全触控闭环 + 深度歌词/封面修复 + 专属手柄映射。
+- **v1.2.3（最新 · 60 FPS 流畅优化版）**：全面重构软件光栅与时间驱动 60 FPS 淡入动画引擎（Click Wheel 精灵缓存、O(R) 圆形/阴影空心光栅、O(1) 字形哈希表、三缓冲线性帧显与旋转分块拷贝），彻底消除 Switch 上切页/切歌/弹窗/旋转时的动画卡顿。
+- **v1.2.2**：`Sirène` 法语命名 + 乔布斯 Click Wheel × 现代 Apple × Material You 融合 UI + 无手柄全触控闭环 + 深度歌词/封面修复 + 专属手柄映射。
 - **v1.2.1**：现代 Hi-Res 便携 MP4 双栏版。
 - **v1.2.0**：复古乔布斯 iPod Classic 版。
 - **v1.1.0**：Material You 初版。

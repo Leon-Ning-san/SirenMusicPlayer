@@ -28,7 +28,7 @@ extern const unsigned char poster_end[];
 #define UI_PLAYER 1
 
 #define MAX_TRACKS  8192
-#define FADE_FRAMES 8
+#define FADE_DUR    0.16f
 
 // 严格固定各尺寸封面缓冲区边长，彻底杜绝步长错位导致左上角图标/封面撕裂
 #define LOGO_SZ       30
@@ -234,14 +234,19 @@ static int show_exit_confirm = 0;
 static int g_want_exit = 0;
 static float saved_mute_vol = 0.85f;
 
-// ---------- 淡入动画状态 ----------
+// ---------- 60 FPS 时间驱动淡入动画 & Click Wheel 缓存 ----------
 static double g_dt = 0.016;
 static uint64_t g_last_tick = 0;
 static float scroll_px = 0.0f;
+static float scroll_target = 0.0f;
 static Canvas* trans_shot = NULL;
-static int trans_frames = 0;
-static int solid_fade_frames = FADE_FRAMES;
-static int modal_fade_in = 0;
+static float fade_time = 0.0f;
+static int fade_mode = 0;    // 0 = 无, 1 = 交叉淡入 (trans_shot), 2 = 底色淡入 (boot/ori)
+static int fade_armed = 0;   // 1 = 首帧跳过阻塞加载耗时，从下帧开始平滑计时
+
+static Canvas* wheel_cache = NULL;
+static int wc_ori = -1, wc_theme = -1, wc_zone = -1, wc_list = -1, wc_paused = -1;
+static int wc_sel_play = -1, wc_ro = 0, wc_ri = 0;
 
 // ---------- 提示气泡 ----------
 static char toast_text[96];
@@ -293,12 +298,14 @@ static void capture_fade(void) {
     if (!trans_shot) trans_shot = canvas_new(SCR_W, SCR_H);
     if (trans_shot) {
         memcpy(trans_shot->px, screen->px, (size_t)SCR_W * SCR_H * 4);
-        trans_frames = FADE_FRAMES;
+        fade_time = FADE_DUR;
+        fade_mode = 1;
+        fade_armed = 1;
     }
 }
 
 static void trigger_modal_fade(void) {
-    modal_fade_in = 1;
+    capture_fade();
 }
 
 // ---------- 设置 & 收藏持久化 ----------
@@ -402,12 +409,15 @@ static void apply_orientation(int o) {
     if (trans_shot) {
         canvas_free(trans_shot);
         trans_shot = NULL;
-        trans_frames = 0;
     }
-    solid_fade_frames = FADE_FRAMES;
+    fade_time = FADE_DUR;
+    fade_mode = 2;
+    fade_armed = 1;
+    wc_ori = -1;
     float ms = max_scroll_px();
     if (scroll_px > ms) scroll_px = ms;
     if (scroll_px < 0) scroll_px = 0;
+    scroll_target = scroll_px;
     touch_drag = 0;
     wheel_active = 0;
     touch_press_idx = -1;
@@ -430,11 +440,12 @@ static void ensure_pos_visible(int pos) {
     float top_px = (float)pos * (float)L_ROW;
     float bot_px = top_px + (float)L_ROW;
     float view_h = (float)list_area_h();
-    if (top_px < scroll_px) scroll_px = top_px;
-    else if (bot_px > scroll_px + view_h) scroll_px = bot_px - view_h;
+    if (top_px < scroll_target) scroll_target = top_px;
+    else if (bot_px > scroll_target + view_h) scroll_target = bot_px - view_h;
     float ms = max_scroll_px();
-    if (scroll_px < 0) scroll_px = 0;
-    if (scroll_px > ms) scroll_px = ms;
+    if (scroll_target < 0) scroll_target = 0;
+    if (scroll_target > ms) scroll_target = ms;
+    if (fabsf(scroll_target - scroll_px) < 1.0f) scroll_px = scroll_target;
 }
 
 static int contains_nocase(const char* hay, const char* needle) {
@@ -468,6 +479,7 @@ static void rebuild_visible(void) {
     float ms = max_scroll_px();
     if (scroll_px > ms) scroll_px = ms;
     if (scroll_px < 0) scroll_px = 0;
+    scroll_target = scroll_px;
     if (nvisible == 0) { sel = -1; return; }
     int pos = 0, found = 0;
     for (int i = 0; i < nvisible; i++) {
@@ -883,6 +895,7 @@ static void trim_thumbs(int first_vis_pos, int last_vis_pos) {
 }
 
 static void ensure_visible_thumbs(void) {
+    if (fade_time > 0.0f) return;
     int i0 = (int)floorf(scroll_px / (float)L_ROW);
     if (i0 < 0) i0 = 0;
     int rows = rows_visible();
@@ -979,6 +992,7 @@ static void load_track(int idx) {
     lyr = lyrics_load_ex(tracks[idx].path, p_title, p_artist);
     for (int i = 0; i < 28; i++) bars[i] = 0;
     loading = 0;
+    g_last_tick = armGetSystemTick();
 }
 
 static void toggle_fullscreen_player(void) {
@@ -1056,6 +1070,7 @@ static void set_view(int v) {
     capture_fade();
     view = v;
     scroll_px = 0;
+    scroll_target = 0;
     rebuild_visible();
 }
 
@@ -1258,6 +1273,7 @@ static void handle_touch_vol_panel(TouchInfo* t) {
     if (!t->down) return;
     int x = t->x, y = t->y;
     if (in_rc(x, y, rc_vol_close) || !in_rc(x, y, rc_vol_box)) {
+        capture_fade();
         show_vol_panel = 0;
         touch_vol_scrub = 0;
         return;
@@ -1302,6 +1318,7 @@ static void handle_touch_exit_confirm(TouchInfo* t) {
         return;
     }
     if (in_rc(x, y, rc_exit_cancel) || !in_rc(x, y, rc_exit_box)) {
+        capture_fade();
         show_exit_confirm = 0;
     }
 }
@@ -1363,6 +1380,7 @@ static void handle_touch_list(TouchInfo* t) {
             float ms = max_scroll_px();
             if (scroll_px < 0) scroll_px = 0;
             if (scroll_px > ms) scroll_px = ms;
+            scroll_target = scroll_px;
         }
         touch_last_y = t->y;
     }
@@ -1485,7 +1503,7 @@ static void draw_lcd_shell(const char* title, const char* right_sub, int use_amb
     // 现代 Apple 无黑框悬浮圆角视窗（柔和投影 + 1px 玻璃微描边）
     fill_round_rect_shadow(screen, LCD_X, LCD_Y, LCD_W, LCD_H, 28, g_is_light ? 26 : 52);
     if (use_ambient && lcd_ambient && lcd_ambient->w == LCD_W && lcd_ambient->h == LCD_H) {
-        blit_rgba_round(screen, LCD_X, LCD_Y, lcd_ambient->px, LCD_W, LCD_H, 28);
+        blit_rgb_round(screen, LCD_X, LCD_Y, lcd_ambient->px, LCD_W, LCD_H, 28);
     } else {
         fill_round_rect_aa(screen, LCD_X, LCD_Y, LCD_W, LCD_H, 28, C_SURFACE);
     }
@@ -1505,43 +1523,63 @@ static void draw_lcd_shell(const char* title, const char* right_sub, int use_amb
 
 static void draw_click_wheel(void) {
     int ro = W_RO, ri = W_RI;
-    // 现代雾面环形阴影与本体
-    fill_circle_a(screen, W_CX, W_CY + 5, ro + 4, COL(0, 0, 0, 255), g_is_light ? 20 : 48);
-    fill_ellipse_aa(screen, W_CX, W_CY, ro, ro, C_WHEEL);
-    stroke_circle_aa(screen, W_CX, W_CY, ro, 2, C_WHEEL_RING, 185);
+    int wsz = (ro + 10) * 2;
+    int wx0 = W_CX - (ro + 10), wy0 = W_CY - (ro + 10);
+    int hl = (wheel_active && !wheel_moved) ? wheel_down_zone : -1;
+    int is_list = (ui_state == UI_LIST);
+    int sel_play = (playing_idx >= 0 && playing_idx == sel) ? 1 : 0;
+    int paused = (playing_idx >= 0) ? audio_paused() : 1;
 
-    // 触控象限柔和 M3 波纹高亮
-    int r_mid = (ro + ri) / 2;
-    if (wheel_active && !wheel_moved && wheel_down_zone > 0) {
-        int hx = W_CX, hy = W_CY;
-        if (wheel_down_zone == 1) hy = W_CY - r_mid;
-        else if (wheel_down_zone == 2) hx = W_CX + r_mid;
-        else if (wheel_down_zone == 3) hy = W_CY + r_mid;
-        else if (wheel_down_zone == 4) hx = W_CX - r_mid;
-        fill_circle_a(screen, hx, hy, (ro - ri) / 2, C_ACCENT, 42);
+    if (!wheel_cache || wheel_cache->w != wsz || wheel_cache->h != wsz) {
+        if (wheel_cache) canvas_free(wheel_cache);
+        wheel_cache = canvas_new(wsz, wsz);
+        wc_ori = -1;
     }
 
-    float mpx = portrait() ? 17.0f : 14.0f;
-    draw_text_centered(screen, font, mpx, W_CX - 60, W_CX + 60, W_CY - r_mid - (int)mpx / 2,
-                       C_WHEEL_TXT, "MENU");
+    if (wheel_cache && (wc_ori != ori || wc_theme != cur_theme || wc_ro != ro || wc_ri != ri ||
+                        wc_zone != hl || wc_list != is_list || wc_paused != paused || wc_sel_play != sel_play)) {
+        int lcx = wsz / 2, lcy = wsz / 2;
+        canvas_clear(wheel_cache, C_BODY);
+        fill_circle_a(wheel_cache, lcx, lcy + 5, ro + 4, COL(0, 0, 0, 255), g_is_light ? 20 : 48);
+        fill_ellipse_aa(wheel_cache, lcx, lcy, ro, ro, C_WHEEL);
+        stroke_circle_aa(wheel_cache, lcx, lcy, ro, 2, C_WHEEL_RING, 185);
 
-    int ic = portrait() ? 20 : 16;
-    icon_prev(screen, W_CX - r_mid - ic / 2, W_CY - ic / 2, ic, C_WHEEL_TXT);
-    icon_next(screen, W_CX + r_mid - ic / 2, W_CY - ic / 2, ic, C_WHEEL_TXT);
+        int r_mid = (ro + ri) / 2;
+        if (hl > 0) {
+            int hx = lcx, hy = lcy;
+            if (hl == 1) hy = lcy - r_mid;
+            else if (hl == 2) hx = lcx + r_mid;
+            else if (hl == 3) hy = lcy + r_mid;
+            else if (hl == 4) hx = lcx - r_mid;
+            fill_circle_a(wheel_cache, hx, hy, (ro - ri) / 2, C_ACCENT, 42);
+        }
 
-    int pwc = portrait() ? 22 : 18;
-    icon_play_pause(screen, W_CX - pwc / 2, W_CY + r_mid - pwc / 2 + 1, pwc, C_WHEEL_TXT);
+        float mpx = portrait() ? 17.0f : 14.0f;
+        draw_text_centered(wheel_cache, font, mpx, lcx - 60, lcx + 60, lcy - r_mid - (int)mpx / 2,
+                           C_WHEEL_TXT, "MENU");
 
-    // 中心 Material You 色调圆键
-    uint32_t ccol = (wheel_active && wheel_down_zone == 0) ? C_TONAL_BG : C_WHEEL_CENTER;
-    fill_ellipse_aa(screen, W_CX, W_CY, ri, ri, ccol);
-    stroke_circle_aa(screen, W_CX, W_CY, ri, 1, C_WHEEL_RING, 190);
-    const char* clbl = (ui_state == UI_LIST)
-        ? ((playing_idx >= 0 && playing_idx == sel) ? (audio_paused() ? "播放" : "暂停") : "播放")
-        : (audio_paused() ? "播放" : "暂停");
-    draw_text_centered(screen, font, portrait() ? 16.0f : 14.0f, W_CX - ri, W_CX + ri,
-                       W_CY - (portrait() ? 9 : 8),
-                       (wheel_active && wheel_down_zone == 0) ? C_TONAL_TXT : C_WHEEL_TXT, clbl);
+        int ic = portrait() ? 20 : 16;
+        icon_prev(wheel_cache, lcx - r_mid - ic / 2, lcy - ic / 2, ic, C_WHEEL_TXT);
+        icon_next(wheel_cache, lcx + r_mid - ic / 2, lcy - ic / 2, ic, C_WHEEL_TXT);
+
+        int pwc = portrait() ? 22 : 18;
+        icon_play_pause(wheel_cache, lcx - pwc / 2, lcy + r_mid - pwc / 2 + 1, pwc, C_WHEEL_TXT);
+
+        uint32_t ccol = (hl == 0) ? C_TONAL_BG : C_WHEEL_CENTER;
+        fill_ellipse_aa(wheel_cache, lcx, lcy, ri, ri, ccol);
+        stroke_circle_aa(wheel_cache, lcx, lcy, ri, 1, C_WHEEL_RING, 190);
+        const char* clbl = is_list
+            ? (sel_play ? (paused ? "播放" : "暂停") : "播放")
+            : (paused ? "播放" : "暂停");
+        draw_text_centered(wheel_cache, font, portrait() ? 16.0f : 14.0f, lcx - ri, lcx + ri,
+                           lcy - (portrait() ? 9 : 8),
+                           (hl == 0) ? C_TONAL_TXT : C_WHEEL_TXT, clbl);
+
+        wc_ori = ori; wc_theme = cur_theme; wc_ro = ro; wc_ri = ri;
+        wc_zone = hl; wc_list = is_list; wc_paused = paused; wc_sel_play = sel_play;
+    }
+
+    if (wheel_cache) blit_canvas_opaque(screen, wx0, wy0, wheel_cache);
 }
 
 static void draw_hardware_controls(void) {
@@ -1560,7 +1598,7 @@ static void draw_hardware_controls(void) {
 
         if (playing_idx >= 0) {
             const uint32_t* pimg = tracks[playing_idx].thumb_pod ? tracks[playing_idx].thumb_pod : poster_pod;
-            if (pimg) blit_rgba_round(screen, px + 16, py + 24, pimg, POD_ART_SZ, POD_ART_SZ, 18);
+            if (pimg) blit_rgb_round(screen, px + 16, py + 24, pimg, POD_ART_SZ, POD_ART_SZ, 18);
 
             const char* badge = (ui_state == UI_PLAYER)
                 ? "点击返回曲库 [X]"
@@ -1586,7 +1624,7 @@ static void draw_hardware_controls(void) {
                 draw_text(screen, font, 13, px + 116, py + 96, C_TXT3, tm);
             }
         } else {
-            if (poster_pod) blit_rgba_round(screen, px + 16, py + 24, poster_pod, POD_ART_SZ, POD_ART_SZ, 18);
+            if (poster_pod) blit_rgb_round(screen, px + 16, py + 24, poster_pod, POD_ART_SZ, POD_ART_SZ, 18);
             draw_text(screen, font, 18, px + 116, py + 34, C_TXT, "Sirène");
             draw_text(screen, font, 13, px + 116, py + 62, C_TXT2, "A 就地播放 · X 全屏歌词");
             draw_text(screen, font, 12, px + 116, py + 88, C_TXT3, "Y 切换竖屏 · 左方向键切歌");
@@ -1732,7 +1770,7 @@ static void draw_list(void) {
             int tx = L_X0 + 16;
             int ty = cy0 + (ch - THUMB_SZ) / 2;
             if (tracks[idx].thumb)
-                blit_rgba_round(screen, tx, ty, tracks[idx].thumb, THUMB_SZ, THUMB_SZ, 12);
+                blit_rgb_round(screen, tx, ty, tracks[idx].thumb, THUMB_SZ, THUMB_SZ, 12);
 
             char nm[256];
             basename_no_ext(tracks[idx].path, nm, sizeof(nm));
@@ -1787,7 +1825,7 @@ static void draw_list(void) {
 
     if (playing_idx >= 0) {
         const uint32_t* mimg = cover_mini ? cover_mini : poster_mini;
-        if (mimg) blit_rgba_round(screen, LCD_X + 20, list_bot + 10, mimg, MINI_ART_SZ, MINI_ART_SZ, 10);
+        if (mimg) blit_rgb_round(screen, LCD_X + 20, list_bot + 10, mimg, MINI_ART_SZ, MINI_ART_SZ, 10);
 
         double pos = audio_position(), dur = audio_duration();
         if (dur > 0) {
@@ -1930,7 +1968,7 @@ static void draw_player(void) {
         ui_cover_x = cx; ui_cover_y = cy; ui_cover_sz = csz;
 
         fill_round_rect_shadow(screen, cx, cy, csz, csz, 24, g_is_light ? 34 : 58);
-        if (cover_land) blit_rgba_round(screen, cx, cy, cover_land, COVER_LAND_SZ, COVER_LAND_SZ, 24);
+        if (cover_land) blit_rgb_round(screen, cx, cy, cover_land, COVER_LAND_SZ, COVER_LAND_SZ, 24);
 
         // 封面下方 M3 喜欢与模式切换胶囊
         int pill_y = cy + csz + 24;
@@ -1967,7 +2005,7 @@ static void draw_player(void) {
         ui_cover_x = cx; ui_cover_y = cy; ui_cover_sz = csz;
 
         fill_round_rect_shadow(screen, cx, cy, csz, csz, 22, g_is_light ? 34 : 58);
-        if (cover_port) blit_rgba_round(screen, cx, cy, cover_port, COVER_PORT_SZ, COVER_PORT_SZ, 22);
+        if (cover_port) blit_rgb_round(screen, cx, cy, cover_port, COVER_PORT_SZ, COVER_PORT_SZ, 22);
 
         int rx = cx + csz + 22, rx1 = LCD_X + LCD_W - 22, rw = rx1 - rx;
         float tpx = text_width(font, 24, p_title) > rw ? 20.0f : 24.0f;
@@ -2012,16 +2050,7 @@ static void draw_player(void) {
     draw_hardware_controls();
 }
 
-// ---------- 弹窗绘制（支持平滑淡入动画） ----------
-static uint8_t current_modal_alpha(void) {
-    if (modal_fade_in <= 0) return 255;
-    int a = modal_fade_in * 255 / 6;
-    if (modal_fade_in < 6) modal_fade_in++;
-    else modal_fade_in = 0;
-    if (a > 255) a = 255;
-    return (uint8_t)a;
-}
-
+// ---------- 弹窗绘制（由全局 capture_fade 统一驱动平滑 60FPS 淡入/淡出） ----------
 static void draw_volume_overlay(void) {
     if (vol_overlay_timer <= 0) return;
     vol_overlay_timer--;
@@ -2039,16 +2068,15 @@ static void draw_volume_overlay(void) {
 }
 
 static void draw_vol_panel(void) {
-    uint8_t ma = current_modal_alpha();
-    fill_rect_a(screen, 0, 0, SCR_W, SCR_H, COL(0, 0, 0, 255), (uint8_t)(135 * ma / 255));
+    fill_rect_a(screen, 0, 0, SCR_W, SCR_H, COL(0, 0, 0, 255), 135);
     int cw = portrait() ? 560 : 480;
     int ch = 180;
     int cx = (SCR_W - cw) / 2;
     int cy = (SCR_H - ch) / 2;
     rc_vol_box = (Rect){ cx, cy, cw, ch };
-    fill_round_rect_shadow(screen, cx, cy, cw, ch, 26, (uint8_t)(56 * ma / 255));
-    fill_round_rect_aa_a(screen, cx, cy, cw, ch, 26, C_SURFACE, ma);
-    stroke_round_rect_aa(screen, cx, cy, cw, ch, 26, 1, C_WHEEL_RING, (uint8_t)(160 * ma / 255));
+    fill_round_rect_shadow(screen, cx, cy, cw, ch, 26, 56);
+    fill_round_rect_aa(screen, cx, cy, cw, ch, 26, C_SURFACE);
+    stroke_round_rect_aa(screen, cx, cy, cw, ch, 26, 1, C_WHEEL_RING, 160);
 
     float v = audio_volume();
     char ttl[48];
@@ -2083,16 +2111,15 @@ static void draw_vol_panel(void) {
 }
 
 static void draw_exit_confirm(void) {
-    uint8_t ma = current_modal_alpha();
-    fill_rect_a(screen, 0, 0, SCR_W, SCR_H, COL(0, 0, 0, 255), (uint8_t)(150 * ma / 255));
+    fill_rect_a(screen, 0, 0, SCR_W, SCR_H, COL(0, 0, 0, 255), 150);
     int cw = portrait() ? 460 : 420;
     int ch = 190;
     int cx = (SCR_W - cw) / 2;
     int cy = (SCR_H - ch) / 2;
     rc_exit_box = (Rect){ cx, cy, cw, ch };
-    fill_round_rect_shadow(screen, cx, cy, cw, ch, 26, (uint8_t)(58 * ma / 255));
-    fill_round_rect_aa_a(screen, cx, cy, cw, ch, 26, C_SURFACE, ma);
-    stroke_round_rect_aa(screen, cx, cy, cw, ch, 26, 1, C_WHEEL_RING, (uint8_t)(160 * ma / 255));
+    fill_round_rect_shadow(screen, cx, cy, cw, ch, 26, 58);
+    fill_round_rect_aa(screen, cx, cy, cw, ch, 26, C_SURFACE);
+    stroke_round_rect_aa(screen, cx, cy, cw, ch, 26, 1, C_WHEEL_RING, 160);
 
     draw_text_centered(screen, font, 21, cx + 20, cx + cw - 20, cy + 32, C_TXT, "退出 Sirène 播放器？");
     draw_text_centered(screen, font, 14, cx + 20, cx + cw - 20, cy + 68, C_TXT2,
@@ -2110,18 +2137,17 @@ static void draw_exit_confirm(void) {
 }
 
 static void draw_diag(void) {
-    uint8_t ma = current_modal_alpha();
-    fill_rect_a(screen, 0, 0, SCR_W, SCR_H, COL(0, 0, 0, 255), (uint8_t)(155 * ma / 255));
+    fill_rect_a(screen, 0, 0, SCR_W, SCR_H, COL(0, 0, 0, 255), 155);
     int cw = portrait() ? 648 : 860;
     int ch = 468;
     int cx = (SCR_W - cw) / 2;
     int cy = (SCR_H - ch) / 2;
     rc_diag_box = (Rect){ cx, cy, cw, ch };
-    fill_round_rect_shadow(screen, cx, cy, cw, ch, 28, (uint8_t)(60 * ma / 255));
-    fill_round_rect_aa_a(screen, cx, cy, cw, ch, 28, C_SURFACE, ma);
-    stroke_round_rect_aa(screen, cx, cy, cw, ch, 28, 1, C_WHEEL_RING, (uint8_t)(160 * ma / 255));
+    fill_round_rect_shadow(screen, cx, cy, cw, ch, 28, 60);
+    fill_round_rect_aa(screen, cx, cy, cw, ch, 28, C_SURFACE);
+    stroke_round_rect_aa(screen, cx, cy, cw, ch, 28, 1, C_WHEEL_RING, 160);
 
-    draw_text(screen, font, 22, cx + 32, cy + 28, C_TONAL_TXT, "Sirène v1.2.2 系统与歌词诊断");
+    draw_text(screen, font, 22, cx + 32, cy + 28, C_TONAL_TXT, "Sirène v1.2.3 系统与歌词诊断");
     rc_diag_close = draw_m3_pill_fixed(cx + cw - 104, cy + 22, 76, 36, 14.0f, "关闭", 1, 0);
 
     char buf[1024];
@@ -2278,13 +2304,13 @@ int main(int argc, char** argv) {
         }
 
         if (show_diag) {
-            if (touch_now.down || (down & (HidNpadButton_B | HidNpadButton_A))) show_diag = 0;
+            if (touch_now.down || (down & (HidNpadButton_B | HidNpadButton_A))) { capture_fade(); show_diag = 0; }
         } else if (show_exit_confirm) {
             if (down & HidNpadButton_A) g_want_exit = 1;
-            if (down & HidNpadButton_B) show_exit_confirm = 0;
+            if (down & HidNpadButton_B) { capture_fade(); show_exit_confirm = 0; }
             handle_touch_exit_confirm(&touch_now);
         } else if (show_vol_panel) {
-            if (down & HidNpadButton_B) show_vol_panel = 0;
+            if (down & HidNpadButton_B) { capture_fade(); show_vol_panel = 0; }
             handle_touch_vol_panel(&touch_now);
         } else {
             // 全局专属快捷键：X = 全屏切换，Y = 单向竖屏切换，左方向键(非摇杆)/L/R = 切歌
@@ -2317,6 +2343,15 @@ int main(int argc, char** argv) {
 
         audio_pump();
 
+        // 丝滑列表滚动插值（按键/转盘步进时平滑跟踪）
+        if (fabsf(scroll_target - scroll_px) > 0.5f) {
+            float k = (float)(g_dt * 22.0);
+            if (k > 1.0f) k = 1.0f;
+            scroll_px += (scroll_target - scroll_px) * k;
+        } else {
+            scroll_px = scroll_target;
+        }
+
         uint32_t* fb = be_begin(&stride);
         if (ui_state == UI_LIST) draw_list();
         else draw_player();
@@ -2334,22 +2369,27 @@ int main(int argc, char** argv) {
             draw_text_centered(screen, font, 14.5f, bx, bx + tw, 30, C_TXT, toast_text);
         }
 
-        // 交叉淡入动画（切页 / 切歌 / 切换主题或筛选）
-        if (trans_frames > 0 && trans_shot && trans_shot->w == SCR_W && trans_shot->h == SCR_H) {
-            uint8_t a = (uint8_t)(trans_frames * trans_frames * 255 / ((FADE_FRAMES + 1) * (FADE_FRAMES + 1)));
-            blit_rgba_a(screen, 0, 0, trans_shot->px, SCR_W, SCR_H, a);
-            trans_frames--;
-        }
-        // 启动与旋转切换柔和淡入
-        if (solid_fade_frames > 0) {
-            uint8_t a = (uint8_t)(solid_fade_frames * 220 / (FADE_FRAMES + 1));
-            fill_rect_a(screen, 0, 0, SCR_W, SCR_H, C_BODY, a);
-            solid_fade_frames--;
-        }
-
         if (show_diag) draw_diag();
         else if (show_vol_panel) draw_vol_panel();
         else if (show_exit_confirm) draw_exit_confirm();
+
+        // 统一 60 FPS 时间驱动 Ease-Out Cubic 淡入动画（切页 / 切歌 / 旋转 / 主题 / 弹窗开闭）
+        if (fade_time > 0.0f) {
+            float t_norm = fade_time / FADE_DUR;
+            if (t_norm > 1.0f) t_norm = 1.0f;
+            uint8_t a = (uint8_t)(t_norm * t_norm * t_norm * 255.0f);
+            if (fade_mode == 1 && trans_shot && trans_shot->w == SCR_W && trans_shot->h == SCR_H) {
+                blend_over_opaque(screen->px, trans_shot->px, (size_t)SCR_W * SCR_H, a);
+            } else if (fade_mode == 2) {
+                fill_rect_a(screen, 0, 0, SCR_W, SCR_H, C_BODY, (uint8_t)((a * 220u) >> 8));
+            }
+            if (fade_armed) {
+                fade_armed = 0; // 首帧保留满起步透明度，避免被加载 I/O 吃掉前半段
+            } else {
+                fade_time -= (float)g_dt;
+                if (fade_time <= 0.0f) { fade_time = 0.0f; fade_mode = 0; }
+            }
+        }
 
         if (ori == ORI_LAND) {
             for (int y = 0; y < SCR_H; y++) {
@@ -2358,11 +2398,20 @@ int main(int argc, char** argv) {
                 memcpy(dst, src, (size_t)SCR_W * 4);
             }
         } else {
-            for (int y = 0; y < 720; y++) {
-                uint32_t* d = fb + (size_t)y * stride;
-                int px = 719 - y;
-                for (int x = 0; x < 1280; x++)
-                    d[x] = screen->px[(size_t)x * 720 + px];
+            // Cache-Blocked 32x16 旋转拷贝：大幅降低 L1/DRAM 缓存未命中并利用线性写合并
+            uint32_t tile[16][32];
+            for (int y0 = 0; y0 < 720; y0 += 16) {
+                for (int x0 = 0; x0 < 1280; x0 += 32) {
+                    for (int lx = 0; lx < 32; lx++) {
+                        const uint32_t* srow = screen->px + (size_t)(x0 + lx) * 720 + (719 - y0 - 15);
+                        for (int ly = 0; ly < 16; ly++) {
+                            tile[15 - ly][lx] = srow[ly];
+                        }
+                    }
+                    for (int ly = 0; ly < 16; ly++) {
+                        memcpy(fb + (size_t)(y0 + ly) * stride + x0, tile[ly], 32 * 4);
+                    }
+                }
             }
         }
         be_end();
@@ -2373,6 +2422,7 @@ int main(int argc, char** argv) {
     if (font) font_free(font);
     if (screen) canvas_free(screen);
     if (lcd_ambient) canvas_free(lcd_ambient);
+    if (wheel_cache) canvas_free(wheel_cache);
     if (cover_src) free(cover_src);
     if (cover_land) free(cover_land);
     if (cover_port) free(cover_port);

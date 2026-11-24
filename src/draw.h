@@ -19,8 +19,14 @@ void vline(Canvas* c, int x, int y, int len, uint32_t col);
 void fill_tri(Canvas* c, int x0, int y0, int x1, int y1, int x2, int y2, uint32_t col);
 // blend RGBA src onto canvas
 void blit_rgba(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, int sh);
+// fast row-memcpy blit for opaque Canvas sprite
+void blit_canvas_opaque(Canvas* dst, int dx, int dy, const Canvas* src);
 // blend with rounded-corner mask (radius = corner)
 void blit_rgba_round(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, int sh, int corner);
+// fast path for opaque RGBA images with rounded-corner mask (memcpy middle rows)
+void blit_rgb_round(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, int sh, int corner);
+// fast full-screen opaque cross-fade: dst = src * a/255 + dst * (255-a)/255
+void blend_over_opaque(uint32_t* dst, const uint32_t* src, size_t n, uint8_t a);
 // 带整体透明度的 blit（a=0 完全透明，255 完全不透明），用于交叉淡化
 void blit_rgba_a(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, int sh, uint8_t a);
 void blit_rgba_round_a(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, int sh, int corner, uint8_t a);

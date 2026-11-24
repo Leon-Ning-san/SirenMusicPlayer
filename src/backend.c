@@ -8,7 +8,7 @@ static PadState pad;
 int be_init(void) {
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
     padInitializeDefault(&pad);
-    Result rc = framebufferCreate(&fb, nwindowGetDefault(), BE_W, BE_H, PIXEL_FORMAT_RGBA_8888, 2);
+    Result rc = framebufferCreate(&fb, nwindowGetDefault(), BE_W, BE_H, PIXEL_FORMAT_RGBA_8888, 3);
     if (R_FAILED(rc)) return -1;
     // 关键：默认 framebuffer 是 Tegra block-linear 布局，必须转为线性，
     // 否则按行 memcpy 写入的数据在屏幕上会错乱/无法显示。
