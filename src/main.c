@@ -1881,8 +1881,9 @@ int main(int argc, char** argv) {
         }
 
         if (show_diag) {
-            if (touch_now.down) show_diag = 0;
+            if (touch_now.down || (down & HidNpadButton_B)) show_diag = 0;
         } else if (ui_state == UI_LIST) {
+            if (down & HidNpadButton_B) break;
             ui_list_input(down, rep);
             handle_touch_list(&touch_now);
         } else {
