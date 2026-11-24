@@ -676,4 +676,59 @@ void be_set_cursor(int hand) {
     }
 }
 
+int be_ensure_desktop_shortcut(int only_repair) {
+    wchar_t wdesk[600] = {0};
+    if (FAILED(SHGetFolderPathW(NULL, CSIDL_DESKTOPDIRECTORY, NULL, 0, wdesk)) || !wdesk[0]) {
+        if (FAILED(SHGetFolderPathW(NULL, CSIDL_DESKTOP, NULL, 0, wdesk)) || !wdesk[0]) return 0;
+    }
+    wchar_t wexe[600] = {0};
+    DWORD n = GetModuleFileNameW(NULL, wexe, 600);
+    if (n == 0 || n >= 600) return 0;
+
+    size_t dlen = wcslen(wdesk);
+    if (_wcsnicmp(wexe, wdesk, dlen) == 0 && (wexe[dlen] == L'\\' || wexe[dlen] == L'/')) {
+        return 0; // Running directly from Desktop
+    }
+
+    wchar_t wdir[600] = {0};
+    wcsncpy(wdir, wexe, 599);
+    for (int i = (int)wcslen(wdir) - 1; i >= 0; i--) {
+        if (wdir[i] == L'\\' || wdir[i] == L'/') { wdir[i] = 0; break; }
+    }
+
+    wchar_t wlnk[640] = {0};
+    _snwprintf(wlnk, 639, L"%ls\\Sir\x00E8ne.lnk", wdesk);
+    DWORD attr = GetFileAttributesW(wlnk);
+    if (attr == INVALID_FILE_ATTRIBUTES && only_repair) return 0;
+
+    IShellLinkW* psl = NULL;
+    if (FAILED(CoCreateInstance(&CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, &IID_IShellLinkW, (void**)&psl)) || !psl) {
+        return 0;
+    }
+    IPersistFile* ppf = NULL;
+    int did = 0;
+    if (SUCCEEDED(psl->lpVtbl->QueryInterface(psl, &IID_IPersistFile, (void**)&ppf)) && ppf) {
+        int need_save = 1;
+        if (attr != INVALID_FILE_ATTRIBUTES) {
+            need_save = 0;
+            if (SUCCEEDED(ppf->lpVtbl->Load(ppf, wlnk, STGM_READ))) {
+                wchar_t old_tgt[600] = {0};
+                if (SUCCEEDED(psl->lpVtbl->GetPath(psl, old_tgt, 600, NULL, 0)) && old_tgt[0]) {
+                    if (GetFileAttributesW(old_tgt) == INVALID_FILE_ATTRIBUTES) need_save = 1;
+                }
+            }
+        }
+        if (need_save) {
+            psl->lpVtbl->SetPath(psl, wexe);
+            psl->lpVtbl->SetWorkingDirectory(psl, wdir);
+            psl->lpVtbl->SetIconLocation(psl, wexe, 0);
+            psl->lpVtbl->SetDescription(psl, L"Sir\x00E8ne \x00B7 \x9AD8\x6E05\x672C\x5730\x97F3\x4E50\x64AD\x653E\x5668");
+            if (SUCCEEDED(ppf->lpVtbl->Save(ppf, wlnk, TRUE))) did = 1;
+        }
+        ppf->lpVtbl->Release(ppf);
+    }
+    psl->lpVtbl->Release(psl);
+    return did;
+}
+
 #endif

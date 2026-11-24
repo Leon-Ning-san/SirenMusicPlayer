@@ -433,4 +433,6 @@ void be_set_cursor(int hand) {
         if (c) SDL_SetCursor(c);
     }
 }
+
+int be_ensure_desktop_shortcut(int only_repair) { (void)only_repair; return 0; }
 #endif

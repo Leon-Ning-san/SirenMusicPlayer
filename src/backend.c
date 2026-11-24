@@ -135,3 +135,4 @@ void be_screen_metrics(int* out_phys_w, int* out_phys_h, float* out_scale) {
 void be_set_dark_titlebar(int dark) { (void)dark; }
 void be_toggle_fullscreen(void) {}
 int  be_is_fullscreen(void) { return 0; }
+int  be_ensure_desktop_shortcut(int only_repair) { (void)only_repair; return 0; }

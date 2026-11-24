@@ -63,7 +63,7 @@
 
 ### 桌面端（Windows / Linux / macOS）
 1. 前往 [**Releases v1.2.6 页面**](../../releases/tag/v1.2.6) 下载对应系统安装包：
-   - **Windows**：直接双击 `Sirene-v1.2.6-Windows-x64.exe`（支持命令行参数或拖入文件/文件夹）。
+   - **Windows**：直接双击 `Sirene-v1.2.6-Windows-x64.exe`（支持命令行参数或拖入文件/文件夹，首次运行将自动在桌面生成 `Sirène` 快捷方式图标）。
    - **Linux**：解压 `Sirene-v1.2.6-Linux-x86_64.tar.gz` 后运行 `./Sirene`（需系统安装 `libsdl2` 与可选 `ffmpeg` 扩展格式支持）。
    - **macOS**：解压 `Sirene-v1.2.6-macOS-arm64.zip` 打开 `Sirène.app`（如遇未知开发者拦截可执行 `xattr -cr Sirène.app`）。
 2. **添加歌曲与鼠标操控**：

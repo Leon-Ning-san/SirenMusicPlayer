@@ -112,6 +112,7 @@ static int g_is_light = 0;
 static float g_theme_pos = 0.0f;
 static float g_light_t = 0.0f;
 static float g_saved_vol = 0.85f;
+static int g_shortcut_done = 0;
 
 static TrackMeta meta;
 static Lyrics* lyr = NULL;
@@ -645,6 +646,8 @@ static void load_settings(void) {
         } else if (strncmp(line, "sort=", 5) == 0) {
             int sm = atoi(line + 5);
             if (sm >= 0 && sm <= 3) sort_mode = sm;
+        } else if (strncmp(line, "shortcut=", 9) == 0) {
+            g_shortcut_done = atoi(line + 9) ? 1 : 0;
         }
     }
     fclose(f);
@@ -656,8 +659,8 @@ static void save_settings(void) {
     snprintf(p, sizeof(p), "%s/pc_settings.cfg", be_config_dir());
     FILE* f = plat_fopen(p, "w");
     if (!f) return;
-    fprintf(f, "vol=%.3f\nmode=%d\nlight=%d\nview_grid=%d\nsort=%d\n",
-            audio_volume(), play_mode, g_is_light, view_grid, sort_mode);
+    fprintf(f, "vol=%.3f\nmode=%d\nlight=%d\nview_grid=%d\nsort=%d\nshortcut=%d\n",
+            audio_volume(), play_mode, g_is_light, view_grid, sort_mode, g_shortcut_done);
     fclose(f);
 }
 
@@ -2666,6 +2669,15 @@ int main(int argc, char** argv) {
     const char* dump_dir = getenv("SIRENE_DUMP_DIR");
     int dump_mode = (dump_dir && *dump_dir && dump_dir[0] != '0') ? 1 : 0;
     int dump_frame = 0;
+
+    if (!dump_mode) {
+        int created = be_ensure_desktop_shortcut(g_shortcut_done);
+        if (!g_shortcut_done) {
+            g_shortcut_done = 1;
+            save_settings();
+        }
+        if (created) show_toast("已自动在桌面生成 Sirène 图标");
+    }
 
     g_last_ns = plat_ticks_ns();
     while (be_should_run()) {

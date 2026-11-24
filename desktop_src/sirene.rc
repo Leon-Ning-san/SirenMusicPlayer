@@ -1,8 +1,8 @@
 #include <windows.h>
 1 ICON "../deps/sirene.ico"
 1 VERSIONINFO
-FILEVERSION     1,2,5,0
-PRODUCTVERSION  1,2,5,0
+FILEVERSION     1,2,6,0
+PRODUCTVERSION  1,2,6,0
 BEGIN
   BLOCK "StringFileInfo"
   BEGIN
@@ -10,11 +10,11 @@ BEGIN
     BEGIN
       VALUE "CompanyName",      "Sir\xC3\xA8ne\0"
       VALUE "FileDescription",  "Sir\xC3\xA8ne Music Player\0"
-      VALUE "FileVersion",      "1.2.5\0"
+      VALUE "FileVersion",      "1.2.6\0"
       VALUE "InternalName",     "Sirene\0"
       VALUE "OriginalFilename", "Sirene.exe\0"
       VALUE "ProductName",      "Sir\xC3\xA8ne Music Player\0"
-      VALUE "ProductVersion",   "1.2.5\0"
+      VALUE "ProductVersion",   "1.2.6\0"
     END
   END
   BLOCK "VarFileInfo"
