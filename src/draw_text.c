@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
@@ -148,6 +149,19 @@ void draw_text(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const c
     int cr = col & 0xFF, cg = (col >> 8) & 0xFF, cb = (col >> 16) & 0xFF;
     uint8_t ca = (col >> 24) & 0xFF;
     if (ca == 0) ca = 255;
+
+    // 暗色 Material You 界面下对字形覆盖率做轻量伽马提亮，让中英文细笔画清晰饱满
+    static uint8_t text_gamma_lut[256];
+    static int text_lut_ready = 0;
+    if (!text_lut_ready) {
+        for (int i = 0; i < 256; i++) {
+            float v = powf((float)i / 255.0f, 0.62f) * 255.0f + 0.5f;
+            if (v > 255.0f) v = 255.0f;
+            text_gamma_lut[i] = (uint8_t)v;
+        }
+        text_lut_ready = 1;
+    }
+
     float fcx = (float)x;
     const char* p = utf8;
     while (*p) {
@@ -164,7 +178,7 @@ void draw_text(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const c
                 for (int i = 0; i < g->bw; i++) {
                     int tx = gx + i;
                     if (tx < 0 || tx >= c->w) continue;
-                    uint8_t a8 = g->bmp[(size_t)j * g->bw + i];
+                    uint8_t a8 = text_gamma_lut[g->bmp[(size_t)j * g->bw + i]];
                     if (!a8) continue;
                     uint32_t alpha = ((uint32_t)a8 * ca + 127) / 255;
                     uint32_t* d = &c->px[(size_t)ty * c->w + tx];
