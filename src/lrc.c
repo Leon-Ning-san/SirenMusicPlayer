@@ -22,12 +22,16 @@ static void add_meta(Lyrics* l, const char* key, const char* val) {
 Lyrics* lyrics_load(const char* media_path) {
     char path[600];
     snprintf(path, sizeof(path), "%s", media_path);
-    size_t n = strlen(path);
-    if (n < 5) return NULL;
-    strcpy(path + n - 4, ".lrc");
+    // 修复：按最后一个 '.' 替换扩展名，兼容 .flac / .wave 等 4 字母以上扩展名
+    char* slash = strrchr(path, '/');
+    char* dot = strrchr(path, '.');
+    if (!dot || (slash && dot < slash)) return NULL;
+    size_t base_len = (size_t)(dot - path);
+    if (base_len + 5 >= sizeof(path)) return NULL;
+    strcpy(dot, ".lrc");
     FILE* f = fopen(path, "rb");
     if (!f) {
-        strcpy(path + n - 4, ".LRC");
+        strcpy(dot, ".LRC");
         f = fopen(path, "rb");
         if (!f) return NULL;
     }
@@ -58,9 +62,11 @@ Lyrics* lyrics_load(const char* media_path) {
 
     Lyrics* l = (Lyrics*)calloc(1, sizeof(Lyrics));
     l->lines = (LrcLine*)malloc(sizeof(LrcLine) * MAX_LINES);
+    double offset_sec = 0.0;
 
     char* save = NULL;
     for (char* line = strtok_r(text, "\r\n", &save); line; line = strtok_r(NULL, "\r\n", &save)) {
+        while (*line == ' ' || *line == '\t') line++;
         // parse all [tag] prefixes
         double times[16];
         int ntimes = 0;
@@ -76,7 +82,7 @@ Lyrics* lyrics_load(const char* media_path) {
             memcpy(tag, p + 1, tn);
             tag[tn] = 0;
             // time tag?
-            int mm = 0, ss = 0, ff = 0;
+            int mm = 0, ss = 0;
             int ffdigits = 0;
             if (sscanf(tag, "%d:%d.%n", &mm, &ss, &ffdigits) >= 2 || sscanf(tag, "%d:%d:%n", &mm, &ss, &ffdigits) >= 2) {
                 double frac = 0;
@@ -92,7 +98,7 @@ Lyrics* lyrics_load(const char* media_path) {
                 char* co = strchr(tag, ':');
                 if (co) {
                     *co = 0;
-                    snprintf(key, sizeof(key), "%s", tag);
+                    snprintf(key, sizeof(key), "%.15s", tag);
                     snprintf(val, sizeof(val), "%s", co + 1);
                     has_meta = 1;
                 }
@@ -100,9 +106,11 @@ Lyrics* lyrics_load(const char* media_path) {
             p = close + 1;
         }
         if (has_meta && key[0] && val[0] && !strchr(key, ':')) {
-            add_meta(l, key, val);
+            if (!strcmp(key, "offset")) offset_sec = atoi(val) / 1000.0;
+            else add_meta(l, key, val);
         }
         if (ntimes > 0) {
+            while (*p == ' ' || *p == '\t') p++;
             char txt[256];
             snprintf(txt, sizeof(txt), "%s", p);
             // trim trailing spaces
@@ -112,7 +120,8 @@ Lyrics* lyrics_load(const char* media_path) {
                 for (int i = 0; i < ntimes; i++) {
                     if (l->n >= MAX_LINES) break;
                     LrcLine* ln = &l->lines[l->n++];
-                    ln->t = times[i];
+                    ln->t = times[i] - offset_sec;
+                    if (ln->t < 0) ln->t = 0;
                     snprintf(ln->text, sizeof(ln->text), "%s", txt);
                 }
             }

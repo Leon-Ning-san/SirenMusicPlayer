@@ -3,8 +3,6 @@
 #include <string.h>
 #include <math.h>
 
-static int in_round_mask(int px, int py, int sw, int sh, int r);
-
 Canvas* canvas_new(int w, int h) {
     Canvas* c = (Canvas*)malloc(sizeof(Canvas));
     c->w = w; c->h = h;
@@ -209,7 +207,8 @@ void resample_bilinear(const uint32_t* src, int sw, int sh, uint32_t* dst, int d
                 float bot = cc + (d - cc) * tx;
                 float v = top + (bot - top) * ty;
                 int iv = (int)(v + 0.5f);
-                if (iv < 0) iv = 0; if (iv > 255) iv = 255;
+                if (iv < 0) iv = 0;
+                if (iv > 255) iv = 255;
                 out |= ((uint32_t)iv) << shift;
             }
             dst[(size_t)y * dw + x] = out;
@@ -311,13 +310,86 @@ void fill_round_rect_aa_a(Canvas* c, int x, int y, int w, int h, int r, uint32_t
     }
 }
 
+void stroke_round_rect_aa(Canvas* c, int x, int y, int w, int h, int r, int thickness, uint32_t col, uint8_t alpha) {
+    if (w <= 0 || h <= 0 || thickness <= 0 || alpha == 0) return;
+    if (r < 1) r = 1;
+    if (r > w / 2) r = w / 2;
+    if (r > h / 2) r = h / 2;
+    if (thickness > r) thickness = r;
+
+    // 四条直边（不与圆角重叠）
+    fill_rect_a(c, x + r, y, w - 2 * r, thickness, col, alpha);
+    fill_rect_a(c, x + r, y + h - thickness, w - 2 * r, thickness, col, alpha);
+    fill_rect_a(c, x, y + r, thickness, h - 2 * r, col, alpha);
+    fill_rect_a(c, x + w - thickness, y + r, thickness, h - 2 * r, col, alpha);
+
+    // 四个圆角环带抗锯齿
+    float r_out = (float)r;
+    float r_in = (float)(r - thickness);
+    for (int j = 0; j < r; j++) {
+        for (int i = 0; i < r; i++) {
+            float dx = (float)(r - i) - 0.5f;
+            float dy = (float)(r - j) - 0.5f;
+            float d = sqrtf(dx * dx + dy * dy);
+            float cov_out = r_out - d + 0.5f;
+            if (cov_out <= 0.0f) continue;
+            if (cov_out > 1.0f) cov_out = 1.0f;
+            float cov_in = r_in - d + 0.5f;
+            if (cov_in < 0.0f) cov_in = 0.0f;
+            if (cov_in > 1.0f) cov_in = 1.0f;
+            float ring = cov_out - cov_in;
+            if (ring <= 0.0f) continue;
+            uint8_t a = (uint8_t)(ring * (float)alpha + 0.5f);
+            if (a == 0) continue;
+            px_blend(c, x + i,         y + j,         col, a);
+            px_blend(c, x + w - 1 - i, y + j,         col, a);
+            px_blend(c, x + i,         y + h - 1 - j, col, a);
+            px_blend(c, x + w - 1 - i, y + h - 1 - j, col, a);
+        }
+    }
+}
+
+void fill_round_rect_shadow(Canvas* c, int x, int y, int w, int h, int r, uint8_t max_alpha) {
+    if (max_alpha == 0) return;
+    uint32_t blk = COL(0, 0, 0, 255);
+    fill_round_rect_aa_a(c, x - 4, y + 6, w + 8, h + 8, r + 4, blk, (uint8_t)(max_alpha / 3));
+    fill_round_rect_aa_a(c, x - 1, y + 4, w + 2, h + 4, r + 2, blk, (uint8_t)(max_alpha / 2));
+    fill_round_rect_aa_a(c, x + 2, y + 3, w - 2, h, r, blk, max_alpha);
+}
+
+void stroke_circle_aa(Canvas* c, int cx, int cy, int r, int thickness, uint32_t col, uint8_t alpha) {
+    if (r < 1 || thickness < 1 || alpha == 0) return;
+    float r_out = (float)r;
+    float r_in = (float)(r - thickness);
+    for (int j = -r; j <= r; j++) {
+        int y = cy + j;
+        if (y < 0 || y >= c->h) continue;
+        for (int i = -r; i <= r; i++) {
+            int x = cx + i;
+            if (x < 0 || x >= c->w) continue;
+            float d = sqrtf((float)(i * i + j * j));
+            float cov_out = r_out - d + 0.5f;
+            if (cov_out <= 0.0f) continue;
+            if (cov_out > 1.0f) cov_out = 1.0f;
+            float cov_in = r_in - d + 0.5f;
+            if (cov_in < 0.0f) cov_in = 0.0f;
+            if (cov_in > 1.0f) cov_in = 1.0f;
+            float ring = cov_out - cov_in;
+            if (ring <= 0.0f) continue;
+            uint8_t aa = (uint8_t)(ring * (float)alpha + 0.5f);
+            if (aa == 0) continue;
+            px_blend(c, x, y, col, aa);
+        }
+    }
+}
+
 // 抗锯齿三角形：对每个像素求到三条边的带符号距离，取最小值估算覆盖度
 static inline double tri_edge_dist(double ax, double ay, double bx, double by,
                                    double px, double py) {
     double ex = bx - ax, ey = by - ay;
     double len = sqrt(ex * ex + ey * ey);
     if (len < 1e-9) return 1e9;
-    return ((ey * (px - ax) - ex * (py - ay))) / len;
+    return (ex * (py - ay) - ey * (px - ax)) / len;
 }
 
 void fill_tri_aa(Canvas* c, int x0, int y0, int x1, int y1, int x2, int y2, uint32_t col) {

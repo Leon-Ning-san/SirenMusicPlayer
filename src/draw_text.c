@@ -125,6 +125,7 @@ static uint32_t next_cp(const char** p) {
 }
 
 int text_width(Font* f, float px, const char* utf8) {
+    if (!f || !utf8 || !*utf8) return 0;
     int ipx = (int)(px + 0.5f);
     if (ipx < 1) ipx = 1;
     int w = 0;
@@ -138,6 +139,7 @@ int text_width(Font* f, float px, const char* utf8) {
 }
 
 void draw_text(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8) {
+    if (!c || !f || !utf8 || !*utf8) return;
     int ipx = (int)(px + 0.5f);
     if (ipx < 1) ipx = 1;
     // find bucket scale for baseline computation
@@ -190,20 +192,19 @@ void draw_text_right(Canvas* c, Font* f, float px, int x1, int y, uint32_t col, 
 }
 
 int text_width_max(Font* f, float px, const char* utf8, int max_w) {
+    if (!f || !utf8 || !*utf8) return 0;
     int ipx = (int)(px + 0.5f);
     if (ipx < 1) ipx = 1;
     int w = 0;
     const char* p = utf8;
     const char* ell = "\xE2\x80\xA6"; // …
+    int ellw = text_width(f, px, ell);
     while (*p) {
-        const char* save = p;
         uint32_t cp = next_cp(&p);
         Glyph* g = glyph_get(f, ipx, cp);
         if (!g) continue;
         int adv = (int)(g->adv + 0.5f);
-        int ellw = text_width(f, px, ell);
         if (w + adv > max_w - ellw) {
-            // would exceed; truncate here
             return w + ellw;
         }
         w += adv;
@@ -212,9 +213,11 @@ int text_width_max(Font* f, float px, const char* utf8, int max_w) {
 }
 
 int draw_text_max(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8, int max_w) {
+    if (!c || !f || !utf8 || !*utf8) return 0;
     int ipx = (int)(px + 0.5f);
     if (ipx < 1) ipx = 1;
     const char* ell = "\xE2\x80\xA6";
+    int ellw = text_width(f, px, ell);
     char buf[256];
     const char* p = utf8;
     int w = 0;
@@ -224,13 +227,12 @@ int draw_text_max(Canvas* c, Font* f, float px, int x, int y, uint32_t col, cons
         Glyph* g = glyph_get(f, ipx, cp);
         if (!g) continue;
         int adv = (int)(g->adv + 0.5f);
-        int ellw = text_width(f, px, ell);
         if (w + adv > max_w - ellw) {
             size_t n = (size_t)(save - utf8);
             if (n >= sizeof(buf)) n = sizeof(buf) - 1;
             memcpy(buf, utf8, n);
             buf[n] = 0;
-            char cat[256];
+            char cat[264];
             snprintf(cat, sizeof(cat), "%s%s", buf, ell);
             draw_text(c, f, px, x, y, col, cat);
             return 1;

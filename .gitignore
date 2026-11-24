@@ -2,7 +2,10 @@
 build/
 *.elf
 *.nacp
+*.nro
 *.o
+*.lst
+*.map
 
 # 依赖包解压残留
 deps/drl/

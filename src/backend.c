@@ -80,8 +80,10 @@ void be_touch_update(TouchInfo* out) {
         int x = (int)st.touches[0].x;
         int y = (int)st.touches[0].y;
         // 坐标裁剪到画面范围
-        if (x < 0) x = 0; if (x >= BE_W) x = BE_W - 1;
-        if (y < 0) y = 0; if (y >= BE_H) y = BE_H - 1;
+        if (x < 0) x = 0;
+        if (x >= BE_W) x = BE_W - 1;
+        if (y < 0) y = 0;
+        if (y >= BE_H) y = BE_H - 1;
 
         out->held = 1;
         out->x = x;

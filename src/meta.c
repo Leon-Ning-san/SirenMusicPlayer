@@ -78,7 +78,9 @@ static int parse_flac(const char* path, TrackMeta* m) {
         int last = bh[0] & 0x80;
         int type = bh[0] & 0x7F;
         size_t len = ((size_t)bh[1] << 16) | ((size_t)bh[2] << 8) | bh[3];
-        if (type == 4 || type == 6) {
+        if (len > 16u * 1024u * 1024u) {
+            if (fseek(f, (long)len, SEEK_CUR) != 0) break;
+        } else if (type == 4 || type == 6) {
             unsigned char* buf = (unsigned char*)malloc(len);
             if (!buf || fread(buf, 1, len, f) != len) { free(buf); break; }
             if (type == 4) {
@@ -132,8 +134,10 @@ static int id3_open(const char* path, Id3* id) {
     if (fread(h, 1, 10, f) != 10 || memcmp(h, "ID3", 3) != 0) { fclose(f); return 0; }
     id->ver = h[3];
     size_t sz = ((size_t)(h[6] & 0x7F) << 21) | ((size_t)(h[7] & 0x7F) << 14) | ((size_t)(h[8] & 0x7F) << 7) | (size_t)(h[9] & 0x7F);
+    if (sz > 16u * 1024u * 1024u) { fclose(f); return 0; }
     id->size = sz;
     id->body = (unsigned char*)malloc(sz ? sz : 1);
+    if (!id->body) { fclose(f); return 0; }
     if (fread(id->body, 1, sz, f) != sz) { free(id->body); id->body = NULL; fclose(f); return 0; }
     fclose(f);
     return 1;
@@ -152,6 +156,7 @@ static void decode_text(const unsigned char* data, size_t n, char* out, size_t c
             if (t[0] == 0xFF && t[1] == 0xFE) { t += 2; tn -= 2; }
             else if (t[0] == 0xFE && t[1] == 0xFF) { be = 1; t += 2; tn -= 2; }
             uint16_t* u16 = (uint16_t*)malloc(tn + 2);
+            if (!u16) return;
             for (size_t i = 0; i < tn / 2; i++) {
                 uint16_t v = (uint16_t)(t[i*2] | (t[i*2+1] << 8));
                 if (be) v = (uint16_t)((v >> 8) | (v << 8));
@@ -163,6 +168,7 @@ static void decode_text(const unsigned char* data, size_t n, char* out, size_t c
     } else if (enc == 2) {
         // UTF-16BE no BOM
         uint16_t* u16 = (uint16_t*)malloc(tn + 2);
+        if (!u16) return;
         for (size_t i = 0; i < tn / 2; i++)
             u16[i] = (uint16_t)((t[i*2] << 8) | t[i*2+1]);
         my_utf16_to_utf8(u16, tn / 2, out, cap);
@@ -296,13 +302,13 @@ static unsigned char* find_image_in_mem(const unsigned char* data, size_t len, i
 // 避免为一张缩略图把整首歌读进内存。
 #define ART_SCAN_LIMIT (2u * 1024u * 1024u)
 
-static void fallback_art(const char* path, TrackMeta* m) {
+static void fallback_art(const char* path, TrackMeta* m, size_t scan_limit) {
     if (m->art) return;
     FILE* f = fopen(path, "rb");
     if (!f) return;
-    unsigned char* buf = (unsigned char*)malloc(ART_SCAN_LIMIT);
+    unsigned char* buf = (unsigned char*)malloc(scan_limit);
     if (!buf) { fclose(f); return; }
-    size_t n = fread(buf, 1, ART_SCAN_LIMIT, f);
+    size_t n = fread(buf, 1, scan_limit, f);
     fclose(f);
     if (n > 16) {
         int w = 0, h = 0;
@@ -316,7 +322,7 @@ static void fallback_art(const char* path, TrackMeta* m) {
     free(buf);
 }
 
-int meta_load(const char* path, TrackMeta* m) {
+static int meta_load_impl(const char* path, TrackMeta* m, size_t scan_limit) {
     memset(m, 0, sizeof(*m));
     int got = 0;
     if (ci_ends_with(path, ".flac")) got = parse_flac(path, m);
@@ -329,12 +335,19 @@ int meta_load(const char* path, TrackMeta* m) {
     } else if (ci_ends_with(path, ".ogg")) got = parse_ogg(path, m);
 
     // 标签解析没有拿到封面时，用二进制签名兜底
-    fallback_art(path, m);
+    fallback_art(path, m, scan_limit);
     if (m->art) got = 1;
 
-    // 文件名只在没有读到标签标题时才作为兜底（此前会盖掉 FLAC/OGG 标签标题）
     if (!m->title[0]) basename_no_ext(path, m->title, sizeof(m->title));
     return got;
+}
+
+int meta_load(const char* path, TrackMeta* m) {
+    return meta_load_impl(path, m, ART_SCAN_LIMIT);
+}
+
+int meta_load_quick(const char* path, TrackMeta* m) {
+    return meta_load_impl(path, m, 256u * 1024u);
 }
 
 void meta_release_art(TrackMeta* m) {

@@ -10,6 +10,7 @@ typedef struct TrackMeta {
 // Returns 1 if any metadata was found. art may be NULL.
 // On return, fields not found remain empty strings, art NULL.
 int meta_load(const char* path, TrackMeta* m);
+int meta_load_quick(const char* path, TrackMeta* m);
 // 只释放解码后的封面像素，保留 title/artist/album 文本
 void meta_release_art(TrackMeta* m);
 void meta_clear(TrackMeta* m);

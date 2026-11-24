@@ -135,7 +135,7 @@ static void decoder_thread(void* arg) {
                     dec_close(&dec);
                     a_duration = 0;
                     a_status = 3;
-                    snprintf(diag_last_error, sizeof(diag_last_error), "解码失败: %s", cmd_path);
+                    snprintf(diag_last_error, sizeof(diag_last_error), "解码失败: %.110s", cmd_path);
                 }
             } else {
                 if (dec.fmt != FMT_NONE && dec_seek(&dec, cmd_seek_frame) == 0) {
@@ -207,7 +207,7 @@ void audio_exit(void) {
 }
 
 static void wait_cmd_done(void) {
-    for (int i = 0; i < 600; i++) {
+    for (int i = 0; i < 2000; i++) {
         if (__atomic_load_n(&cmd_done, __ATOMIC_SEQ_CST) >= __atomic_load_n(&cmd_seq, __ATOMIC_SEQ_CST)) return;
         svcSleepThread(2 * 1000 * 1000);
     }
@@ -223,6 +223,7 @@ int audio_play(const char* path) {
     snprintf(cmd_path, sizeof(cmd_path), "%s", path);
     cmd_is_play = 1;
     a_paused = 0;
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
     __atomic_add_fetch(&cmd_seq, 1, __ATOMIC_SEQ_CST);
     wait_cmd_done();
     reset_output(0);
@@ -231,11 +232,13 @@ int audio_play(const char* path) {
 }
 
 int audio_seek(double sec) {
-    if (a_status != 2 || sec < 0) return -1;
+    if (a_status != 2) return -1;
+    if (sec < 0) sec = 0;
     double d = a_duration;
-    if (d > 1 && sec > d - 0.5) sec = d - 0.5;
+    if (d > 0.5 && sec > d - 0.25) sec = d - 0.25;
     cmd_seek_frame = (uint64_t)(sec * (double)a_rate);
     cmd_is_play = 0;
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
     __atomic_add_fetch(&cmd_seq, 1, __ATOMIC_SEQ_CST);
     wait_cmd_done();
     reset_output(sec);
@@ -262,12 +265,14 @@ float audio_volume(void) { return a_volume; }
 double audio_duration(void) { return a_duration; }
 
 double audio_position(void) {
+    if (a_status != 2) return 0;
     u32 queued = sdl_dev ? SDL_GetQueuedAudioSize(sdl_dev) : 0;
     u64 played_bytes = total_queued_bytes;
     if (queued < played_bytes) played_bytes -= queued;
     else played_bytes = 0;
     double p = base_sec + (double)played_bytes / (4.0 * OUT_RATE);
     if (p < 0) p = 0;
+    if (a_duration > 0 && p > a_duration) p = a_duration;
     return p;
 }
 
@@ -315,6 +320,10 @@ void audio_pump(void) {
 
 // ---------------- spectrum ----------------
 void audio_get_spectrum(float out[28]) {
+    if (a_paused || a_status != 2) {
+        memset(out, 0, sizeof(float) * 28);
+        return;
+    }
     static float freqs[28];
     static int inited = 0;
     if (!inited) {

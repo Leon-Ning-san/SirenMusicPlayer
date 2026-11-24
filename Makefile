@@ -59,7 +59,7 @@ SFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)) $(notdir $(w
 
 export LD := $(CC)
 
-export OFILES := $(CFILES:.c=.o) $(SFILES:.s=.o)
+export OFILES := $(CFILES:.c=.o) $(patsubst %.S,%.o,$(SFILES:.s=.o))
 
 export INCLUDE := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
                   $(foreach dir,$(LIBDIRS),-I$(dir)/include) \
