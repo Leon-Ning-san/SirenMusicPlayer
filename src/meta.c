@@ -144,12 +144,13 @@ static int id3_open(const char* path, Id3* id) {
 }
 
 static void decode_text(const unsigned char* data, size_t n, char* out, size_t cap) {
-    if (n < 1) return;
+    if (n < 1 || !out || cap == 0) return;
     int enc = data[0];
     const unsigned char* t = data + 1;
     size_t tn = n - 1;
     if (enc == 0) {
-        latin1_to_utf8(t, tn, out, cap);
+        // 中文 MP3 的 enc=0 经常实际存放 GBK 编码，优先尝试 UTF-8 / GBK 自动转码
+        text_to_utf8_auto(t, tn, out, cap);
     } else if (enc == 1) {
         if (tn >= 2) {
             int be = 0;

@@ -173,6 +173,7 @@ static TrackMeta meta;
 static Lyrics* lyr = NULL;
 static uint32_t* cover = NULL;       // 360x360 当前曲目大图
 static uint32_t* cover_prev = NULL;
+static uint32_t* poster36 = NULL;
 static uint32_t* poster52 = NULL;
 static uint32_t* poster84 = NULL;
 static Canvas* bg = NULL;
@@ -600,8 +601,11 @@ static void build_default_bg(const char* seed) {
 static void build_poster_thumbs(void) {
     size_t poster_len = (size_t)(poster_end - poster_start);
     if (poster_len < 320 * 320 * 4) return;
+    poster36 = (uint32_t*)calloc(36 * 36, 4);
     poster52 = (uint32_t*)calloc(52 * 52, 4);
     poster84 = (uint32_t*)calloc(84 * 84, 4);
+    if (poster36)
+        resample_bilinear((const uint32_t*)poster_start, 320, 320, poster36, 36, 36);
     if (poster52)
         resample_bilinear((const uint32_t*)poster_start, 320, 320, poster52, 52, 52);
     if (poster84)
@@ -799,7 +803,7 @@ static void load_track(int idx) {
         }
     }
 
-    lyr = lyrics_load(tracks[idx].path);
+    lyr = lyrics_load_ex(tracks[idx].path, p_title, p_artist);
     for (int i = 0; i < 28; i++) { bars[i] = 0; bar_peaks[i] = 0; }
     loading = 0;
 }
@@ -1261,15 +1265,20 @@ static void draw_list(void) {
     fill_rect(screen, 0, L_TOP - 1, SCR_W, 1, C_LINE);
 
     if (!portrait()) {
-        fill_ellipse_aa(screen, 42, 41, 16, 16, C_PRIMARY);
-        draw_note(screen, 33, 32, 18, C_ONPRIM);
-        draw_text(screen, font, 26, 68, 26, C_TXT, "Siren");
+        if (poster36) {
+            blit_rgba_round(screen, 26, 23, poster36, 36, 36, 10);
+            stroke_round_rect_aa(screen, 26, 23, 36, 36, 10, 1, C_LINE, 180);
+        } else {
+            fill_ellipse_aa(screen, 42, 41, 16, 16, C_PRIMARY);
+            draw_note(screen, 33, 32, 18, C_ONPRIM);
+        }
+        draw_text(screen, font, 26, 70, 26, C_TXT, "Siren");
 
         char sub[64];
         if (view == VIEW_SEARCH && search_q[0]) snprintf(sub, sizeof(sub), "%d 首匹配", nvisible);
         else if (view == VIEW_FAVORITE) snprintf(sub, sizeof(sub), "%d 首收藏", nvisible);
         else snprintf(sub, sizeof(sub), "%d 首", ntracks);
-        int cnt_x = 68 + text_width(font, 26, "Siren") + 14;
+        int cnt_x = 70 + text_width(font, 26, "Siren") + 14;
         draw_text(screen, font, 16, cnt_x, 33, C_TXT3, sub);
 
         int px = SCR_W - L_M;
@@ -1298,15 +1307,20 @@ static void draw_list(void) {
         int aw = text_width(font, 15, "全部") + 26;
         px -= aw + 10; rc_tab_all = draw_pill_btn(px, py, ph, 15, "全部", view == VIEW_HOME, C_PRIMARY);
     } else {
-        fill_ellipse_aa(screen, 38, 37, 16, 16, C_PRIMARY);
-        draw_note(screen, 29, 28, 18, C_ONPRIM);
-        draw_text(screen, font, 28, 64, 21, C_TXT, "Siren");
+        if (poster36) {
+            blit_rgba_round(screen, 22, 19, poster36, 36, 36, 10);
+            stroke_round_rect_aa(screen, 22, 19, 36, 36, 10, 1, C_LINE, 180);
+        } else {
+            fill_ellipse_aa(screen, 38, 37, 16, 16, C_PRIMARY);
+            draw_note(screen, 29, 28, 18, C_ONPRIM);
+        }
+        draw_text(screen, font, 28, 66, 21, C_TXT, "Siren");
 
         char sub[64];
         if (view == VIEW_SEARCH && search_q[0]) snprintf(sub, sizeof(sub), "%d 首匹配", nvisible);
         else if (view == VIEW_FAVORITE) snprintf(sub, sizeof(sub), "%d 首收藏", nvisible);
         else snprintf(sub, sizeof(sub), "%d 首", nvisible);
-        int cnt_x = 64 + text_width(font, 28, "Siren") + 14;
+        int cnt_x = 66 + text_width(font, 28, "Siren") + 14;
         draw_text(screen, font, 17, cnt_x, 30, C_TXT3, sub);
 
         int px = SCR_W - L_M;
@@ -1459,10 +1473,16 @@ static void draw_text_centered_max(Canvas* c, Font* f, float px, int x0, int x1,
 }
 
 static void draw_lyric_or_spectrum(int x0, int x1, int ly_top, int ly_bot, int spec_base, int spec_hint_y,
-                                   double pos, int centered) {
+                                   double pos, double dur, int centered) {
     int rw = x1 - x0;
     if (lyr) {
-        int act = lyrics_index(lyr, pos);
+        int act = lyr->unsynced
+            ? (dur > 0.0 && lyr->n > 1 ? (int)((pos / dur) * (double)(lyr->n - 1)) : 0)
+            : lyrics_index(lyr, pos);
+        if (lyr->unsynced) {
+            if (act < 0) act = 0;
+            if (act >= lyr->n) act = lyr->n - 1;
+        }
         int idxs2[9];
         int n = 0;
         for (int d = -2; d <= 3; d++) {
@@ -1495,6 +1515,13 @@ static void draw_lyric_or_spectrum(int x0, int x1, int ly_top, int ly_bot, int s
                 y += (int)px + (centered ? 22 : 20);
             }
         }
+        if (lyr->unsynced) {
+            if (centered) {
+                draw_text_centered(screen, font, 14, x0, x1, spec_hint_y, C_TXT3, "静态歌词（内嵌文本 · 按播放进度自动滚动）");
+            } else {
+                draw_text(screen, font, 14, x0 + 16, spec_hint_y, C_TXT3, "静态歌词（内嵌文本 · 按播放进度自动滚动）");
+            }
+        }
     } else {
         float sp[28];
         audio_get_spectrum(sp);
@@ -1522,10 +1549,10 @@ static void draw_lyric_or_spectrum(int x0, int x1, int ly_top, int ly_bot, int s
         }
         if (centered) {
             draw_text_centered(screen, font, 16, x0, x1, spec_hint_y, C_TXT3,
-                               "纯音乐 / 无歌词 · 同目录放入 .lrc 自动同步");
+                               "未找到歌词 · 支持同名 .lrc 及 MP3/FLAC 内嵌歌词");
         } else {
             draw_text(screen, font, 15, x0, spec_hint_y, C_TXT3,
-                      "纯音乐 / 无歌词 · 同目录放入 .lrc 自动同步");
+                      "未找到歌词 · 支持同名 .lrc 及 MP3/FLAC 内嵌歌词");
         }
     }
 }
@@ -1632,7 +1659,7 @@ static void draw_player(void) {
         draw_text_max(screen, font, 19, col_x, 162, C_TXT2, p_artist[0] ? p_artist : "未知艺术家", col_w);
         fill_rect_a(screen, col_x, 200, 64, 3, C_PRIMARY, 190);
 
-        draw_lyric_or_spectrum(col_x, col_x1, 232, 496, 466, 492, pos, 0);
+        draw_lyric_or_spectrum(col_x, col_x1, 232, 496, 466, 492, pos, dur, 0);
 
         int py = 562;
         ui_px0 = 84; ui_px1 = SCR_W - 84; ui_py = py;
@@ -1661,7 +1688,7 @@ static void draw_player(void) {
         draw_text_centered_max(screen, font, 20, 40, SCR_W - 40, cy + csz + 76, C_TXT2,
                                p_artist[0] ? p_artist : "未知艺术家");
 
-        draw_lyric_or_spectrum(40, SCR_W - 40, cy + csz + 132, 956, 920, 954, pos, 1);
+        draw_lyric_or_spectrum(40, SCR_W - 40, cy + csz + 132, 956, 920, 954, pos, dur, 1);
 
         int py = SCR_H - 224;
         ui_px0 = 56; ui_px1 = SCR_W - 56; ui_py = py;
@@ -1711,9 +1738,13 @@ static void draw_diag(void) {
         line = strtok(NULL, "\n");
     }
     char extra[256];
-    snprintf(extra, sizeof(extra), "曲库=%d 收藏=%d 播放模式=%s 主题=%s",
+    snprintf(extra, sizeof(extra), "曲库=%d 收藏=%d 模式=%s 主题=%s",
              ntracks, fav_count, mode_names[play_mode], theme_names[cur_theme]);
     draw_text(screen, font, 22, 48, yy + 10, C_TXT2, extra);
+    char lyr_info[256];
+    if (lyr) snprintf(lyr_info, sizeof(lyr_info), "歌词=已加载 %d 行 (%s)", lyr->n, lyr->source);
+    else snprintf(lyr_info, sizeof(lyr_info), "歌词=未找到 (支持外置 .lrc 与 MP3/FLAC/OGG 内嵌标签)");
+    draw_text(screen, font, 20, 48, yy + 48, C_TXT2, lyr_info);
     draw_text(screen, font, 18, 48, SCR_H - 54, C_TXT3, "若 状态=FAILED 或 设备=0 请检查 sd 卡音频与主机声音输出");
 }
 
@@ -1950,6 +1981,7 @@ int main(int argc, char** argv) {
     if (cover) free(cover);
     if (cover_prev) free(cover_prev);
     if (trans_shot) canvas_free(trans_shot);
+    if (poster36) free(poster36);
     if (poster52) free(poster52);
     if (poster84) free(poster84);
     meta_clear(&meta);
