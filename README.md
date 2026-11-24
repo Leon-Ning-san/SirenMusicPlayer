@@ -1,4 +1,4 @@
-# Siren · Switch 本地音乐播放器
+# Siren · Switch 本地音乐播放器（v1.2.0）
 
 为破解版 Nintendo Switch（Atmosphère / Hekate）制作的本地音乐播放器，输出 `.nro` 格式。纯软件渲染、无需 GPU，采用 **Google Material You (Material 3)** 视觉风格设计，完整支持**触控操作 + 手柄按键 + 陀螺仪横竖屏自动旋转**，移除多余复杂动画以保持 Switch 流畅响应，仅在列表页与播放页切换时保留约 5 帧轻量淡化过渡。
 
