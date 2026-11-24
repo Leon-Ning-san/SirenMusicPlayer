@@ -723,6 +723,8 @@ void fill_ellipse_aa_px(Canvas* c, int cx, int cy, int rx, int ry, uint32_t col)
     float d_out = 1.0f + 0.65f / minr;
     float din2 = d_in > 0.0f ? d_in * d_in : 0.0f;
     float dout2 = d_out * d_out;
+    uint32_t ca = (col >> 24) & 0xFFu;
+    uint8_t ga = ca ? (uint8_t)ca : 255u;
     uint32_t opaque = col | 0xFF000000u;
 
     int cx0, cy0, cx1, cy1;
@@ -743,8 +745,12 @@ void fill_ellipse_aa_px(Canvas* c, int cx, int cy, int rx, int ry, uint32_t col)
         if (x_in >= 0) {
             int lx = cx - x_in; if (lx < cx0) lx = cx0;
             int rx_c = cx + x_in; if (rx_c >= cx1) rx_c = cx1 - 1;
-            uint32_t* row = c->px + (size_t)y * c->w;
-            for (int x = lx; x <= rx_c; x++) row[x] = opaque;
+            if (ga >= 255) {
+                uint32_t* row = c->px + (size_t)y * c->w;
+                for (int x = lx; x <= rx_c; x++) row[x] = opaque;
+            } else {
+                for (int x = lx; x <= rx_c; x++) px_blend(c, x, y, col, ga);
+            }
         }
         int e_start = x_in + 1;
         for (int k = e_start; k <= x_out; k++) {
@@ -752,7 +758,7 @@ void fill_ellipse_aa_px(Canvas* c, int cx, int cy, int rx, int ry, uint32_t col)
             float cov = minr * (1.0f - sqrtf(ix * ix + jy2)) + 0.5f;
             if (cov <= 0.0f) continue;
             if (cov > 1.0f) cov = 1.0f;
-            uint8_t aa = (uint8_t)(cov * 255.0f + 0.5f);
+            uint8_t aa = (uint8_t)((cov * (float)ga) + 0.5f);
             px_blend(c, cx - k, y, col, aa);
             if (k > 0) px_blend(c, cx + k, y, col, aa);
         }
@@ -1134,5 +1140,80 @@ void draw_m3_wavy_progress(Canvas* c, int x0, int x1, int mid_y, float frac,
         draw_m3_wavy_progress_px(c, sc_i(s, x0), sc_i(s, x1), sc_i(s, mid_y), frac, phase,
                                  wave_amp * s, wave_period * s, sc_sz(s, wave_thick), sc_sz(s, track_thick),
                                  draw_thumb, col_active, col_track);
+    }
+}
+
+void fill_m3_scallop(Canvas* c, int cx, int cy, int r, int lobes, float rot, uint32_t col) {
+    if (!c || r < 4 || lobes < 3) return;
+    float s = c->s > 0.0f ? c->s : 1.0f;
+    int px = sc_i(s, cx), py = sc_i(s, cy), pr = sc_sz(s, r);
+    int cx0, cy0, cx1, cy1;
+    canvas_clip_bounds(c, &cx0, &cy0, &cx1, &cy1);
+    int x0 = px - pr - 2; if (x0 < cx0) x0 = cx0;
+    int y0 = py - pr - 2; if (y0 < cy0) y0 = cy0;
+    int x1 = px + pr + 2; if (x1 >= cx1) x1 = cx1 - 1;
+    int y1 = py + pr + 2; if (y1 >= cy1) y1 = cy1 - 1;
+    uint8_t ga = (uint8_t)(col >> 24);
+    if (ga == 0) ga = 255;
+    float r_base = (float)pr * 0.90f;
+    float r_amp  = (float)pr * 0.10f;
+    for (int y = y0; y <= y1; y++) {
+        float dy = (float)(y - py) + 0.5f;
+        for (int x = x0; x <= x1; x++) {
+            float dx = (float)(x - px) + 0.5f;
+            float dist = sqrtf(dx * dx + dy * dy);
+            if (dist > (float)pr + 1.5f) continue;
+            float ang = atan2f(dy, dx) + rot;
+            float target_r = r_base + r_amp * cosf((float)lobes * ang);
+            float cov = target_r - dist + 0.55f;
+            if (cov <= 0.0f) continue;
+            if (cov > 1.0f) cov = 1.0f;
+            uint8_t aa = (uint8_t)(cov * (float)ga + 0.5f);
+            px_blend(c, x, y, col, aa);
+        }
+    }
+}
+
+void fill_m3_wave_panel_right(Canvas* c, int x, int y, int w, int h, int r,
+                              int split_x, float amp, float period, float phase,
+                              uint32_t col, uint8_t alpha) {
+    if (!c || w <= 0 || h <= 0 || alpha == 0) return;
+    float s = c->s > 0.0f ? c->s : 1.0f;
+    int sx = sc_i(s, x), sy = sc_i(s, y), sw = sc_sz(s, w), sh = sc_sz(s, h);
+    int sr = sc_i(s, r);
+    if (sr > sw / 2) sr = sw / 2;
+    if (sr > sh / 2) sr = sh / 2;
+    float psplit = (float)sc_i(s, split_x);
+    float pamp = amp * s;
+    float pfreq = (period > 4.0f) ? (6.2831853f / (period * s)) : 0.08f;
+
+    int cx0, cy0, cx1, cy1;
+    canvas_clip_bounds(c, &cx0, &cy0, &cx1, &cy1);
+    int y0 = sy < cy0 ? cy0 : sy;
+    int y1 = (sy + sh > cy1) ? cy1 : (sy + sh);
+    for (int py = y0; py < y1; py++) {
+        float wedge = psplit + pamp * sinf((float)(py - sy) * pfreq + phase);
+        int j = py - sy;
+        int cy_d = (j < sr) ? (sr - j) : ((j >= sh - sr) ? (j - (sh - 1 - sr)) : 0);
+        int right_limit = sx + sw;
+        int x_start = (int)floorf(wedge - 1.0f);
+        if (x_start < sx + (int)(pamp + 2)) x_start = sx;
+        if (x_start < cx0) x_start = cx0;
+        int x_end = right_limit < cx1 ? right_limit : cx1;
+        for (int px = x_start; px < x_end; px++) {
+            float cov_l = ((float)px + 0.5f) - wedge + 0.5f;
+            if (cov_l <= 0.0f) continue;
+            if (cov_l > 1.0f) cov_l = 1.0f;
+            float cov = cov_l;
+            if (cy_d > 0 && px >= sx + sw - sr) {
+                float dx = (float)(px - (sx + sw - 1 - sr)) + 0.5f;
+                float dy = (float)cy_d - 0.5f;
+                float cc = (float)sr - sqrtf(dx * dx + dy * dy) + 0.5f;
+                if (cc <= 0.0f) continue;
+                if (cc < cov) cov = cc;
+            }
+            uint8_t aa = (uint8_t)(cov * (float)alpha + 0.5f);
+            if (aa > 0) px_blend(c, px, py, col, aa);
+        }
     }
 }

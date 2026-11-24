@@ -630,6 +630,19 @@ const char* be_config_dir(void) {
 }
 
 void be_set_cli_path(const char* p) {
+    int wargc = 0;
+    LPWSTR* wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
+    if (wargv) {
+        if (wargc > 1 && wargv[1] && wargv[1][0]) {
+            plat_wide_to_utf8(wargv[1], g_cli_path, sizeof(g_cli_path));
+            for (char* q = g_cli_path; *q; q++) if (*q == '\\') *q = '/';
+            snprintf(g_drop_path, sizeof(g_drop_path), "%s", g_cli_path);
+            g_has_drop = 1;
+            LocalFree(wargv);
+            return;
+        }
+        LocalFree(wargv);
+    }
     if (!p || !*p) return;
     snprintf(g_cli_path, sizeof(g_cli_path), "%s", p);
     for (char* q = g_cli_path; *q; q++) if (*q == '\\') *q = '/';
