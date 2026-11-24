@@ -87,7 +87,7 @@ static int  active_dir = -1;
 
 static int page = PAGE_LIBRARY;
 static int lib_tab = TAB_ALL;
-static int sort_mode = SORT_DEFAULT;
+static int sort_mode = PC_SORT_DEFAULT;
 static int sidebar_collapsed = 0;
 static int show_diag = 0;
 static int search_focused = 0;
