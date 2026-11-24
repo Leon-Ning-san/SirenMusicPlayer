@@ -48,6 +48,13 @@ jobs:
       - name: Build Sirene Linux x86_64
         run: |
           make -f Makefile.desktop
+          ldd Sirene
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy ./Sirene &
+          SPID=$!
+          sleep 1
+          kill -0 "$SPID"
+          kill -TERM "$SPID"
+          wait "$SPID" || true
           mkdir -p dist-linux
           cp Sirene icon.jpg README.md dist-linux/
           tar -czvf Sirene-v1.2.3-Linux-x86_64.tar.gz -C dist-linux .
@@ -67,8 +74,21 @@ jobs:
         run: |
           make -f Makefile.desktop macos-app
           dylibbundler -od -b -x Sirène.app/Contents/MacOS/Sirene -d Sirène.app/Contents/Frameworks/ -p @executable_path/../Frameworks/
+          SDL3_LIB="$(brew --prefix sdl3 2>/dev/null)/lib/libSDL3.0.dylib"
+          if [ -f "$SDL3_LIB" ]; then
+            cp -L "$SDL3_LIB" Sirène.app/Contents/Frameworks/libSDL3.0.dylib
+            chmod 755 Sirène.app/Contents/Frameworks/libSDL3.0.dylib
+            install_name_tool -id "@executable_path/../Frameworks/libSDL3.0.dylib" Sirène.app/Contents/Frameworks/libSDL3.0.dylib
+            ln -sf libSDL3.0.dylib Sirène.app/Contents/Frameworks/libSDL3.dylib
+          fi
           codesign --force --deep --sign - Sirène.app
-          otool -L Sirène.app/Contents/MacOS/Sirene
+          otool -L Sirène.app/Contents/MacOS/Sirene Sirène.app/Contents/Frameworks/libSDL2-2.0.0.dylib
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy ./Sirène.app/Contents/MacOS/Sirene &
+          SPID=$!
+          sleep 1
+          kill -0 "$SPID"
+          kill -TERM "$SPID"
+          wait "$SPID" || true
           zip -ry Sirene-v1.2.3-macOS-arm64.zip Sirène.app
       - uses: actions/upload-artifact@v4
         with:
