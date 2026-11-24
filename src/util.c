@@ -147,8 +147,16 @@ int ci_ends_with(const char* s, const char* suf) {
     return 1;
 }
 
+const char* path_last_sep(const char* p) {
+    if (!p) return NULL;
+    const char* s1 = strrchr(p, '/');
+    const char* s2 = strrchr(p, '\\');
+    if (s1 && s2) return s1 > s2 ? s1 : s2;
+    return s1 ? s1 : s2;
+}
+
 const char* path_basename(const char* p) {
-    const char* slash = strrchr(p, '/');
+    const char* slash = path_last_sep(p);
     if (slash) return slash + 1;
     return p;
 }

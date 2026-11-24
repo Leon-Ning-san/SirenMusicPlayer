@@ -1,0 +1,92 @@
+name: Multi-Platform Release Build (v1.2.3)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'desktop_src/**'
+      - 'Makefile.desktop'
+      - '.github/workflows/multiplatform.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msysystem: mingw64
+          update: false
+          install: mingw-w64-x86_64-gcc
+      - name: Build Sirene Windows x64
+        shell: msys2 {0}
+        run: |
+          gcc -O3 -fno-math-errno -Wall -Wextra -Isrc -Ideps \
+            src/audio.c src/decode.c src/draw.c src/draw_text.c \
+            src/lrc.c src/main.c src/meta.c src/util.c \
+            desktop_src/desktop_win.c desktop_src/desktop_blobs.S \
+            -o Sirene-v1.2.3-Windows-x64.exe \
+            -mwindows -lgdi32 -luser32 -lshell32 -lole32 -lcomdlg32 -lwinmm -luuid -lm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: Sirene-v1.2.3-Windows-x64.exe
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SDL2 dev packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev pkg-config
+      - name: Build Sirene Linux x86_64
+        run: |
+          make -f Makefile.desktop
+          mkdir -p dist-linux
+          cp Sirene icon.jpg README.md dist-linux/
+          tar -czvf Sirene-v1.2.3-Linux-x86_64.tar.gz -C dist-linux .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: Sirene-v1.2.3-Linux-x86_64.tar.gz
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SDL2 via Homebrew
+        run: |
+          brew install sdl2 pkg-config
+      - name: Build Sirene macOS App
+        run: |
+          make -f Makefile.desktop macos-app
+          otool -L Sirène.app/Contents/MacOS/Sirene
+          zip -ry Sirene-v1.2.3-macOS-arm64.zip Sirène.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: Sirene-v1.2.3-macOS-arm64.zip
+
+  publish-to-release:
+    needs: [ build-windows, build-linux, build-macos ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Upload desktop packages to Release v1.2.3
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload v1.2.3 \
+            artifacts/windows-x64/Sirene-v1.2.3-Windows-x64.exe \
+            artifacts/linux-x86_64/Sirene-v1.2.3-Linux-x86_64.tar.gz \
+            artifacts/macos-arm64/Sirene-v1.2.3-macOS-arm64.zip \
+            --repo "${{ github.repository }}" \
+            --clobber

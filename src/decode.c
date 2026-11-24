@@ -1,5 +1,6 @@
 #include "decode.h"
 #include "util.h"
+#include "plat.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -21,10 +22,19 @@ int dec_is_audio(const char* path) {
 
 int dec_open(Decoder* d, const char* path) {
     memset(d, 0, sizeof(*d));
+#ifdef _WIN32
+    wchar_t wpath[1024];
+    int has_w = plat_utf8_to_wide(path, wpath, 1024);
+#endif
     if (ci_ends_with(path, ".wav") || ci_ends_with(path, ".wave")) {
         d->fmt = FMT_WAV;
         d->wav = (drwav*)malloc(sizeof(drwav));
-        if (!drwav_init_file(d->wav, path, NULL)) { free(d->wav); d->wav = NULL; return -1; }
+#ifdef _WIN32
+        int ok = has_w ? drwav_init_file_w(d->wav, wpath, NULL) : drwav_init_file(d->wav, path, NULL);
+#else
+        int ok = drwav_init_file(d->wav, path, NULL);
+#endif
+        if (!ok) { free(d->wav); d->wav = NULL; return -1; }
         d->channels = d->wav->channels;
         d->rate = d->wav->sampleRate;
         d->total_frames = d->wav->totalPCMFrameCount;
@@ -33,7 +43,12 @@ int dec_open(Decoder* d, const char* path) {
     if (ci_ends_with(path, ".mp3")) {
         d->fmt = FMT_MP3;
         d->mp3 = (drmp3*)malloc(sizeof(drmp3));
-        if (!drmp3_init_file(d->mp3, path, NULL)) { free(d->mp3); d->mp3 = NULL; return -1; }
+#ifdef _WIN32
+        int ok = has_w ? drmp3_init_file_w(d->mp3, wpath, NULL) : drmp3_init_file(d->mp3, path, NULL);
+#else
+        int ok = drmp3_init_file(d->mp3, path, NULL);
+#endif
+        if (!ok) { free(d->mp3); d->mp3 = NULL; return -1; }
         d->channels = d->mp3->channels;
         d->rate = d->mp3->sampleRate;
         d->total_frames = drmp3_get_pcm_frame_count(d->mp3);
@@ -41,7 +56,11 @@ int dec_open(Decoder* d, const char* path) {
     }
     if (ci_ends_with(path, ".flac")) {
         d->fmt = FMT_FLAC;
+#ifdef _WIN32
+        d->flac = has_w ? drflac_open_file_w(wpath, NULL) : drflac_open_file(path, NULL);
+#else
         d->flac = drflac_open_file(path, NULL);
+#endif
         if (!d->flac) return -1;
         d->channels = d->flac->channels;
         d->rate = d->flac->sampleRate;
@@ -50,8 +69,14 @@ int dec_open(Decoder* d, const char* path) {
     }
     if (ci_ends_with(path, ".ogg")) {
         d->fmt = FMT_OGG;
-        int err;
+        int err = 0;
+#ifdef _WIN32
+        FILE* fp = plat_fopen(path, "rb");
+        d->ogg = fp ? stb_vorbis_open_file(fp, 1, &err, NULL) : NULL;
+        if (!d->ogg && fp) fclose(fp);
+#else
         d->ogg = stb_vorbis_open_filename(path, &err, NULL);
+#endif
         if (!d->ogg) return -1;
         stb_vorbis_info info = stb_vorbis_get_info(d->ogg);
         d->channels = info.channels;

@@ -1,11 +1,22 @@
 #include "audio.h"
 #include "decode.h"
-#include <switch.h>
-#include <SDL2/SDL.h>
+#include "plat.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
+
+#if defined(_WIN32) && !defined(USE_SDL_AUDIO)
+#define AUDIO_USE_WINMM 1
+#include <mmsystem.h>
+#else
+#define AUDIO_USE_SDL 1
+#include <SDL2/SDL.h>
+#endif
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 #define RING_FRAMES   (48000 * 12)   // 12 seconds @48k stereo
 #define CHUNK_FRAMES  4096
@@ -17,13 +28,13 @@
 static int16_t* ring = NULL;
 static volatile uint64_t ring_w = 0;
 static volatile uint64_t ring_r = 0;
-static Mutex ringmtx;
+static PlatMutex ringmtx;
 
 static uint64_t ring_count(void) { return ring_w - ring_r; }
 static uint64_t ring_free(void) { return (uint64_t)RING_FRAMES - (ring_w - ring_r); }
 
 // ---------------- decoder thread state ----------------
-static Thread decThread;
+static PlatThread decThread;
 static volatile int thrun = 1;
 static volatile int a_paused = 0;
 static volatile float a_volume = 0.85f;
@@ -46,16 +57,24 @@ static char cmd_path[600];
 static volatile int cmd_is_play = 0;
 static volatile uint64_t cmd_seek_frame = 0;
 
-// ---------------- SDL audio device ----------------
+// ---------------- audio output device ----------------
+#if AUDIO_USE_SDL
 static SDL_AudioDeviceID sdl_dev = 0;
-static volatile uint64_t total_queued_bytes = 0;  // bytes ever queued since (re)start
-static volatile double base_sec = 0;              // position offset (after seek)
+#else
+#define WIN_BUFS 12
+#define WIN_BUF_FRAMES 2048
+static HWAVEOUT hwo = NULL;
+static WAVEHDR whdr[WIN_BUFS];
+static int16_t* wbuf[WIN_BUFS];
+#endif
+static volatile uint64_t total_queued_bytes = 0;
+static volatile double base_sec = 0;
 
 // ---------------- diagnostics ----------------
-static volatile int diag_sdl_init = 0;    // SDL_Init result (0=ok, <0 fail)
-static volatile int diag_dev_open = 0;    // SDL_OpenAudioDevice: 1 ok, 0 fail
-static volatile int diag_thread = 0;      // decoder thread created: 1 ok
-static volatile uint64_t diag_decoded_chunks = 0; // chunks decoded by thread
+static volatile int diag_sdl_init = 0;
+static volatile int diag_dev_open = 0;
+static volatile int diag_thread = 0;
+static volatile uint64_t diag_decoded_chunks = 0;
 static char diag_last_error[128] = {0};
 
 // spectrum history (main thread)
@@ -98,7 +117,7 @@ static void push_chunk(const int16_t* chunk, int frames, int channels) {
     }
     rs_pos -= (double)frames;
     if (outn > 0) {
-        mutexLock(&ringmtx);
+        plat_mutex_lock(&ringmtx);
         for (long i = 0; i < outn; i++) {
             uint64_t idx = ring_w % (uint64_t)RING_FRAMES;
             ring[(size_t)idx * 2 + 0] = tmp[(size_t)i * 2 + 0];
@@ -106,7 +125,7 @@ static void push_chunk(const int16_t* chunk, int frames, int channels) {
             ring_w++;
         }
         out_total += (uint64_t)outn;
-        mutexUnlock(&ringmtx);
+        plat_mutex_unlock(&ringmtx);
     }
     free(tmp);
 }
@@ -119,10 +138,10 @@ static void decoder_thread(void* arg) {
         if (seq != cmd_done) {
             if (cmd_is_play) {
                 dec_close(&dec);
-                mutexLock(&ringmtx);
+                plat_mutex_lock(&ringmtx);
                 ring_w = ring_r = 0;
                 out_total = 0;
-                mutexUnlock(&ringmtx);
+                plat_mutex_unlock(&ringmtx);
                 dec_eof = 0;
                 rs_pos = 0;
                 rs_last[0] = rs_last[1] = 0;
@@ -139,10 +158,10 @@ static void decoder_thread(void* arg) {
                 }
             } else {
                 if (dec.fmt != FMT_NONE && dec_seek(&dec, cmd_seek_frame) == 0) {
-                    mutexLock(&ringmtx);
+                    plat_mutex_lock(&ringmtx);
                     ring_w = ring_r = 0;
                     out_total = 0;
-                    mutexUnlock(&ringmtx);
+                    plat_mutex_unlock(&ringmtx);
                     dec_eof = 0;
                     rs_pos = 0;
                 }
@@ -159,17 +178,37 @@ static void decoder_thread(void* arg) {
                     diag_decoded_chunks++;
                 }
             } else {
-                svcSleepThread(3 * 1000 * 1000);
+                plat_sleep_ms(3);
             }
         } else {
-            svcSleepThread(6 * 1000 * 1000);
+            plat_sleep_ms(6);
         }
     }
 }
 
+#if AUDIO_USE_WINMM
+static uint32_t win_queued_bytes(void) {
+    if (!hwo) return 0;
+    MMTIME mmt;
+    mmt.wType = TIME_BYTES;
+    if (waveOutGetPosition(hwo, &mmt, sizeof(mmt)) == MMSYSERR_NOERROR && mmt.wType == TIME_BYTES) {
+        if ((uint64_t)mmt.u.cb < total_queued_bytes)
+            return (uint32_t)(total_queued_bytes - (uint64_t)mmt.u.cb);
+        return 0;
+    }
+    uint32_t q = 0;
+    for (int i = 0; i < WIN_BUFS; i++) {
+        if ((whdr[i].dwFlags & WHDR_PREPARED) && !(whdr[i].dwFlags & WHDR_DONE))
+            q += whdr[i].dwBufferLength;
+    }
+    return q;
+}
+#endif
+
 // ---------------- public API ----------------
 int audio_init(void) {
-    diag_sdl_init = SDL_Init(SDL_INIT_AUDIO);
+#if AUDIO_USE_SDL
+    diag_sdl_init = SDL_InitSubSystem(SDL_INIT_AUDIO);
     if (diag_sdl_init != 0) { snprintf(diag_last_error, sizeof(diag_last_error), "SDL_Init失败: %s", SDL_GetError()); return -1; }
 
     SDL_AudioSpec want, have;
@@ -178,45 +217,93 @@ int audio_init(void) {
     want.format = AUDIO_S16SYS;
     want.channels = 2;
     want.samples = 1024;
-    want.callback = NULL;  // use SDL_QueueAudio
+    want.callback = NULL;
     sdl_dev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
     diag_dev_open = sdl_dev ? 1 : 0;
     if (sdl_dev == 0) { snprintf(diag_last_error, sizeof(diag_last_error), "音频设备打开失败: %s", SDL_GetError()); return -1; }
-    SDL_PauseAudioDevice(sdl_dev, 0);  // start
+    SDL_PauseAudioDevice(sdl_dev, 0);
+#else
+    WAVEFORMATEX wf;
+    memset(&wf, 0, sizeof(wf));
+    wf.wFormatTag = WAVE_FORMAT_PCM;
+    wf.nChannels = 2;
+    wf.nSamplesPerSec = OUT_RATE;
+    wf.wBitsPerSample = 16;
+    wf.nBlockAlign = 4;
+    wf.nAvgBytesPerSec = OUT_RATE * 4;
+    MMRESULT mr = waveOutOpen(&hwo, WAVE_MAPPER, &wf, 0, 0, CALLBACK_NULL);
+    diag_sdl_init = (mr == MMSYSERR_NOERROR) ? 0 : -1;
+    diag_dev_open = (hwo != NULL) ? 1 : 0;
+    if (mr != MMSYSERR_NOERROR) {
+        snprintf(diag_last_error, sizeof(diag_last_error), "waveOutOpen失败: %u", (unsigned)mr);
+        return -1;
+    }
+    for (int i = 0; i < WIN_BUFS; i++) {
+        wbuf[i] = (int16_t*)calloc(WIN_BUF_FRAMES * 2, sizeof(int16_t));
+        memset(&whdr[i], 0, sizeof(WAVEHDR));
+        whdr[i].dwFlags = WHDR_DONE;
+    }
+#endif
 
     ring = (int16_t*)malloc((size_t)RING_FRAMES * 2 * sizeof(int16_t));
     if (!ring) { snprintf(diag_last_error, sizeof(diag_last_error), "环形缓冲分配失败"); return -1; }
-    mutexInit(&ringmtx);
-    Result rc = threadCreate(&decThread, decoder_thread, NULL, NULL, 0x40000, 0x3B, -2);
-    if (R_FAILED(rc)) { snprintf(diag_last_error, sizeof(diag_last_error), "解码线程创建失败: 0x%x", (unsigned)rc); return -1; }
+    plat_mutex_init(&ringmtx);
+    if (plat_thread_create(&decThread, decoder_thread, NULL) != 0) {
+        snprintf(diag_last_error, sizeof(diag_last_error), "解码线程创建失败");
+        return -1;
+    }
     diag_thread = 1;
-    threadStart(&decThread);
     return 0;
 }
 
 void audio_exit(void) {
     thrun = 0;
-    threadWaitForExit(&decThread);
-    threadClose(&decThread);
+    plat_thread_join(&decThread);
+#if AUDIO_USE_SDL
     if (sdl_dev) {
         SDL_PauseAudioDevice(sdl_dev, 1);
         SDL_CloseAudioDevice(sdl_dev);
         sdl_dev = 0;
     }
     SDL_QuitSubSystem(SDL_INIT_AUDIO);
+#else
+    if (hwo) {
+        waveOutReset(hwo);
+        for (int i = 0; i < WIN_BUFS; i++) {
+            if (whdr[i].dwFlags & WHDR_PREPARED) waveOutUnprepareHeader(hwo, &whdr[i], sizeof(WAVEHDR));
+            free(wbuf[i]);
+            wbuf[i] = NULL;
+        }
+        waveOutClose(hwo);
+        hwo = NULL;
+    }
+#endif
+    free(ring);
+    ring = NULL;
 }
 
 static void wait_cmd_done(void) {
     for (int i = 0; i < 2000; i++) {
         if (__atomic_load_n(&cmd_done, __ATOMIC_SEQ_CST) >= __atomic_load_n(&cmd_seq, __ATOMIC_SEQ_CST)) return;
-        svcSleepThread(2 * 1000 * 1000);
+        plat_sleep_ms(2);
     }
 }
 
 static void reset_output(double base) {
     base_sec = base;
     total_queued_bytes = 0;
+#if AUDIO_USE_SDL
     if (sdl_dev) SDL_ClearQueuedAudio(sdl_dev);
+#else
+    if (hwo) {
+        waveOutReset(hwo);
+        for (int i = 0; i < WIN_BUFS; i++) {
+            if (whdr[i].dwFlags & WHDR_PREPARED) waveOutUnprepareHeader(hwo, &whdr[i], sizeof(WAVEHDR));
+            memset(&whdr[i], 0, sizeof(WAVEHDR));
+            whdr[i].dwFlags = WHDR_DONE;
+        }
+    }
+#endif
 }
 
 int audio_play(const char* path) {
@@ -227,7 +314,11 @@ int audio_play(const char* path) {
     __atomic_add_fetch(&cmd_seq, 1, __ATOMIC_SEQ_CST);
     wait_cmd_done();
     reset_output(0);
+#if AUDIO_USE_SDL
     if (sdl_dev) SDL_PauseAudioDevice(sdl_dev, 0);
+#else
+    if (hwo) waveOutRestart(hwo);
+#endif
     return 0;
 }
 
@@ -247,11 +338,19 @@ int audio_seek(double sec) {
 
 void audio_pause(void) {
     a_paused = 1;
+#if AUDIO_USE_SDL
     if (sdl_dev) SDL_PauseAudioDevice(sdl_dev, 1);
+#else
+    if (hwo) waveOutPause(hwo);
+#endif
 }
 void audio_resume(void) {
     a_paused = 0;
+#if AUDIO_USE_SDL
     if (sdl_dev) SDL_PauseAudioDevice(sdl_dev, 0);
+#else
+    if (hwo) waveOutRestart(hwo);
+#endif
 }
 int audio_paused(void) { return a_paused; }
 
@@ -266,8 +365,12 @@ double audio_duration(void) { return a_duration; }
 
 double audio_position(void) {
     if (a_status != 2) return 0;
-    u32 queued = sdl_dev ? SDL_GetQueuedAudioSize(sdl_dev) : 0;
-    u64 played_bytes = total_queued_bytes;
+#if AUDIO_USE_SDL
+    uint32_t queued = sdl_dev ? SDL_GetQueuedAudioSize(sdl_dev) : 0;
+#else
+    uint32_t queued = win_queued_bytes();
+#endif
+    uint64_t played_bytes = total_queued_bytes;
     if (queued < played_bytes) played_bytes -= queued;
     else played_bytes = 0;
     double p = base_sec + (double)played_bytes / (4.0 * OUT_RATE);
@@ -280,22 +383,27 @@ int audio_status(void) { return a_status; }
 
 int audio_finished(void) {
     if (a_status != 2) return 0;
-    u32 queued = sdl_dev ? SDL_GetQueuedAudioSize(sdl_dev) : 0;
+#if AUDIO_USE_SDL
+    uint32_t queued = sdl_dev ? SDL_GetQueuedAudioSize(sdl_dev) : 0;
+#else
+    uint32_t queued = win_queued_bytes();
+#endif
     return (dec_eof && ring_count() == 0 && queued == 0) ? 1 : 0;
 }
 
-// pump decoded PCM from ring into SDL, applying software volume
 void audio_pump(void) {
-    if (a_status != 2 || !sdl_dev || a_paused) return;
-    u32 queued = SDL_GetQueuedAudioSize(sdl_dev);
+    if (a_status != 2 || a_paused) return;
+#if AUDIO_USE_SDL
+    if (!sdl_dev) return;
+    uint32_t queued = SDL_GetQueuedAudioSize(sdl_dev);
     if (queued >= QUEUE_TARGET) return;
     int want = (int)((QUEUE_TARGET - queued) / 4);
     if (want > 4096) want = 4096;
 
     int16_t buf[4096 * 2];
-    mutexLock(&ringmtx);
-    u64 avail = ring_count();
-    if ((u64)want > avail) want = (int)avail;
+    plat_mutex_lock(&ringmtx);
+    uint64_t avail = ring_count();
+    if ((uint64_t)want > avail) want = (int)avail;
     float vol = a_volume;
     for (int i = 0; i < want; i++) {
         uint64_t idx = ring_r % (uint64_t)RING_FRAMES;
@@ -303,19 +411,57 @@ void audio_pump(void) {
         buf[i * 2 + 1] = (int16_t)(ring[(size_t)idx * 2 + 1] * vol);
         ring_r++;
     }
-    mutexUnlock(&ringmtx);
+    plat_mutex_unlock(&ringmtx);
     if (want <= 0) return;
 
     SDL_QueueAudio(sdl_dev, buf, (Uint32)want * 4);
     total_queued_bytes += (uint64_t)want * 4;
 
-    // spectrum history
     for (int i = 0; i < want; i++) {
         uint64_t w = spec_w % (uint64_t)SPEC_N;
         spec_hist[(size_t)w * 2 + 0] = buf[i * 2 + 0];
         spec_hist[(size_t)w * 2 + 1] = buf[i * 2 + 1];
         spec_w++;
     }
+#else
+    if (!hwo) return;
+    for (int b = 0; b < WIN_BUFS; b++) {
+        if ((whdr[b].dwFlags & WHDR_PREPARED) && !(whdr[b].dwFlags & WHDR_DONE)) continue;
+        if (win_queued_bytes() >= QUEUE_TARGET * 2) break;
+        if (whdr[b].dwFlags & WHDR_PREPARED) {
+            waveOutUnprepareHeader(hwo, &whdr[b], sizeof(WAVEHDR));
+        }
+
+        plat_mutex_lock(&ringmtx);
+        uint64_t avail = ring_count();
+        int want = WIN_BUF_FRAMES;
+        if ((uint64_t)want > avail) want = (int)avail;
+        float vol = a_volume;
+        int16_t* dst = wbuf[b];
+        for (int i = 0; i < want; i++) {
+            uint64_t idx = ring_r % (uint64_t)RING_FRAMES;
+            dst[i * 2 + 0] = (int16_t)(ring[(size_t)idx * 2 + 0] * vol);
+            dst[i * 2 + 1] = (int16_t)(ring[(size_t)idx * 2 + 1] * vol);
+            ring_r++;
+        }
+        plat_mutex_unlock(&ringmtx);
+        if (want <= 0) { whdr[b].dwFlags = WHDR_DONE; break; }
+
+        memset(&whdr[b], 0, sizeof(WAVEHDR));
+        whdr[b].lpData = (LPSTR)dst;
+        whdr[b].dwBufferLength = (DWORD)(want * 4);
+        waveOutPrepareHeader(hwo, &whdr[b], sizeof(WAVEHDR));
+        waveOutWrite(hwo, &whdr[b], sizeof(WAVEHDR));
+        total_queued_bytes += (uint64_t)want * 4;
+
+        for (int i = 0; i < want; i++) {
+            uint64_t w = spec_w % (uint64_t)SPEC_N;
+            spec_hist[(size_t)w * 2 + 0] = dst[i * 2 + 0];
+            spec_hist[(size_t)w * 2 + 1] = dst[i * 2 + 1];
+            spec_w++;
+        }
+    }
+#endif
 }
 
 // ---------------- spectrum ----------------
@@ -363,18 +509,24 @@ void audio_get_spectrum(float out[28]) {
 
 // ---------------- diagnostics ----------------
 void audio_get_diag(char* buf, size_t cap) {
-    u32 queued = sdl_dev ? SDL_GetQueuedAudioSize(sdl_dev) : 0;
+#if AUDIO_USE_SDL
+    uint32_t queued = sdl_dev ? SDL_GetQueuedAudioSize(sdl_dev) : 0;
+    const char* drv = "SDL2";
+#else
+    uint32_t queued = win_queued_bytes();
+    const char* drv = "WinMM";
+#endif
     const char* st = a_status == 0 ? "IDLE" : a_status == 1 ? "OPENING" : a_status == 2 ? "READY" : "FAILED";
     snprintf(buf, cap,
-        "SDL_Init=%d 设备=%d 线程=%d\n"
-        "状态=%s  解码块=%llu\n"
-        "队列=%u B  环形=%llu 帧\n"
+        "%s Init=%d 设备=%d 线程=%d\n"
+        "状态=%s  解码块=%lu\n"
+        "队列=%u B  环形=%lu 帧\n"
         "时长=%.1fs 已播放=%.1fs\n"
         "重采样率=%u  声道=%u\n"
         "%s",
-        diag_sdl_init, diag_dev_open, diag_thread,
-        st, (unsigned long long)diag_decoded_chunks,
-        (unsigned)queued, (unsigned long long)ring_count(),
+        drv, diag_sdl_init, diag_dev_open, diag_thread,
+        st, (unsigned long)diag_decoded_chunks,
+        (unsigned)queued, (unsigned long)ring_count(),
         (double)a_duration, audio_position(),
         (unsigned)a_rate, (unsigned)dec.channels,
         diag_last_error[0] ? diag_last_error : "");

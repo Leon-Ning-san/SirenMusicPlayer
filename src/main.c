@@ -1,16 +1,14 @@
-#include <switch.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <ctype.h>
-#include <dirent.h>
-#include <sys/stat.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
+#include "plat.h"
 #include "backend.h"
 #include "draw.h"
 #include "audio.h"
@@ -231,8 +229,11 @@ static int vol_overlay_timer = 0;
 static int show_diag = 0;
 static int show_vol_panel = 0;
 static int show_exit_confirm = 0;
+static int show_search_box = 0;
 static int g_want_exit = 0;
 static float saved_mute_vol = 0.85f;
+static char custom_music_dir[600] = "";
+static char search_edit[128] = "";
 
 // ---------- 60 FPS 时间驱动淡入动画 & Click Wheel 缓存 ----------
 static double g_dt = 0.016;
@@ -252,7 +253,14 @@ static int wc_sel_play = -1, wc_ro = 0, wc_ri = 0;
 static char toast_text[96];
 static int toast_timer = 0;
 static void show_toast(const char* s) {
-    snprintf(toast_text, sizeof(toast_text), "%s", s);
+    if (!s) { toast_text[0] = 0; toast_timer = 0; return; }
+    size_t n = strlen(s);
+    if (n >= sizeof(toast_text)) {
+        n = sizeof(toast_text) - 1;
+        while (n > 0 && ((unsigned char)s[n] & 0xC0) == 0x80) n--;
+    }
+    memcpy(toast_text, s, n);
+    toast_text[n] = 0;
     toast_timer = 90;
 }
 
@@ -287,6 +295,7 @@ static Rect rc_vol_box, rc_vol_minus, rc_vol_plus, rc_vol_mute, rc_vol_close;
 static int  vol_sx0, vol_sx1, vol_sy;
 static Rect rc_exit_box, rc_exit_ok, rc_exit_cancel;
 static Rect rc_diag_close, rc_diag_box;
+static Rect rc_sr_box, rc_sr_ok, rc_sr_clear, rc_sr_cancel;
 
 // ---------- 淡入过渡辅助 ----------
 static void capture_fade(void) {
@@ -309,9 +318,62 @@ static void trigger_modal_fade(void) {
 }
 
 // ---------- 设置 & 收藏持久化 ----------
+static void ensure_dir_recursive(const char* path) {
+    char tmp[600];
+    snprintf(tmp, sizeof(tmp), "%s", path);
+    for (char* p = tmp + 1; *p; p++) {
+        if (*p == '/' || *p == '\\') {
+#ifdef _WIN32
+            if (p == tmp + 2 && tmp[1] == ':') continue;
+#endif
+            char sav = *p;
+            *p = 0;
+            plat_mkdir_p(tmp);
+            *p = sav;
+        }
+    }
+    plat_mkdir_p(tmp);
+}
+
+static void cfg_join(char* out, size_t cap, const char* file) {
+    const char* dir = be_config_dir();
+    size_t n = strlen(dir);
+    while (n > 0 && (dir[n - 1] == '/' || dir[n - 1] == '\\')) n--;
+    snprintf(out, cap, "%.*s/%s", (int)n, dir, file);
+}
+
+static void save_custom_dir(void) {
+    if (!be_is_desktop()) return;
+    ensure_dir_recursive(be_config_dir());
+    char p[640];
+    cfg_join(p, sizeof(p), "music_dir.cfg");
+    FILE* f = plat_fopen(p, "w");
+    if (f) {
+        if (custom_music_dir[0]) fprintf(f, "%s\n", custom_music_dir);
+        fclose(f);
+    }
+}
+
+static void load_custom_dir(void) {
+    if (!be_is_desktop()) return;
+    char p[640];
+    cfg_join(p, sizeof(p), "music_dir.cfg");
+    FILE* f = plat_fopen(p, "r");
+    if (f) {
+        if (fgets(custom_music_dir, sizeof(custom_music_dir), f)) {
+            size_t len = strlen(custom_music_dir);
+            while (len > 0 && (custom_music_dir[len - 1] == '\n' || custom_music_dir[len - 1] == '\r'))
+                custom_music_dir[--len] = 0;
+        }
+        fclose(f);
+    }
+}
+
 static void save_settings(void) {
-    mkdir("sdmc:/Sirene", 0777);
-    FILE* f = fopen("sdmc:/Sirene/settings.cfg", "w");
+    ensure_dir_recursive(be_config_dir());
+    char p[640];
+    cfg_join(p, sizeof(p), "settings.cfg");
+    FILE* f = plat_fopen(p, "w");
     if (f) {
         fprintf(f, "%d %d %.2f\n", cur_theme, play_mode, audio_volume());
         fclose(f);
@@ -319,11 +381,15 @@ static void save_settings(void) {
 }
 
 static void load_settings(void) {
-    mkdir("sdmc:/Sirene", 0777);
+    ensure_dir_recursive(be_config_dir());
     int t = THEME_FROST, pm = MODE_LOOP_ALL;
     float vol = 0.85f;
-    FILE* f = fopen("sdmc:/Sirene/settings.cfg", "r");
-    if (!f) f = fopen("sdmc:/Siren/settings.cfg", "r");
+    char p[640];
+    cfg_join(p, sizeof(p), "settings.cfg");
+    FILE* f = plat_fopen(p, "r");
+#ifdef __SWITCH__
+    if (!f) f = plat_fopen("sdmc:/Siren/settings.cfg", "r");
+#endif
     if (f) {
         if (fscanf(f, "%d %d %f", &t, &pm, &vol) >= 1) {
             if (pm >= 0 && pm < MODE_COUNT) play_mode = pm;
@@ -335,8 +401,10 @@ static void load_settings(void) {
 }
 
 static void save_favorites(void) {
-    mkdir("sdmc:/Sirene", 0777);
-    FILE* f = fopen("sdmc:/Sirene/favorites.cfg", "w");
+    ensure_dir_recursive(be_config_dir());
+    char p[640];
+    cfg_join(p, sizeof(p), "favorites.cfg");
+    FILE* f = plat_fopen(p, "w");
     if (!f) return;
     for (int i = 0; i < ntracks; i++) {
         if (tracks[i].fav) fprintf(f, "%s\n", tracks[i].path);
@@ -349,8 +417,12 @@ static int cmp_track_key(const void* key, const void* elem) {
 }
 
 static void load_favorites(void) {
-    FILE* f = fopen("sdmc:/Sirene/favorites.cfg", "r");
-    if (!f) f = fopen("sdmc:/Siren/favorites.cfg", "r");
+    char p[640];
+    cfg_join(p, sizeof(p), "favorites.cfg");
+    FILE* f = plat_fopen(p, "r");
+#ifdef __SWITCH__
+    if (!f) f = plat_fopen("sdmc:/Siren/favorites.cfg", "r");
+#endif
     if (!f) return;
     char line[640];
     fav_count = 0;
@@ -367,6 +439,7 @@ static void load_favorites(void) {
     fclose(f);
 }
 
+#ifdef __SWITCH__
 // ---------- 六轴加速度计（单向顺时针竖屏自动检测） ----------
 static HidSixAxisSensorHandle g_six_handle;
 static int g_six_ok = 0;
@@ -389,6 +462,9 @@ static int ori_read_candidate(void) {
     if (fabsf(ay) > 0.68f && fabsf(ax) < 0.42f) return ORI_LAND;
     return ori;
 }
+#else
+static void sixaxis_init(void) {}
+#endif
 
 static void rebuild_lcd_ambient(void);
 static float max_scroll_px(void);
@@ -504,10 +580,9 @@ static float clampf(float v, float lo, float hi) {
 }
 
 static void frame_begin(void) {
-    uint64_t now = armGetSystemTick();
-    uint64_t freq = armGetSystemTickFreq();
+    uint64_t now = plat_ticks_ns();
     if (g_last_tick) {
-        double d = (double)(now - g_last_tick) / (double)freq;
+        double d = (double)(now - g_last_tick) / 1000000000.0;
         if (d < 0.001) d = 0.001;
         if (d > 0.05) d = 0.05;
         g_dt = d;
@@ -740,37 +815,28 @@ static int should_skip_dir(const char* name) {
 
 static void join_clean_path(char* dst, size_t cap, const char* dir, const char* name) {
     size_t len = strlen(dir);
-    while (len > 0 && dir[len - 1] == '/') len--;
+    while (len > 0 && (dir[len - 1] == '/' || dir[len - 1] == '\\')) len--;
     if (len == 0) snprintf(dst, cap, "/%s", name);
     else snprintf(dst, cap, "%.*s/%s", (int)len, dir, name);
 }
 
 static void scan_dir(const char* dir, int depth) {
-    if (depth > 4 || ntracks >= MAX_TRACKS) return;
-    DIR* d = opendir(dir);
+    if (!dir || !*dir || depth > 5 || ntracks >= MAX_TRACKS) return;
+    PlatDir* d = plat_opendir(dir);
     if (!d) return;
-    struct dirent* e;
-    while ((e = readdir(d)) != NULL) {
-        if (e->d_name[0] == '.') continue;
+    PlatDirent e;
+    while (plat_readdir(d, &e)) {
+        if (e.d_name[0] == '.') continue;
         char path[600];
-        join_clean_path(path, sizeof(path), dir, e->d_name);
+        join_clean_path(path, sizeof(path), dir, e.d_name);
 
-        int is_dir = 0, is_reg = 0;
-#ifdef DT_DIR
-        if (e->d_type == DT_DIR) is_dir = 1;
-        else if (e->d_type == DT_REG) is_reg = 1;
-        else
-#endif
-        {
-            struct stat st;
-            if (stat(path, &st) == 0) {
-                is_dir = S_ISDIR(st.st_mode);
-                is_reg = S_ISREG(st.st_mode);
-            }
+        int is_dir = e.is_dir, is_reg = e.is_reg;
+        if (!is_dir && !is_reg) {
+            if (plat_stat_type(path, &is_dir, &is_reg) != 0) continue;
         }
 
         if (is_dir) {
-            if (!should_skip_dir(e->d_name)) scan_dir(path, depth + 1);
+            if (!should_skip_dir(e.d_name)) scan_dir(path, depth + 1);
         } else if (is_reg && dec_is_audio(path)) {
             if (ntracks < MAX_TRACKS) {
                 snprintf(tracks[ntracks].path, sizeof(tracks[ntracks].path), "%s", path);
@@ -778,7 +844,7 @@ static void scan_dir(const char* dir, int depth) {
             }
         }
     }
-    closedir(d);
+    plat_closedir(d);
 }
 
 static int cmp_track(const void* a, const void* b) {
@@ -801,19 +867,29 @@ static void scan_library(int notify) {
     fav_count = 0;
     playing_idx = -1;
 
-    mkdir("sdmc:/music", 0777);
-    const char* roots[] = {
-        "sdmc:/music", "sdmc:/Music", "sdmc:/Musics",
-        "sdmc:/Songs", "sdmc:/Audio", "sdmc:/Playlist",
-        "sdmc:/Downloads", "sdmc:/MP3", "sdmc:/FLAC",
-        "sdmc:/音乐", "sdmc:/歌曲", "sdmc:/CloudMusic", "sdmc:/QQMusic",
-        "sdmc:/switch/Sirene", "sdmc:/switch/Siren", "sdmc:/switch/music"
-    };
-    for (unsigned i = 0; i < sizeof(roots) / sizeof(roots[0]); i++) {
-        scan_dir(roots[i], 0);
-        if (ntracks >= MAX_TRACKS) break;
+    if (be_is_desktop()) {
+        if (custom_music_dir[0]) scan_dir(custom_music_dir, 0);
+        char defs[4][600];
+        int nd = be_default_music_dirs(defs, 4);
+        for (int i = 0; i < nd && ntracks < MAX_TRACKS; i++) {
+            if (custom_music_dir[0] && !strcasecmp(defs[i], custom_music_dir)) continue;
+            scan_dir(defs[i], 0);
+        }
+    } else {
+        plat_mkdir_p("sdmc:/music");
+        const char* roots[] = {
+            "sdmc:/music", "sdmc:/Music", "sdmc:/Musics",
+            "sdmc:/Songs", "sdmc:/Audio", "sdmc:/Playlist",
+            "sdmc:/Downloads", "sdmc:/MP3", "sdmc:/FLAC",
+            "sdmc:/音乐", "sdmc:/歌曲", "sdmc:/CloudMusic", "sdmc:/QQMusic",
+            "sdmc:/switch/Sirene", "sdmc:/switch/Siren", "sdmc:/switch/music"
+        };
+        for (unsigned i = 0; i < sizeof(roots) / sizeof(roots[0]); i++) {
+            scan_dir(roots[i], 0);
+            if (ntracks >= MAX_TRACKS) break;
+        }
+        if (ntracks < MAX_TRACKS) scan_dir("sdmc:/", 0);
     }
-    if (ntracks < MAX_TRACKS) scan_dir("sdmc:/", 0);
 
     if (ntracks > 1) {
         qsort(tracks, (size_t)ntracks, sizeof(Track), cmp_track);
@@ -837,13 +913,14 @@ static void scan_library(int notify) {
 
     load_favorites();
     scroll_px = 0;
+    scroll_target = 0;
     rebuild_visible();
 
     if (notify) {
         capture_fade();
         char msg[96];
         if (ntracks > 0) snprintf(msg, sizeof(msg), "扫描完成：共找到 %d 首歌曲", ntracks);
-        else snprintf(msg, sizeof(msg), "未发现音频，请放入 sdmc:/music");
+        else snprintf(msg, sizeof(msg), be_is_desktop() ? "未发现音频，点“选目录”或拖入歌曲" : "未发现音频，请放入 sdmc:/music");
         show_toast(msg);
     }
 }
@@ -992,7 +1069,7 @@ static void load_track(int idx) {
     lyr = lyrics_load_ex(tracks[idx].path, p_title, p_artist);
     for (int i = 0; i < 28; i++) bars[i] = 0;
     loading = 0;
-    g_last_tick = armGetSystemTick();
+    g_last_tick = plat_ticks_ns();
 }
 
 static void toggle_fullscreen_player(void) {
@@ -1101,12 +1178,79 @@ static void cycle_play_mode(void) {
 }
 
 static void toggle_orientation(void) {
+    if (be_is_desktop()) return;
     ori_locked = 1;
     apply_orientation(ori == ORI_LAND ? ORI_PORT : ORI_LAND);
     show_toast(ori == ORI_PORT ? "竖屏 iPod 模式" : "横屏双栏模式");
 }
 
+static void apply_search_query(const char* q) {
+    capture_fade();
+    snprintf(search_q, sizeof(search_q), "%s", q ? q : "");
+    view = search_q[0] ? VIEW_SEARCH : VIEW_HOME;
+    scroll_px = 0;
+    scroll_target = 0;
+    rebuild_visible();
+    if (search_q[0]) {
+        char msg[96];
+        snprintf(msg, sizeof(msg), "找到 %d 首匹配歌曲", nvisible);
+        show_toast(msg);
+    } else {
+        show_toast("已显示全部歌曲");
+    }
+}
+
+static void open_desktop_folder(void) {
+    char picked[600] = {0};
+    if (!be_pick_folder(picked, sizeof(picked)) || !picked[0]) return;
+    snprintf(custom_music_dir, sizeof(custom_music_dir), "%s", picked);
+    save_custom_dir();
+    scan_library(1);
+}
+
+static void handle_dropped_path(const char* raw_p) {
+    if (!raw_p || !*raw_p) return;
+    char clean[600];
+    snprintf(clean, sizeof(clean), "%s", raw_p);
+    for (char* q = clean; *q; q++) if (*q == '\\') *q = '/';
+
+    int is_dir = 0, is_reg = 0;
+    if (plat_stat_type(clean, &is_dir, &is_reg) != 0) return;
+
+    if (is_dir) {
+        snprintf(custom_music_dir, sizeof(custom_music_dir), "%s", clean);
+        save_custom_dir();
+        scan_library(1);
+    } else if (is_reg && dec_is_audio(clean)) {
+        const char* sep = path_last_sep(clean);
+        if (sep && sep > clean) {
+            size_t dlen = (size_t)(sep - clean);
+            if (dlen >= sizeof(custom_music_dir)) dlen = sizeof(custom_music_dir) - 1;
+            memcpy(custom_music_dir, clean, dlen);
+            custom_music_dir[dlen] = 0;
+            save_custom_dir();
+            scan_library(0);
+        }
+        int hit = -1;
+        for (int i = 0; i < ntracks; i++) {
+            if (!strcasecmp(tracks[i].path, clean)) { hit = i; break; }
+        }
+        if (hit < 0 && ntracks < MAX_TRACKS) {
+            hit = ntracks++;
+            snprintf(tracks[hit].path, sizeof(tracks[hit].path), "%s", clean);
+            rebuild_visible();
+        }
+        if (hit >= 0) {
+            sel = hit;
+            ensure_pos_visible(sel_pos());
+            load_track(hit);
+            show_toast(p_title[0] ? p_title : "开始播放拖入曲目");
+        }
+    }
+}
+
 static void open_search_keyboard(void) {
+#ifdef __SWITCH__
     SwkbdConfig kbd;
     if (R_FAILED(swkbdCreate(&kbd, 0))) return;
     swkbdConfigMakePresetDefault(&kbd);
@@ -1120,22 +1264,18 @@ static void open_search_keyboard(void) {
     Result rc = swkbdShow(&kbd, out, sizeof(out));
     swkbdClose(&kbd);
     be_touch_reset();
-    g_last_tick = armGetSystemTick();
+    g_last_tick = plat_ticks_ns();
 
-    if (R_SUCCEEDED(rc)) {
-        capture_fade();
-        snprintf(search_q, sizeof(search_q), "%s", out);
-        view = search_q[0] ? VIEW_SEARCH : VIEW_HOME;
-        scroll_px = 0;
-        rebuild_visible();
-        if (search_q[0]) {
-            char msg[96];
-            snprintf(msg, sizeof(msg), "找到 %d 首匹配歌曲", nvisible);
-            show_toast(msg);
-        } else {
-            show_toast("已显示全部歌曲");
-        }
-    }
+    if (R_SUCCEEDED(rc)) apply_search_query(out);
+#else
+    capture_fade();
+    snprintf(search_edit, sizeof(search_edit), "%s", search_q);
+    show_search_box = 1;
+    show_vol_panel = 0;
+    show_exit_confirm = 0;
+    show_diag = 0;
+    be_text_input(1);
+#endif
 }
 
 // ---------- Click Wheel 乔布斯转盘交互 ----------
@@ -1332,7 +1472,8 @@ static int handle_common_touch(int x, int y) {
         return 1;
     }
     if (in_rc(x, y, rc_btn_ori)) {
-        toggle_orientation();
+        if (be_is_desktop()) open_desktop_folder();
+        else toggle_orientation();
         return 1;
     }
     if (in_rc(x, y, rc_btn_search)) {
@@ -1652,7 +1793,8 @@ static void draw_hardware_controls(void) {
         int r1y = 678, r2y = 1180;
 
         rc_btn_vol    = draw_m3_pill_fixed(gx,                r1y, bw, bh, 14.0f, vol_lbl, show_vol_panel, 0);
-        rc_btn_ori    = draw_m3_pill_fixed(gx + bw + gap,     r1y, bw, bh, 14.0f, "横屏 [Y]", 0, 0);
+        rc_btn_ori    = draw_m3_pill_fixed(gx + bw + gap,     r1y, bw, bh, 14.0f,
+                                           be_is_desktop() ? "选目录" : "横屏 [Y]", 0, 0);
         rc_btn_search = draw_m3_pill_fixed(gx + 2*(bw + gap), r1y, bw, bh, 14.0f, sr_lbl, view == VIEW_SEARCH, 0);
 
         draw_click_wheel();
@@ -1662,7 +1804,9 @@ static void draw_hardware_controls(void) {
         rc_btn_exit   = draw_m3_pill_fixed(gx + 2*(bw + gap), r2y, bw, bh, 14.0f, "退出", 0, 1);
 
         draw_text_centered(screen, font, 12.5f, 40, SCR_W - 40, 1238, C_TXT3,
-                           "纯触屏或手柄均可操控 · A播放 · X全屏 · 左方向键切歌");
+                           be_is_desktop()
+                               ? "滚轮/拖放选曲 · Space播放 · F全屏 · ←/→切歌 · Ctrl+O选目录"
+                               : "纯触屏或手柄均可操控 · A播放 · X全屏 · 左方向键切歌");
     }
 }
 
@@ -2170,78 +2314,153 @@ static void draw_diag(void) {
     draw_text_max(screen, font, 15.5f, cx + 32, yy + 40, C_TONAL_TXT, lyr_info, cw - 64);
 
     draw_text_max(screen, font, 13.5f, cx + 32, cy + ch - 44, C_TXT3,
-                  "按键：A就地播放 · X全屏切换 · Y竖屏切换 · 左方向键切歌 · B返回/退出", cw - 64);
+                  be_is_desktop()
+                      ? "按键：Space/A就地播放 · F/X全屏 · ←/→切歌 · Ctrl+F搜索 · Ctrl+O选目录"
+                      : "按键：A就地播放 · X全屏切换 · Y竖屏切换 · 左方向键切歌 · B返回/退出", cw - 64);
 }
 
-// ---------- 手柄按键逻辑（严格区分左方向键切歌与摇杆，A不进全屏，X全屏，Y竖屏） ----------
+static void search_edit_backspace(void) {
+    size_t len = strlen(search_edit);
+    while (len > 0 && ((unsigned char)search_edit[len - 1] & 0xC0) == 0x80) len--;
+    if (len > 0) len--;
+    search_edit[len] = 0;
+}
+
+static void handle_search_box_events(TouchInfo* t) {
+    char u8[32];
+    int act = 0;
+    while (be_poll_text_char(u8, sizeof(u8), &act)) {
+        if (act == 1) search_edit_backspace();
+        else if (act == 2) {
+            be_text_input(0);
+            show_search_box = 0;
+            apply_search_query(search_edit);
+            return;
+        } else if (act == 3) {
+            capture_fade();
+            be_text_input(0);
+            show_search_box = 0;
+            return;
+        } else if (act == 0 && u8[0]) {
+            size_t cl = strlen(search_edit), add = strlen(u8);
+            if (cl + add + 1 < sizeof(search_edit)) memcpy(search_edit + cl, u8, add + 1);
+        }
+    }
+    if (!t->down) return;
+    int x = t->x, y = t->y;
+    if (in_rc(x, y, rc_sr_ok)) {
+        be_text_input(0);
+        show_search_box = 0;
+        apply_search_query(search_edit);
+        return;
+    }
+    if (in_rc(x, y, rc_sr_clear)) {
+        search_edit[0] = 0;
+        return;
+    }
+    if (in_rc(x, y, rc_sr_cancel) || !in_rc(x, y, rc_sr_box)) {
+        capture_fade();
+        be_text_input(0);
+        show_search_box = 0;
+    }
+}
+
+static void draw_search_box(void) {
+    fill_rect_a(screen, 0, 0, SCR_W, SCR_H, COL(0, 0, 0, 255), 145);
+    int cw = 580, ch = 228;
+    int cx = (SCR_W - cw) / 2, cy = 220;
+    rc_sr_box = (Rect){ cx, cy, cw, ch };
+    fill_round_rect_shadow(screen, cx, cy, cw, ch, 26, 56);
+    fill_round_rect_aa(screen, cx, cy, cw, ch, 26, C_SURFACE);
+    stroke_round_rect_aa(screen, cx, cy, cw, ch, 26, 1, C_WHEEL_RING, 160);
+
+    draw_text(screen, font, 20, cx + 28, cy + 24, C_TXT, "搜索本地曲库");
+    draw_text_right(screen, font, 13, cx + cw - 28, cy + 28, C_TXT3, "输入歌名、歌手或路径");
+
+    int ibx = cx + 26, iby = cy + 68, ibw = cw - 52, ibh = 52;
+    fill_round_rect_aa(screen, ibx, iby, ibw, ibh, 16, C_SURF_SUB);
+    stroke_round_rect_aa(screen, ibx, iby, ibw, ibh, 16, 1, C_ACCENT, 180);
+    if (search_edit[0]) {
+        draw_text_max(screen, font, 18, ibx + 18, iby + 16, C_TXT, search_edit, ibw - 40);
+    } else {
+        draw_text(screen, font, 16, ibx + 18, iby + 17, C_TXT3, "直接键盘输入关键词，按 Enter 搜索…");
+    }
+
+    int by = cy + ch - 70, bw = 152, bh = 42;
+    rc_sr_cancel = draw_m3_pill_fixed(cx + 28,               by, bw, bh, 14.5f, "取消 [Esc]", 0, 0);
+    rc_sr_clear  = draw_m3_pill_fixed(cx + (cw - bw) / 2,    by, bw, bh, 14.5f, "清空", 0, 0);
+    fill_round_rect_aa(screen, cx + cw - 28 - bw, by, bw, bh, 21, C_ACCENT);
+    draw_text_centered(screen, font, 14.5f, cx + cw - 28 - bw, cx + cw - 28, by + 13, C_ON_ACCENT, "搜索 [Enter]");
+    rc_sr_ok = (Rect){ cx + cw - 28 - bw, by, bw, bh };
+}
+
+// ---------- 按键逻辑（严格区分左方向键切歌与摇杆，A不进全屏，X全屏，Y竖屏） ----------
 static void ui_list_input(uint64_t down, uint64_t rep) {
     rebuild_visible();
 
-    if (rep & HidNpadButton_StickRUp) {
+    if (rep & BTN_STICK_R_UP) {
         audio_set_volume(audio_volume() + 0.05f);
         save_settings();
         vol_overlay_timer = 70;
     }
-    if (rep & HidNpadButton_StickRDown) {
+    if (rep & BTN_STICK_R_DOWN) {
         audio_set_volume(audio_volume() - 0.05f);
         save_settings();
         vol_overlay_timer = 70;
     }
 
     if (nvisible == 0) {
-        if (down & HidNpadButton_A) scan_library(1);
+        if (down & BTN_A) scan_library(1);
         return;
     }
 
     int pos = sel_pos();
-    if (rep & (HidNpadButton_Up | HidNpadButton_StickLUp)) {
+    if (rep & (BTN_UP | BTN_STICK_L_UP)) {
         if (pos > 0) pos--;
         sel = vis_at(pos);
         ensure_pos_visible(pos);
     }
-    if (rep & (HidNpadButton_Down | HidNpadButton_StickLDown)) {
+    if (rep & (BTN_DOWN | BTN_STICK_L_DOWN)) {
         if (pos < nvisible - 1) pos++;
         sel = vis_at(pos);
         ensure_pos_visible(pos);
     }
-    // A 键：直接播放/暂停当前高亮曲目，绝不强行进全屏
-    if (down & HidNpadButton_A) {
+    if (down & BTN_A) {
         int i = vis_at(pos);
         if (i >= 0) play_or_toggle_in_list(i);
     }
-    if (down & HidNpadButton_ZL) {
+    if (down & BTN_ZL) {
         int i = vis_at(pos);
         if (i >= 0) toggle_fav(i);
     }
 }
 
 static void ui_player_input(uint64_t down, uint64_t rep) {
-    if (down & HidNpadButton_A) {
+    if (down & BTN_A) {
         if (audio_paused()) audio_resume(); else audio_pause();
     }
-    if (down & HidNpadButton_B) {
+    if (down & BTN_B) {
         switch_page(UI_LIST);
         sel = playing_idx >= 0 ? playing_idx : sel;
         rebuild_visible();
     }
-    if (down & HidNpadButton_ZL) {
+    if (down & BTN_ZL) {
         if (playing_idx >= 0) toggle_fav(playing_idx);
     }
-    // 左摇杆左右用于全屏内快进/快退，左方向键左右已全局用于切歌
-    if (rep & HidNpadButton_StickLLeft) {
+    if (rep & BTN_STICK_L_LEFT) {
         double p = audio_position() - 10.0;
         if (p < 0) p = 0;
         audio_seek(p);
     }
-    if (rep & (HidNpadButton_StickLRight | HidNpadButton_StickRRight)) {
+    if (rep & (BTN_STICK_L_RIGHT | BTN_STICK_R_RIGHT)) {
         audio_seek(audio_position() + 10.0);
     }
-    if (rep & (HidNpadButton_Up | HidNpadButton_StickRUp)) {
+    if (rep & (BTN_UP | BTN_STICK_R_UP)) {
         audio_set_volume(audio_volume() + 0.05f);
         save_settings();
         vol_overlay_timer = 70;
     }
-    if (rep & (HidNpadButton_Down | HidNpadButton_StickRDown)) {
+    if (rep & (BTN_DOWN | BTN_STICK_R_DOWN)) {
         audio_set_volume(audio_volume() - 0.05f);
         save_settings();
         vol_overlay_timer = 70;
@@ -2250,18 +2469,20 @@ static void ui_player_input(uint64_t down, uint64_t rep) {
 
 // ---------- main ----------
 int main(int argc, char** argv) {
-    (void)argc; (void)argv;
+    if (argc > 1 && argv[1] && argv[1][0]) be_set_cli_path(argv[1]);
 
     if (be_init() != 0) return 0;
-    rng_state = (uint32_t)(armGetSystemTick() ^ 0xA5A55A5Au);
+    rng_state = (uint32_t)(plat_ticks_ns() ^ 0xA5A55A5Au);
     if (audio_init() != 0) {
         // 音频设备异常时仍允许进入 UI 自检
     }
     load_settings();
+    load_custom_dir();
     sixaxis_init();
 
     update_layout();
-    apply_orientation(ORI_LAND);
+    apply_orientation(be_is_desktop() ? ORI_PORT : ORI_LAND);
+    if (be_is_desktop()) ori_locked = 1;
     size_t font_len = (size_t)(font_ttf_end - font_ttf_start);
     font = font_load(font_ttf_start, font_len);
 
@@ -2271,20 +2492,28 @@ int main(int argc, char** argv) {
     scan_library(0);
     memset(&meta, 0, sizeof(meta));
 
+    const char* init_drop = be_poll_dropped_path();
+    if (init_drop) handle_dropped_path(init_drop);
+
     int stride = 0;
     while (be_should_run()) {
         frame_begin();
         be_input_update();
         be_touch_update(&touch_now);
+
+        const char* dropped = be_poll_dropped_path();
+        if (dropped) handle_dropped_path(dropped);
+
         uint64_t down = be_btn_down();
         uint64_t held = be_btn_held();
         uint64_t rep = repeat_keys(down, held,
-            HidNpadButton_Up | HidNpadButton_Down |
-            HidNpadButton_StickLUp | HidNpadButton_StickLDown | HidNpadButton_StickLLeft | HidNpadButton_StickLRight |
-            HidNpadButton_StickRUp | HidNpadButton_StickRDown | HidNpadButton_StickRLeft | HidNpadButton_StickRRight);
+            BTN_UP | BTN_DOWN |
+            BTN_STICK_L_UP | BTN_STICK_L_DOWN | BTN_STICK_L_LEFT | BTN_STICK_L_RIGHT |
+            BTN_STICK_R_UP | BTN_STICK_R_DOWN | BTN_STICK_R_LEFT | BTN_STICK_R_RIGHT);
 
-        if (down & HidNpadButton_Plus) break;
+        if (down & BTN_PLUS) break;
 
+#ifdef __SWITCH__
         if (!ori_locked && g_six_ok) {
             int want = ori_read_candidate();
             if (want == ori) {
@@ -2296,34 +2525,56 @@ int main(int argc, char** argv) {
                 ori_hold = 0;
             }
         }
-
         if ((touch_now.held || touch_now.up) && ori == ORI_PORT) {
             int nx = 719 - touch_now.y;
             int ny = touch_now.x;
             touch_now.x = nx; touch_now.y = ny;
         }
+#endif
 
-        if (show_diag) {
-            if (touch_now.down || (down & (HidNpadButton_B | HidNpadButton_A))) { capture_fade(); show_diag = 0; }
+        if (show_search_box) {
+            handle_search_box_events(&touch_now);
+        } else if (show_diag) {
+            if (touch_now.down || (down & (BTN_B | BTN_A))) { capture_fade(); show_diag = 0; }
         } else if (show_exit_confirm) {
-            if (down & HidNpadButton_A) g_want_exit = 1;
-            if (down & HidNpadButton_B) { capture_fade(); show_exit_confirm = 0; }
+            if (down & BTN_A) g_want_exit = 1;
+            if (down & BTN_B) { capture_fade(); show_exit_confirm = 0; }
             handle_touch_exit_confirm(&touch_now);
         } else if (show_vol_panel) {
-            if (down & HidNpadButton_B) { capture_fade(); show_vol_panel = 0; }
+            if (down & BTN_B) { capture_fade(); show_vol_panel = 0; }
             handle_touch_vol_panel(&touch_now);
         } else {
-            // 全局专属快捷键：X = 全屏切换，Y = 单向竖屏切换，左方向键(非摇杆)/L/R = 切歌
-            if (down & HidNpadButton_Y) toggle_orientation();
-            if (down & HidNpadButton_X) toggle_fullscreen_player();
-            if (down & HidNpadButton_ZR) cycle_theme();
-            if (down & HidNpadButton_Minus) open_search_keyboard();
+            int hk = be_poll_hotkey();
+            if (hk == 's') open_search_keyboard();
+            else if (hk == 'f' && be_is_desktop()) open_desktop_folder();
+            else if (hk == 'm') cycle_play_mode();
+            else if (hk == 'c') { show_diag = 1; trigger_modal_fade(); }
+            else if (hk == 'v') { show_vol_panel = 1; trigger_modal_fade(); }
 
-            if (down & (HidNpadButton_Left | HidNpadButton_L))  step_track_dir(-1);
-            if (down & (HidNpadButton_Right | HidNpadButton_R)) step_track_dir(+1);
+            int wh = be_wheel_delta();
+            if (wh != 0) {
+                if (ui_state == UI_LIST && max_scroll_px() > 0.0f) {
+                    scroll_target -= (float)wh * (float)L_ROW * 1.4f;
+                    float ms = max_scroll_px();
+                    if (scroll_target < 0.0f) scroll_target = 0.0f;
+                    if (scroll_target > ms) scroll_target = ms;
+                } else if (ui_state == UI_PLAYER) {
+                    audio_set_volume(audio_volume() + (float)wh * 0.05f);
+                    save_settings();
+                    vol_overlay_timer = 70;
+                }
+            }
+
+            if ((down & BTN_Y) && !be_is_desktop()) toggle_orientation();
+            if (down & BTN_X) toggle_fullscreen_player();
+            if (down & BTN_ZR) cycle_theme();
+            if (down & BTN_MINUS) open_search_keyboard();
+
+            if (down & (BTN_LEFT | BTN_L))  step_track_dir(-1);
+            if (down & (BTN_RIGHT | BTN_R)) step_track_dir(+1);
 
             if (ui_state == UI_LIST) {
-                if (down & HidNpadButton_B) {
+                if (down & BTN_B) {
                     show_exit_confirm = 1;
                     trigger_modal_fade();
                 } else {
@@ -2343,7 +2594,6 @@ int main(int argc, char** argv) {
 
         audio_pump();
 
-        // 丝滑列表滚动插值（按键/转盘步进时平滑跟踪）
         if (fabsf(scroll_target - scroll_px) > 0.5f) {
             float k = (float)(g_dt * 22.0);
             if (k > 1.0f) k = 1.0f;
@@ -2369,11 +2619,11 @@ int main(int argc, char** argv) {
             draw_text_centered(screen, font, 14.5f, bx, bx + tw, 30, C_TXT, toast_text);
         }
 
-        if (show_diag) draw_diag();
+        if (show_search_box) draw_search_box();
+        else if (show_diag) draw_diag();
         else if (show_vol_panel) draw_vol_panel();
         else if (show_exit_confirm) draw_exit_confirm();
 
-        // 统一 60 FPS 时间驱动 Ease-Out Cubic 淡入动画（切页 / 切歌 / 旋转 / 主题 / 弹窗开闭）
         if (fade_time > 0.0f) {
             float t_norm = fade_time / FADE_DUR;
             if (t_norm > 1.0f) t_norm = 1.0f;
@@ -2384,21 +2634,20 @@ int main(int argc, char** argv) {
                 fill_rect_a(screen, 0, 0, SCR_W, SCR_H, C_BODY, (uint8_t)((a * 220u) >> 8));
             }
             if (fade_armed) {
-                fade_armed = 0; // 首帧保留满起步透明度，避免被加载 I/O 吃掉前半段
+                fade_armed = 0;
             } else {
                 fade_time -= (float)g_dt;
                 if (fade_time <= 0.0f) { fade_time = 0.0f; fade_mode = 0; }
             }
         }
 
-        if (ori == ORI_LAND) {
+        if (be_is_desktop() || ori == ORI_LAND) {
             for (int y = 0; y < SCR_H; y++) {
                 uint32_t* dst = fb + (size_t)y * stride;
                 uint32_t* src = screen->px + (size_t)y * SCR_W;
                 memcpy(dst, src, (size_t)SCR_W * 4);
             }
         } else {
-            // Cache-Blocked 32x16 旋转拷贝：大幅降低 L1/DRAM 缓存未命中并利用线性写合并
             uint32_t tile[16][32];
             for (int y0 = 0; y0 < 720; y0 += 16) {
                 for (int x0 = 0; x0 < 1280; x0 += 32) {

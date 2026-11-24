@@ -1,0 +1,67 @@
+CC ?= gcc
+CFLAGS ?= -O3 -fno-math-errno -Wall -Wextra -Isrc -Ideps
+
+COMMON_SRCS := \
+	src/audio.c \
+	src/decode.c \
+	src/draw.c \
+	src/draw_text.c \
+	src/lrc.c \
+	src/main.c \
+	src/meta.c \
+	src/util.c \
+	desktop_src/desktop_blobs.S
+
+UNAME_S := $(shell uname -s 2>/dev/null || echo Windows)
+
+ifeq ($(OS),Windows_NT)
+	TARGET := Sirene.exe
+	PLAT_SRCS := desktop_src/desktop_win.c
+	LDFLAGS := -mwindows -lgdi32 -luser32 -lshell32 -lole32 -lcomdlg32 -lwinmm -luuid -lm
+else ifeq ($(findstring MINGW,$(UNAME_S)),MINGW)
+	TARGET := Sirene.exe
+	PLAT_SRCS := desktop_src/desktop_win.c
+	LDFLAGS := -mwindows -lgdi32 -luser32 -lshell32 -lole32 -lcomdlg32 -lwinmm -luuid -lm
+else ifeq ($(UNAME_S),Darwin)
+	TARGET := Sirene
+	PLAT_SRCS := desktop_src/desktop_sdl.c
+	SDL_PREFIX := $(shell brew --prefix sdl2 2>/dev/null || echo /opt/homebrew/opt/sdl2)
+	CFLAGS += -I$(SDL_PREFIX)/include -I$(SDL_PREFIX)/include/SDL2 -D_THREAD_SAFE
+	SDL_STATIC := $(wildcard $(SDL_PREFIX)/lib/libSDL2.a)
+	ifneq ($(SDL_STATIC),)
+		LDFLAGS := $(shell pkg-config --libs --static sdl2 2>/dev/null | sed 's|-lSDL2|$(SDL_STATIC)|g') -lm -liconv
+	else
+		LDFLAGS := $(shell pkg-config --libs sdl2 2>/dev/null || echo -L$(SDL_PREFIX)/lib -lSDL2) -lm
+	endif
+else
+	TARGET := Sirene
+	PLAT_SRCS := desktop_src/desktop_sdl.c
+	CFLAGS += $(shell pkg-config --cflags sdl2 2>/dev/null || echo -I/usr/include/SDL2) -D_REENTRANT
+	LDFLAGS := $(shell pkg-config --libs sdl2 2>/dev/null || echo -lSDL2) -lpthread -lm -ldl
+endif
+
+all: $(TARGET)
+
+$(TARGET): $(COMMON_SRCS) $(PLAT_SRCS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+macos-app: $(TARGET)
+	rm -rf Sirène.app
+	mkdir -p Sirène.app/Contents/MacOS Sirène.app/Contents/Resources
+	cp $(TARGET) Sirène.app/Contents/MacOS/Sirene
+	cp icon.jpg Sirène.app/Contents/Resources/icon.jpg
+	printf '%s\n' \
+	'<?xml version="1.0" encoding="UTF-8"?>' \
+	'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+	'<plist version="1.0"><dict>' \
+	'  <key>CFBundleName</key><string>Sirène</string>' \
+	'  <key>CFBundleDisplayName</key><string>Sirène</string>' \
+	'  <key>CFBundleIdentifier</key><string>app.sirene.player</string>' \
+	'  <key>CFBundleVersion</key><string>1.2.3</string>' \
+	'  <key>CFBundleShortVersionString</key><string>1.2.3</string>' \
+	'  <key>CFBundleExecutable</key><string>Sirene</string>' \
+	'  <key>NSHighResolutionCapable</key><true/>' \
+	'</dict></plist>' > Sirène.app/Contents/Info.plist
+
+clean:
+	rm -rf Sirene Sirene.exe Sirène.app

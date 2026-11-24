@@ -1,11 +1,11 @@
 #include "lrc.h"
 #include "util.h"
+#include "plat.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <math.h>
-#include <dirent.h>
 
 #define STB_VORBIS_HEADER_ONLY
 #include "stb_vorbis.c"
@@ -367,13 +367,13 @@ static Lyrics* parse_lyrics_utf8(const char* raw_text, const char* source_name) 
 static void join_lrc_path(char* dst, size_t cap, const char* dir, const char* name) {
     if (!dir || !*dir) { snprintf(dst, cap, "%s", name); return; }
     size_t dlen = strlen(dir);
-    while (dlen > 0 && dir[dlen - 1] == '/') dlen--;
+    while (dlen > 0 && (dir[dlen - 1] == '/' || dir[dlen - 1] == '\\')) dlen--;
     if (dlen == 0) snprintf(dst, cap, "/%s", name);
     else snprintf(dst, cap, "%.*s/%s", (int)dlen, dir, name);
 }
 
 static Lyrics* load_lrc_file_path(const char* path, const char* source_label) {
-    FILE* f = fopen(path, "rb");
+    FILE* f = plat_fopen(path, "rb");
     if (!f) return NULL;
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);
@@ -418,18 +418,18 @@ static Lyrics* find_lrc_in_dir_ci(const char* dir, const char* stem, const char*
     Lyrics* l = load_lrc_file_path(direct, source_label);
     if (l) return l;
 
-    DIR* d = opendir(open_dir);
+    PlatDir* d = plat_opendir(open_dir);
     if (!d) return NULL;
-    struct dirent* e;
-    while ((e = readdir(d)) != NULL) {
-        if (!strcasecmp(e->d_name, want)) {
+    PlatDirent e;
+    while (plat_readdir(d, &e)) {
+        if (!strcasecmp(e.d_name, want)) {
             char full[680];
-            join_lrc_path(full, sizeof(full), open_dir, e->d_name);
-            closedir(d);
+            join_lrc_path(full, sizeof(full), open_dir, e.d_name);
+            plat_closedir(d);
             return load_lrc_file_path(full, source_label);
         }
     }
-    closedir(d);
+    plat_closedir(d);
     return NULL;
 }
 
@@ -440,25 +440,25 @@ static Lyrics* find_lrc_fuzzy_in_dir(const char* dir, const char* key_title, con
     if (!strcmp(dir, "sdmc:")) snprintf(open_dir, sizeof(open_dir), "sdmc:/");
     else snprintf(open_dir, sizeof(open_dir), "%s", dir);
 
-    DIR* d = opendir(open_dir);
+    PlatDir* d = plat_opendir(open_dir);
     if (!d) return NULL;
-    char best_name[320] = {0};
+    char best_name[520] = {0};
     int best_score = 0;
-    struct dirent* e;
-    while ((e = readdir(d)) != NULL) {
-        if (!ci_ends_with(e->d_name, ".lrc")) continue;
+    PlatDirent e;
+    while (plat_readdir(d, &e)) {
+        if (!ci_ends_with(e.d_name, ".lrc")) continue;
         char fstem[300];
-        basename_no_ext(e->d_name, fstem, sizeof(fstem));
+        basename_no_ext(e.d_name, fstem, sizeof(fstem));
         if (!ci_contains_sub(fstem, key_title)) continue;
         int score = 10;
         if (key_artist && key_artist[0] && ci_contains_sub(fstem, key_artist)) score += 20;
         if (strlen(fstem) <= strlen(key_title) + 4) score += 5;
         if (score > best_score) {
             best_score = score;
-            snprintf(best_name, sizeof(best_name), "%s", e->d_name);
+            snprintf(best_name, sizeof(best_name), "%s", e.d_name);
         }
     }
-    closedir(d);
+    plat_closedir(d);
     if (best_score >= 15 || (best_score >= 10 && strlen(key_title) >= 4)) {
         char full[680];
         join_lrc_path(full, sizeof(full), open_dir, best_name);
@@ -765,7 +765,7 @@ static Lyrics* extract_apev2_eof(FILE* f) {
 }
 
 static Lyrics* extract_mp3_lyrics(const char* path) {
-    FILE* f = fopen(path, "rb");
+    FILE* f = plat_fopen(path, "rb");
     if (!f) return NULL;
     unsigned char h[10];
     if (fread(h, 1, 10, f) == 10 && !memcmp(h, "ID3", 3)) {
@@ -787,7 +787,7 @@ static Lyrics* extract_mp3_lyrics(const char* path) {
 }
 
 static Lyrics* extract_wav_lyrics(const char* path) {
-    FILE* f = fopen(path, "rb");
+    FILE* f = plat_fopen(path, "rb");
     if (!f) return NULL;
     unsigned char rh[12];
     if (fread(rh, 1, 12, f) != 12 || memcmp(rh, "RIFF", 4) != 0) { fclose(f); return NULL; }
@@ -870,7 +870,7 @@ static Lyrics* extract_vorbis_lyrics_block(const unsigned char* p, size_t n, con
 }
 
 static Lyrics* extract_flac_lyrics(const char* path) {
-    FILE* f = fopen(path, "rb");
+    FILE* f = plat_fopen(path, "rb");
     if (!f) return NULL;
     unsigned char hdr[10];
     if (fread(hdr, 1, 4, f) != 4) { fclose(f); return NULL; }
@@ -921,8 +921,10 @@ static Lyrics* extract_flac_lyrics(const char* path) {
 }
 
 static Lyrics* extract_ogg_lyrics(const char* path) {
-    int err;
-    stb_vorbis* v = stb_vorbis_open_filename(path, &err, NULL);
+    int err = 0;
+    FILE* fp = plat_fopen(path, "rb");
+    stb_vorbis* v = fp ? stb_vorbis_open_file(fp, 1, &err, NULL) : NULL;
+    if (!v && fp) fclose(fp);
     if (!v) return NULL;
     stb_vorbis_comment c = stb_vorbis_get_comment(v);
     Lyrics* res = NULL;
@@ -998,7 +1000,7 @@ static Lyrics* scan_buf_for_lrc(const unsigned char* buf, size_t n, const char* 
 }
 
 static Lyrics* fallback_scan_embedded_lrc(const char* path) {
-    FILE* f = fopen(path, "rb");
+    FILE* f = plat_fopen(path, "rb");
     if (!f) return NULL;
     fseek(f, 0, SEEK_END);
     long fsz = ftell(f);
@@ -1040,16 +1042,16 @@ Lyrics* lyrics_load_ex(const char* media_path, const char* title, const char* ar
     char stem[256] = {0};
     char stem_clean[256] = {0};
 
-    const char* slash = strrchr(media_path, '/');
+    const char* slash = path_last_sep(media_path);
     if (slash) {
         size_t dlen = (size_t)(slash - media_path);
         if (dlen >= sizeof(dir)) dlen = sizeof(dir) - 1;
         memcpy(dir, media_path, dlen);
         dir[dlen] = 0;
-        while (dlen > 0 && dir[dlen - 1] == '/') dir[--dlen] = 0;
+        while (dlen > 0 && (dir[dlen - 1] == '/' || dir[dlen - 1] == '\\')) dir[--dlen] = 0;
         if (!strcmp(dir, "sdmc:") || dir[0] == 0) snprintf(dir, sizeof(dir), "sdmc:/");
-        const char* pslash = strrchr(dir, '/');
-        if (pslash && pslash > dir + 5) {
+        const char* pslash = path_last_sep(dir);
+        if (pslash && pslash > dir + 2) {
             size_t plen = (size_t)(pslash - dir);
             snprintf(parent_lyrics, sizeof(parent_lyrics), "%.*s/lyrics", (int)plen, dir);
         }

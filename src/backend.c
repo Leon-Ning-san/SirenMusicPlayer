@@ -113,3 +113,14 @@ void be_touch_update(TouchInfo* out) {
 void be_touch_reset(void) {
     g_touch_reset = 1;
 }
+
+int be_is_desktop(void) { return 0; }
+int be_wheel_delta(void) { return 0; }
+const char* be_poll_dropped_path(void) { return NULL; }
+int be_pick_folder(char* out, size_t cap) { (void)out; (void)cap; return 0; }
+void be_text_input(int enable) { (void)enable; }
+int be_poll_text_char(char* utf8_out, size_t cap, int* action) { (void)utf8_out; (void)cap; (void)action; return 0; }
+int be_poll_hotkey(void) { return 0; }
+const char* be_config_dir(void) { return "sdmc:/Sirene"; }
+int be_default_music_dirs(char dirs[][600], int max_dirs) { (void)dirs; (void)max_dirs; return 0; }
+void be_set_cli_path(const char* p) { (void)p; }

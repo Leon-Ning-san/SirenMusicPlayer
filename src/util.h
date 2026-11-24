@@ -16,6 +16,7 @@ size_t text_to_utf8_auto(const uint8_t* in, size_t n, char* out, size_t out_cap)
 int utf8_count(const char* s);
 // case-insensitive ends with
 int ci_ends_with(const char* s, const char* suf);
+const char* path_last_sep(const char* p);
 const char* path_basename(const char* p);
 // copy basename without extension into out
 void basename_no_ext(const char* path, char* out, size_t cap);

@@ -1,5 +1,6 @@
 #include "meta.h"
 #include "util.h"
+#include "plat.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -146,7 +147,7 @@ typedef struct {
 } Id3;
 
 static int id3_open(const char* path, Id3* id) {
-    FILE* f = fopen(path, "rb");
+    FILE* f = plat_fopen(path, "rb");
     if (!f) return 0;
     unsigned char h[10];
     if (fread(h, 1, 10, f) != 10 || memcmp(h, "ID3", 3) != 0) { fclose(f); return 0; }
@@ -350,7 +351,7 @@ static int id3_parse(Id3* id, TrackMeta* m) {
 
 // ---------- FLAC ----------
 static int parse_flac(const char* path, TrackMeta* m) {
-    FILE* f = fopen(path, "rb");
+    FILE* f = plat_fopen(path, "rb");
     if (!f) return 0;
     unsigned char hdr[8];
     if (fread(hdr, 1, 4, f) != 4) { fclose(f); return 0; }
@@ -402,8 +403,10 @@ static int parse_flac(const char* path, TrackMeta* m) {
 
 // ---------- OGG ----------
 static int parse_ogg(const char* path, TrackMeta* m) {
-    int err;
-    stb_vorbis* v = stb_vorbis_open_filename(path, &err, NULL);
+    int err = 0;
+    FILE* fp = plat_fopen(path, "rb");
+    stb_vorbis* v = fp ? stb_vorbis_open_file(fp, 1, &err, NULL) : NULL;
+    if (!v && fp) fclose(fp);
     if (!v) return 0;
     stb_vorbis_comment c = stb_vorbis_get_comment(v);
     for (int i = 0; i < c.comment_list_length; i++) {
@@ -434,13 +437,13 @@ static int parse_ogg(const char* path, TrackMeta* m) {
 static void try_external_cover(const char* media_path, TrackMeta* m) {
     if (m->art || !media_path) return;
     char dir[520] = {0}, stem[256] = {0};
-    const char* slash = strrchr(media_path, '/');
+    const char* slash = path_last_sep(media_path);
     if (slash) {
         size_t dlen = (size_t)(slash - media_path);
         if (dlen >= sizeof(dir)) dlen = sizeof(dir) - 1;
         memcpy(dir, media_path, dlen);
         dir[dlen] = 0;
-        while (dlen > 0 && dir[dlen - 1] == '/') dir[--dlen] = 0;
+        while (dlen > 0 && (dir[dlen - 1] == '/' || dir[dlen - 1] == '\\')) dir[--dlen] = 0;
     } else {
         snprintf(dir, sizeof(dir), ".");
     }
@@ -456,7 +459,7 @@ static void try_external_cover(const char* media_path, TrackMeta* m) {
     snprintf(cands[6], sizeof(cands[6]), "%s/front.jpg", dir);
 
     for (int i = 0; i < 7; i++) {
-        FILE* f = fopen(cands[i], "rb");
+        FILE* f = plat_fopen(cands[i], "rb");
         if (!f) continue;
         fseek(f, 0, SEEK_END);
         long sz = ftell(f);
@@ -509,7 +512,7 @@ static unsigned char* find_image_in_mem(const unsigned char* data, size_t len, i
 
 static void fallback_art(const char* path, TrackMeta* m, size_t scan_limit) {
     if (m->art) return;
-    FILE* f = fopen(path, "rb");
+    FILE* f = plat_fopen(path, "rb");
     if (!f) return;
     unsigned char* buf = (unsigned char*)malloc(scan_limit);
     if (!buf) { fclose(f); return; }

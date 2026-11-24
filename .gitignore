@@ -6,6 +6,9 @@ build/
 *.o
 *.lst
 *.map
+*.exe
+Sirene
+Sirène.app/
 
 # 依赖包解压残留
 deps/drl/
