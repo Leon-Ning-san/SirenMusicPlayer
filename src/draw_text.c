@@ -171,7 +171,7 @@ static void ensure_luts(void) {
     lut_ready = 1;
 }
 
-void draw_text(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8) {
+static void draw_text_px(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8) {
     if (!c || !f || !utf8 || !*utf8) return;
     int ipx = (int)(px + 0.5f);
     if (ipx < 1) ipx = 1;
@@ -234,15 +234,29 @@ void draw_text(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const c
     }
 }
 
+void draw_text(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8) {
+    if (!c) return;
+    float s = c->s > 0.0f ? c->s : 1.0f;
+    draw_text_px(c, f, px * s, (int)floorf((float)x * s + 0.5f), (int)floorf((float)y * s + 0.5f), col, utf8);
+}
+
 void draw_text_centered(Canvas* c, Font* f, float px, int x0, int x1, int y, uint32_t col, const char* utf8) {
-    int w = text_width(f, px, utf8);
-    int x = x0 + (x1 - x0 - w) / 2;
-    draw_text(c, f, px, x, y, col, utf8);
+    if (!c) return;
+    float s = c->s > 0.0f ? c->s : 1.0f;
+    int px0 = (int)floorf((float)x0 * s + 0.5f);
+    int px1 = (int)floorf((float)x1 * s + 0.5f);
+    int py  = (int)floorf((float)y * s + 0.5f);
+    int w = text_width(f, px * s, utf8);
+    draw_text_px(c, f, px * s, px0 + (px1 - px0 - w) / 2, py, col, utf8);
 }
 
 void draw_text_right(Canvas* c, Font* f, float px, int x1, int y, uint32_t col, const char* utf8) {
-    int w = text_width(f, px, utf8);
-    draw_text(c, f, px, x1 - w, y, col, utf8);
+    if (!c) return;
+    float s = c->s > 0.0f ? c->s : 1.0f;
+    int px1 = (int)floorf((float)x1 * s + 0.5f);
+    int py  = (int)floorf((float)y * s + 0.5f);
+    int w = text_width(f, px * s, utf8);
+    draw_text_px(c, f, px * s, px1 - w, py, col, utf8);
 }
 
 int text_width_max(Font* f, float px, const char* utf8, int max_w) {
@@ -268,11 +282,16 @@ int text_width_max(Font* f, float px, const char* utf8, int max_w) {
 
 int draw_text_max(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8, int max_w) {
     if (!c || !f || !utf8 || !*utf8) return 0;
-    int ipx = (int)(px + 0.5f);
+    float s = c->s > 0.0f ? c->s : 1.0f;
+    float spx = px * s;
+    int sx = (int)floorf((float)x * s + 0.5f);
+    int sy = (int)floorf((float)y * s + 0.5f);
+    int smax = (int)floorf((float)max_w * s + 0.5f);
+    int ipx = (int)(spx + 0.5f);
     if (ipx < 1) ipx = 1;
     Bucket* b = get_bucket(f, ipx);
     const char* ell = "\xE2\x80\xA6";
-    int ellw = text_width(f, px, ell);
+    int ellw = text_width(f, spx, ell);
     char buf[256];
     const char* p = utf8;
     float w = 0.0f;
@@ -281,18 +300,18 @@ int draw_text_max(Canvas* c, Font* f, float px, int x, int y, uint32_t col, cons
         uint32_t cp = next_cp(&p);
         Glyph* g = glyph_get_in_bucket(f, b, cp);
         if (!g) continue;
-        if (w + g->adv > (float)(max_w - ellw)) {
+        if (w + g->adv > (float)(smax - ellw)) {
             size_t n = (size_t)(save - utf8);
             if (n >= sizeof(buf)) n = sizeof(buf) - 1;
             memcpy(buf, utf8, n);
             buf[n] = 0;
             char cat[264];
             snprintf(cat, sizeof(cat), "%s%s", buf, ell);
-            draw_text(c, f, px, x, y, col, cat);
+            draw_text_px(c, f, spx, sx, sy, col, cat);
             return 1;
         }
         w += g->adv;
     }
-    draw_text(c, f, px, x, y, col, utf8);
+    draw_text_px(c, f, spx, sx, sy, col, utf8);
     return 0;
 }

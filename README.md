@@ -2,12 +2,12 @@
   <img src="icon.jpg" width="128" alt="Sirène Icon" />
 </p>
 
-<h1 align="center">Sirène · 跨平台本地音乐播放器（v1.2.5）</h1>
+<h1 align="center">Sirène · 跨平台本地音乐播放器（v1.2.6）</h1>
 
 <p align="center">
-  <b>Windows · Linux · macOS（桌面横屏 Material You 专版）&nbsp;|&nbsp;Nintendo Switch（<code>.nro</code>）</b><br/>
-  <b>桌面端 1:1 点对点高清横屏双栏 × 大圆角方块按钮 × 全功能鼠标适配 × Material You 粗波浪进度条</b><br/>
-  <b>左栏曲库严格裁剪 · 右栏封面与可点击实时歌词 · 原生应用图标（EXE / ICO / App ICNS / Window Icon）</b>
+  <b>Windows · Linux · macOS（HiDPI 原生锐利横屏 Material You 专版）&nbsp;|&nbsp;Nintendo Switch（<code>.nro</code>）</b><br/>
+  <b>全平台物理像素 1:1 原生字体/矢量渲染 × 网易云 163 key / LRCLIB 自动在线歌词 × 丝滑防爆音进度条拖拽</b><br/>
+  <b>全面兼容 MP3 / FLAC / WAV / OGG / AIFF / M4A / AAC / MP4 / ALAC / OPUS / WMA / CAF</b>
 </p>
 
 纯软件渲染、无需 GPU：Switch 端继续保留 **乔布斯 iPod Click Wheel × 现代 Apple × M3** 融合形态与横竖屏无手柄全触控体验；**Windows / Linux / macOS 桌面端则彻底重构为符合 PC 审美的 1:1 高清 1280×720 横屏双栏播放器**——去掉冗大 iPod 圆形转盘，改用 **Material You 大圆角卡片与大方块圆角播控键**、直觉化鼠标悬停/指针/滚动条拖拽/音量直拖/点击歌词跳转，并完整嵌入 `icon.jpg` 系统图标。
@@ -26,13 +26,13 @@
 | :---: | :---: |
 | ![竖屏列表页](previews/list_port.png) | ![青瓷绿主题](previews/list_sage.png) |
 
-## 多平台支持（v1.2.5）
+## 多平台支持（v1.2.6）
 
 | 平台 | 产物文件名 | 渲染与音频后端 | 窗口 / 图标与交互亮点 |
 |---|---|---|---|
-| **Windows x64** | `Sirene-v1.2.5-Windows-x64.exe` | Win32 GDI `1:1`（DPI V2）+ WinMM | 内嵌多尺寸高清 `sirene.ico`（资源管理器/任务栏/标题栏可见）；`1280×720` 点对点锐利渲染 |
-| **Linux x86_64** | `Sirene-v1.2.5-Linux-x86_64.tar.gz` | SDL2 + SDL2 Audio | `1280×720` 横屏双栏窗口、`SDL_SetWindowIcon` 窗口图标、原生 `zenity`/`kdialog` 选目录 |
-| **macOS Apple Silicon** | `Sirene-v1.2.5-macOS-arm64.zip` | SDL2 + SDL2 Audio | 独立 `Sirène.app`（已内置 SDL2/SDL3 运行库 + `.icns` 桌面图标），支持 `osascript` 选目录 |
+| **Windows x64** | `Sirene-v1.2.6-Windows-x64.exe` | Win32 GDI 原生物理像素（DPI V2）+ WinMM + Media Foundation | 缩放/高分屏 1:1 物理像素渲染彻底告别模糊；内置 WinHTTP 自动匹配网易云/LRCLIB 歌词；原生支持 M4A/AAC/MP4/ALAC/OPUS/WMA |
+| **Linux x86_64** | `Sirene-v1.2.6-Linux-x86_64.tar.gz` | SDL2 HiDPI + SDL2 Audio + FFmpeg 管道 | 原生 HiDPI 物理像素渲染、`SDL_SetWindowIcon` 图标、支持 M4A/AAC/MP4/OPUS/WMA/APE/WV |
+| **macOS Apple Silicon** | `Sirene-v1.2.6-macOS-arm64.zip` | SDL2 Retina + SDL2 Audio + AudioToolbox | 独立 `Sirène.app`（Retina 物理像素锐利渲染 + 原生 CoreAudio 解码 M4A/AAC/ALAC/CAF/AIFF） |
 | **Nintendo Switch** | `Sirene.nro` | Switch 线性帧缓冲 + SDL2 | 保留横屏/竖屏 Click Wheel 与无手柄触控 + 自定义 A/X/Y/左方向键映射 |
 
 ## 核心特性（v1.2.5）

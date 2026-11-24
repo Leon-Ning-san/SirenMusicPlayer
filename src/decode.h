@@ -8,15 +8,22 @@
 #include "stb_vorbis.c"
 
 typedef enum {
-    FMT_NONE = 0, FMT_WAV, FMT_MP3, FMT_FLAC, FMT_OGG
+    FMT_NONE = 0, FMT_WAV, FMT_MP3, FMT_FLAC, FMT_OGG, FMT_AIFF,
+    FMT_MF, FMT_AT, FMT_FFPIPE
 } DecFmt;
+
+typedef struct AiffDec AiffDec;
 
 typedef struct Decoder {
     DecFmt fmt;
     drwav* wav;
     drmp3* mp3;
+    drmp3_seek_point* mp3_seek_pts;
+    drmp3_uint32 mp3_seek_cnt;
     drflac* flac;
     stb_vorbis* ogg;
+    AiffDec* aiff;
+    void* nat;
     uint32_t channels;
     uint32_t rate;
     uint64_t total_frames; // at source rate

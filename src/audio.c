@@ -48,6 +48,8 @@ static Decoder dec;
 // resampler state (decoder thread only)
 static double rs_pos = 0;
 static int16_t rs_last[2] = {0, 0};
+static int rs_has_last = 0;
+static int fade_in_rem = 0;
 static volatile uint64_t out_total = 0;
 
 // command protocol
@@ -56,6 +58,7 @@ static volatile int cmd_done = 0;
 static char cmd_path[600];
 static volatile int cmd_is_play = 0;
 static volatile uint64_t cmd_seek_frame = 0;
+static volatile int cmd_seek_ok = 0;
 
 // ---------------- audio output device ----------------
 #if AUDIO_USE_SDL
@@ -82,39 +85,78 @@ static int16_t spec_hist[SPEC_N * 2];
 static volatile uint64_t spec_w = 0;
 
 // ---------------- resample & push into ring ----------------
+static inline int16_t downmix_lr(const int16_t* frm, int channels, int lr) {
+    if (channels <= 1) return frm[0];
+    if (channels == 2) return frm[lr];
+    int32_t v = frm[lr];
+    if (channels >= 3) v += (frm[2] * 7) / 10;       // Center
+    if (channels >= 6) v += (frm[4 + lr] * 7) / 10;  // Surround L/R
+    if (channels >= 8) v += (frm[6 + lr] * 5) / 10;  // Back L/R
+    v = (v * 3) / 4;
+    if (v > 32767) v = 32767;
+    if (v < -32768) v = -32768;
+    return (int16_t)v;
+}
+
+static void push_ring_frame(int16_t l, int16_t r) {
+    if (fade_in_rem > 0) {
+        double g = (double)(240 - fade_in_rem) / 240.0;
+        l = (int16_t)((double)l * g);
+        r = (int16_t)((double)r * g);
+        fade_in_rem--;
+    }
+    plat_mutex_lock(&ringmtx);
+    uint64_t idx = ring_w % (uint64_t)RING_FRAMES;
+    ring[(size_t)idx * 2 + 0] = l;
+    ring[(size_t)idx * 2 + 1] = r;
+    ring_w++;
+    out_total++;
+    plat_mutex_unlock(&ringmtx);
+}
+
 static void push_chunk(const int16_t* chunk, int frames, int channels) {
     if (frames <= 0) return;
-    double step = (double)a_rate / (double)OUT_RATE;
-    long need = (long)((double)frames / step) + 4;
+    double step = (double)(a_rate > 0 ? a_rate : OUT_RATE) / (double)OUT_RATE;
+    long need = (long)((double)frames / step) + 8;
     long avail = (long)ring_free();
     if (avail < need) need = avail;
     if (need <= 0) return;
     int16_t* tmp = (int16_t*)malloc((size_t)need * 2 * sizeof(int16_t));
     if (!tmp) return;
     long outn = 0;
-    while (outn < need) {
-        int i0 = (int)rs_pos;
-        double frac = rs_pos - (double)i0;
+    double limit = (double)(frames - 1);
+    while (outn < need && rs_pos < limit) {
+        int i0 = (int)floor(rs_pos);
+        if (i0 < -1) { rs_pos += step; continue; }
+        if (i0 < 0 && !rs_has_last) { i0 = 0; }
+        double frac = rs_pos - floor(rs_pos);
+        if (frac < 0.0) frac = 0.0;
+        if (frac > 1.0) frac = 1.0;
         int i1 = i0 + 1;
-        if (i0 >= frames) break;
+        if (i1 >= frames) break;
+        const int16_t* p0 = (i0 >= 0) ? (chunk + (size_t)i0 * channels) : NULL;
+        const int16_t* p1 = chunk + (size_t)i1 * channels;
         for (int c = 0; c < 2; c++) {
-            int sc = (channels == 1) ? 0 : c;
-            int16_t s0 = (i0 < 0) ? rs_last[c] : chunk[(size_t)i0 * channels + sc];
-            int16_t s1 = (i1 >= frames) ? chunk[(size_t)(frames - 1) * channels + sc]
-                                        : chunk[(size_t)i1 * channels + sc];
+            int16_t s0 = p0 ? downmix_lr(p0, channels, c) : rs_last[c];
+            int16_t s1 = downmix_lr(p1, channels, c);
             double v = (double)s0 + ((double)s1 - (double)s0) * frac;
-            int iv = (int)v;
+            int iv = (int)lrint(v);
+            if (fade_in_rem > 0) {
+                double g = (double)(240 - fade_in_rem) / 240.0;
+                iv = (int)lrint((double)iv * g);
+            }
             if (iv > 32767) iv = 32767;
             if (iv < -32768) iv = -32768;
             tmp[(size_t)outn * 2 + c] = (int16_t)iv;
         }
+        if (fade_in_rem > 0) fade_in_rem--;
         outn++;
         rs_pos += step;
     }
-    for (int c = 0; c < 2; c++) {
-        int sc = (channels == 1) ? 0 : c;
-        rs_last[c] = chunk[(size_t)(frames - 1) * channels + sc];
-    }
+    const int16_t* plast = chunk + (size_t)(frames - 1) * channels;
+    rs_last[0] = downmix_lr(plast, channels, 0);
+    rs_last[1] = downmix_lr(plast, channels, 1);
+    rs_has_last = 1;
     rs_pos -= (double)frames;
     if (outn > 0) {
         plat_mutex_lock(&ringmtx);
@@ -145,6 +187,8 @@ static void decoder_thread(void* arg) {
                 dec_eof = 0;
                 rs_pos = 0;
                 rs_last[0] = rs_last[1] = 0;
+                rs_has_last = 0;
+                fade_in_rem = 240;
                 a_status = 1;
                 if (dec_open(&dec, cmd_path) == 0 && dec.channels >= 1 && dec.channels <= 8 && dec.rate > 0) {
                     a_rate = dec.rate;
@@ -157,23 +201,35 @@ static void decoder_thread(void* arg) {
                     snprintf(diag_last_error, sizeof(diag_last_error), "解码失败: %.110s", cmd_path);
                 }
             } else {
-                if (dec.fmt != FMT_NONE && dec_seek(&dec, cmd_seek_frame) == 0) {
+                int ok = (dec.fmt != FMT_NONE && dec_seek(&dec, cmd_seek_frame) == 0) ? 1 : 0;
+                if (ok) {
                     plat_mutex_lock(&ringmtx);
                     ring_w = ring_r = 0;
                     out_total = 0;
                     plat_mutex_unlock(&ringmtx);
                     dec_eof = 0;
                     rs_pos = 0;
+                    rs_last[0] = rs_last[1] = 0;
+                    rs_has_last = 0;
+                    fade_in_rem = 240;
                 }
+                __atomic_store_n(&cmd_seek_ok, ok, __ATOMIC_SEQ_CST);
             }
             __atomic_store_n(&cmd_done, seq, __ATOMIC_SEQ_CST);
         }
 
         if (a_status == 2 && !a_paused && !dec_eof && dec.fmt != FMT_NONE) {
-            if (ring_free() >= (uint64_t)(CHUNK_FRAMES * 3)) {
+            uint64_t max_out = (uint64_t)((double)CHUNK_FRAMES * (double)OUT_RATE / (double)(a_rate > 0 ? a_rate : OUT_RATE)) + 64;
+            if (max_out > (uint64_t)(RING_FRAMES / 2)) max_out = (uint64_t)(RING_FRAMES / 2);
+            if (ring_free() >= max_out) {
                 int got = dec_read(&dec, chunk, CHUNK_FRAMES);
-                if (got <= 0) dec_eof = 1;
-                else {
+                if (got <= 0) {
+                    if (rs_has_last && ring_free() >= 1) {
+                        push_ring_frame(rs_last[0], rs_last[1]);
+                        rs_has_last = 0;
+                    }
+                    dec_eof = 1;
+                } else {
                     push_chunk(chunk, got, (int)dec.channels);
                     diag_decoded_chunks++;
                 }
@@ -189,19 +245,22 @@ static void decoder_thread(void* arg) {
 #if AUDIO_USE_WINMM
 static uint32_t win_queued_bytes(void) {
     if (!hwo) return 0;
+    uint32_t active_q = 0;
+    for (int i = 0; i < WIN_BUFS; i++) {
+        if ((whdr[i].dwFlags & WHDR_PREPARED) && !(whdr[i].dwFlags & WHDR_DONE))
+            active_q += whdr[i].dwBufferLength;
+    }
+    if (active_q == 0) return 0;
     MMTIME mmt;
     mmt.wType = TIME_BYTES;
     if (waveOutGetPosition(hwo, &mmt, sizeof(mmt)) == MMSYSERR_NOERROR && mmt.wType == TIME_BYTES) {
+        uint32_t q = 0;
         if ((uint64_t)mmt.u.cb < total_queued_bytes)
-            return (uint32_t)(total_queued_bytes - (uint64_t)mmt.u.cb);
-        return 0;
+            q = (uint32_t)(total_queued_bytes - (uint64_t)mmt.u.cb);
+        if (q > active_q) q = active_q;
+        return q;
     }
-    uint32_t q = 0;
-    for (int i = 0; i < WIN_BUFS; i++) {
-        if ((whdr[i].dwFlags & WHDR_PREPARED) && !(whdr[i].dwFlags & WHDR_DONE))
-            q += whdr[i].dwBufferLength;
-    }
-    return q;
+    return active_q;
 }
 #endif
 
@@ -329,9 +388,11 @@ int audio_seek(double sec) {
     if (d > 0.5 && sec > d - 0.25) sec = d - 0.25;
     cmd_seek_frame = (uint64_t)(sec * (double)a_rate);
     cmd_is_play = 0;
+    __atomic_store_n(&cmd_seek_ok, 0, __ATOMIC_SEQ_CST);
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
     __atomic_add_fetch(&cmd_seq, 1, __ATOMIC_SEQ_CST);
     wait_cmd_done();
+    if (!__atomic_load_n(&cmd_seek_ok, __ATOMIC_SEQ_CST)) return -1;
     reset_output(sec);
     return 0;
 }

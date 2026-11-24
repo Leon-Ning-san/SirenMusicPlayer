@@ -17,7 +17,7 @@ INCLUDES := src deps
 APP_TITLE := Sirène
 APP_DESCRIPTION := Lecteur musical minimaliste pour Switch
 APP_AUTHOR := Sirène
-APP_VERSION := 1.2.5
+APP_VERSION := 1.2.6
 APP_ICON := icon.jpg
 
 #---------------------------------------------------------------------------------

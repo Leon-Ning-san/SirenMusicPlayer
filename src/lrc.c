@@ -6,6 +6,10 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <math.h>
+#if !defined(_WIN32) && !defined(__SWITCH__)
+#include <unistd.h>
+#include <sys/wait.h>
+#endif
 
 #define STB_VORBIS_HEADER_ONLY
 #include "stb_vorbis.c"
@@ -1056,6 +1060,740 @@ static Lyrics* fallback_scan_embedded_lrc(const char* path) {
     return l;
 }
 
+// ---------------- MP4 / M4A ©lyr 内嵌歌词 ----------------
+static int mp4_find_atom(FILE* f, long start, long end, const char tag[4], long* out_dstart, long* out_dend) {
+    long pos = start;
+    unsigned char hdr[16];
+    while (pos + 8 <= end) {
+        if (fseek(f, pos, SEEK_SET) != 0) break;
+        if (fread(hdr, 1, 8, f) != 8) break;
+        uint32_t sz32 = lrc_be32(hdr);
+        long hdr_len = 8;
+        long sz = (long)sz32;
+        if (sz32 == 1) {
+            if (pos + 16 > end || fread(hdr + 8, 1, 8, f) != 8) break;
+            uint64_t sz64 = ((uint64_t)lrc_be32(hdr + 8) << 32) | lrc_be32(hdr + 12);
+            if (sz64 < 16 || sz64 > 0x7FFFFFFFULL) break;
+            sz = (long)sz64;
+            hdr_len = 16;
+        } else if (sz32 == 0) {
+            sz = end - pos;
+        }
+        if (sz < hdr_len || pos + sz > end) break;
+        if (memcmp(hdr + 4, tag, 4) == 0) {
+            *out_dstart = pos + hdr_len;
+            *out_dend = pos + sz;
+            return 1;
+        }
+        pos += sz;
+    }
+    return 0;
+}
+
+static Lyrics* extract_mp4_lyrics(const char* path) {
+    FILE* f = plat_fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    long fsz = ftell(f);
+    if (fsz < 16) { fclose(f); return NULL; }
+    long s0, e0, s1, e1;
+    if (!mp4_find_atom(f, 0, fsz, "moov", &s0, &e0)) { fclose(f); return NULL; }
+    if (!mp4_find_atom(f, s0, e0, "udta", &s1, &e1)) { fclose(f); return NULL; }
+    if (!mp4_find_atom(f, s1, e1, "meta", &s0, &e0) || s0 + 4 > e0) { fclose(f); return NULL; }
+    if (!mp4_find_atom(f, s0 + 4, e0, "ilst", &s1, &e1)) { fclose(f); return NULL; }
+    const char lyr_tag[4] = { (char)0xA9, 'l', 'y', 'r' };
+    if (!mp4_find_atom(f, s1, e1, lyr_tag, &s0, &e0)) { fclose(f); return NULL; }
+    if (!mp4_find_atom(f, s0, e0, "data", &s1, &e1) || s1 + 8 >= e1) { fclose(f); return NULL; }
+    long pay_off = s1 + 8;
+    long pay_len = e1 - pay_off;
+    if (pay_len <= 0 || pay_len > 512 * 1024) { fclose(f); return NULL; }
+    char* buf = (char*)malloc((size_t)pay_len + 1);
+    if (!buf) { fclose(f); return NULL; }
+    fseek(f, pay_off, SEEK_SET);
+    size_t got = fread(buf, 1, (size_t)pay_len, f);
+    fclose(f);
+    buf[got] = 0;
+    Lyrics* l = parse_lyrics_utf8(buf, "M4A 内嵌 ©lyr");
+    free(buf);
+    return l;
+}
+
+// ---------------- 缓存路径 + 网易云 163 key AES-128-ECB 解密 + 在线匹配 ----------------
+static char g_lrc_cache_dir[512] = {0};
+
+void lyrics_set_cache_dir(const char* dir) {
+    if (dir && *dir) snprintf(g_lrc_cache_dir, sizeof(g_lrc_cache_dir), "%s", dir);
+}
+
+static uint64_t lrc_fnv1a64(const char* s) {
+    uint64_t h = 14695981039346656037ULL;
+    for (const unsigned char* p = (const unsigned char*)s; *p; p++) {
+        h ^= *p;
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+static int build_cache_lrc_path(const char* media_path, char* out, size_t cap) {
+    if (!g_lrc_cache_dir[0] || !media_path || !*media_path) return 0;
+    uint64_t h = lrc_fnv1a64(media_path);
+    snprintf(out, cap, "%s/%08x%08x.lrc", g_lrc_cache_dir, (unsigned)(h >> 32), (unsigned)(h & 0xFFFFFFFFu));
+    return 1;
+}
+
+static Lyrics* load_cached_online_lrc(const char* media_path) {
+    char cp[600];
+    if (!build_cache_lrc_path(media_path, cp, sizeof(cp))) return NULL;
+    return load_lrc_file_path(cp, "在线歌词缓存");
+}
+
+#ifndef __SWITCH__
+static const unsigned char aes_sbox[256] = {
+    0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,
+    0xca,0x82,0xc9,0x7d,0xfa,0x59,0x47,0xf0,0xad,0xd4,0xa2,0xaf,0x9c,0xa4,0x72,0xc0,
+    0xb7,0xfd,0x93,0x26,0x36,0x3f,0xf7,0xcc,0x34,0xa5,0xe5,0xf1,0x71,0xd8,0x31,0x15,
+    0x04,0xc7,0x23,0xc3,0x18,0x96,0x05,0x9a,0x07,0x12,0x80,0xe2,0xeb,0x27,0xb2,0x75,
+    0x09,0x83,0x2c,0x1a,0x1b,0x6e,0x5a,0xa0,0x52,0x3b,0xd6,0xb3,0x29,0xe3,0x2f,0x84,
+    0x53,0xd1,0x00,0xed,0x20,0xfc,0xb1,0x5b,0x6a,0xcb,0xbe,0x39,0x4a,0x4c,0x58,0xcf,
+    0xd0,0xef,0xaa,0xfb,0x43,0x4d,0x33,0x85,0x45,0xf9,0x02,0x7f,0x50,0x3c,0x9f,0xa8,
+    0x51,0xa3,0x40,0x8f,0x92,0x9d,0x38,0xf5,0xbc,0xb6,0xda,0x21,0x10,0xff,0xf3,0xd2,
+    0xcd,0x0c,0x13,0xec,0x5f,0x97,0x44,0x17,0xc4,0xa7,0x7e,0x3d,0x64,0x5d,0x19,0x73,
+    0x60,0x81,0x4f,0xdc,0x22,0x2a,0x90,0x88,0x46,0xee,0xb8,0x14,0xde,0x5e,0x0b,0xdb,
+    0xe0,0x32,0x3a,0x0a,0x49,0x06,0x24,0x5c,0xc2,0xd3,0xac,0x62,0x91,0x95,0xe4,0x79,
+    0xe7,0xc8,0x37,0x6d,0x8d,0xd5,0x4e,0xa9,0x6c,0x56,0xf4,0xea,0x65,0x7a,0xae,0x08,
+    0xba,0x78,0x25,0x2e,0x1c,0xa6,0xb4,0xc6,0xe8,0xdd,0x74,0x1f,0x4b,0xbd,0x8b,0x8a,
+    0x70,0x3e,0xb5,0x66,0x48,0x03,0xf6,0x0e,0x61,0x35,0x57,0xb9,0x86,0xc1,0x1d,0x9e,
+    0xe1,0xf8,0x98,0x11,0x69,0xd9,0x8e,0x94,0x9b,0x1e,0x87,0xe9,0xce,0x55,0x28,0xdf,
+    0x8c,0xa1,0x89,0x0d,0xbf,0xe6,0x42,0x68,0x41,0x99,0x2d,0x0f,0xb0,0x54,0xbb,0x16
+};
+
+static const unsigned char aes_rsbox[256] = {
+    0x52,0x09,0x6a,0xd5,0x30,0x36,0xa5,0x38,0xbf,0x40,0xa3,0x9e,0x81,0xf3,0xd7,0xfb,
+    0x7c,0xe3,0x39,0x82,0x9b,0x2f,0xff,0x87,0x34,0x8e,0x43,0x44,0xc4,0xde,0xe9,0xcb,
+    0x54,0x7b,0x94,0x32,0xa6,0xc2,0x23,0x3d,0xee,0x4c,0x95,0x0b,0x42,0xfa,0xc3,0x4e,
+    0x08,0x2e,0xa1,0x66,0x28,0xd9,0x24,0xb2,0x76,0x5b,0xa2,0x49,0x6d,0x8b,0xd1,0x25,
+    0x72,0xf8,0xf6,0x64,0x86,0x68,0x98,0x16,0xd4,0xa4,0x5c,0xcc,0x5d,0x65,0xb6,0x92,
+    0x6c,0x70,0x48,0x50,0xfd,0xed,0xb9,0xda,0x5e,0x15,0x46,0x57,0xa7,0x8d,0x9d,0x84,
+    0x90,0xd8,0xab,0x00,0x8c,0xbc,0xd3,0x0a,0xf7,0xe4,0x58,0x05,0xb8,0xb3,0x45,0x06,
+    0xd0,0x2c,0x1e,0x8f,0xca,0x3f,0x0f,0x02,0xc1,0xaf,0xbd,0x03,0x01,0x13,0x8a,0x6b,
+    0x3a,0x91,0x11,0x41,0x4f,0x67,0xdc,0xea,0x97,0xf2,0xcf,0xce,0xf0,0xb4,0xe6,0x73,
+    0x96,0xac,0x74,0x22,0xe7,0xad,0x35,0x85,0xe2,0xf9,0x37,0xe8,0x1c,0x75,0xdf,0x6e,
+    0x47,0xf1,0x1a,0x71,0x1d,0x29,0xc5,0x89,0x6f,0xb7,0x62,0x0e,0xaa,0x18,0xbe,0x1b,
+    0xfc,0x56,0x3e,0x4b,0xc6,0xd2,0x79,0x20,0x9a,0xdb,0xc0,0xfe,0x78,0xcd,0x5a,0xf4,
+    0x1f,0xdd,0xa8,0x33,0x88,0x07,0xc7,0x31,0xb1,0x12,0x10,0x59,0x27,0x80,0xec,0x5f,
+    0x60,0x51,0x7f,0xa9,0x19,0xb5,0x4a,0x0d,0x2d,0xe5,0x7a,0x9f,0x93,0xc9,0x9c,0xef,
+    0xa0,0xe0,0x3b,0x4d,0xae,0x2a,0xf5,0xb0,0xc8,0xeb,0xbb,0x3c,0x83,0x53,0x99,0x61,
+    0x17,0x2b,0x04,0x7e,0xba,0x77,0xd6,0x26,0xe1,0x69,0x14,0x63,0x55,0x21,0x0c,0x7d
+};
+
+static inline unsigned char aes_xtime(unsigned char x) {
+    return (unsigned char)((x << 1) ^ (((x >> 7) & 1) * 0x1b));
+}
+
+static inline unsigned char aes_mul(unsigned char x, unsigned char y) {
+    unsigned char r = 0;
+    for (int i = 0; i < 8; i++) {
+        if (y & 1) r ^= x;
+        x = aes_xtime(x);
+        y >>= 1;
+    }
+    return r;
+}
+
+static void aes128_expand_key(const unsigned char key[16], unsigned char rk[176]) {
+    static const unsigned char rcon[11] = { 0x8d,0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x1b,0x36 };
+    memcpy(rk, key, 16);
+    for (int i = 4; i < 44; i++) {
+        unsigned char t[4];
+        memcpy(t, rk + (i - 1) * 4, 4);
+        if (i % 4 == 0) {
+            unsigned char tmp = t[0];
+            t[0] = aes_sbox[t[1]] ^ rcon[i / 4];
+            t[1] = aes_sbox[t[2]];
+            t[2] = aes_sbox[t[3]];
+            t[3] = aes_sbox[tmp];
+        }
+        for (int j = 0; j < 4; j++) rk[i * 4 + j] = rk[(i - 4) * 4 + j] ^ t[j];
+    }
+}
+
+static void aes128_decrypt_block(const unsigned char rk[176], unsigned char s[16]) {
+    for (int i = 0; i < 16; i++) s[i] ^= rk[160 + i];
+    for (int r = 9; r >= 0; r--) {
+        // InvShiftRows
+        unsigned char t = s[13]; s[13] = s[9]; s[9] = s[5]; s[5] = s[1]; s[1] = t;
+        t = s[2]; s[2] = s[10]; s[10] = t; t = s[6]; s[6] = s[14]; s[14] = t;
+        t = s[3]; s[3] = s[7]; s[7] = s[11]; s[11] = s[15]; s[15] = t;
+        // InvSubBytes
+        for (int i = 0; i < 16; i++) s[i] = aes_rsbox[s[i]];
+        // AddRoundKey
+        for (int i = 0; i < 16; i++) s[i] ^= rk[r * 16 + i];
+        // InvMixColumns (skip round 0)
+        if (r > 0) {
+            for (int c = 0; c < 4; c++) {
+                unsigned char a0 = s[c*4+0], a1 = s[c*4+1], a2 = s[c*4+2], a3 = s[c*4+3];
+                s[c*4+0] = aes_mul(a0,0x0e) ^ aes_mul(a1,0x0b) ^ aes_mul(a2,0x0d) ^ aes_mul(a3,0x09);
+                s[c*4+1] = aes_mul(a0,0x09) ^ aes_mul(a1,0x0e) ^ aes_mul(a2,0x0b) ^ aes_mul(a3,0x0d);
+                s[c*4+2] = aes_mul(a0,0x0d) ^ aes_mul(a1,0x09) ^ aes_mul(a2,0x0e) ^ aes_mul(a3,0x0b);
+                s[c*4+3] = aes_mul(a0,0x0b) ^ aes_mul(a1,0x0d) ^ aes_mul(a2,0x09) ^ aes_mul(a3,0x0e);
+            }
+        }
+    }
+}
+
+static int b64_val(unsigned char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+
+static size_t b64_decode(const char* in, size_t inlen, unsigned char* out, size_t maxout) {
+    size_t i = 0, o = 0;
+    while (i + 3 < inlen) {
+        if (in[i] == '=' || b64_val((unsigned char)in[i]) < 0) break;
+        int v0 = b64_val((unsigned char)in[i]);
+        int v1 = b64_val((unsigned char)in[i + 1]);
+        int v2 = (in[i + 2] == '=') ? -2 : b64_val((unsigned char)in[i + 2]);
+        int v3 = (in[i + 3] == '=') ? -2 : b64_val((unsigned char)in[i + 3]);
+        if (v0 < 0 || v1 < 0 || v2 == -1 || v3 == -1) break;
+        if (o >= maxout) break;
+        out[o++] = (unsigned char)((v0 << 2) | (v1 >> 4));
+        if (v2 >= 0 && o < maxout) out[o++] = (unsigned char)(((v1 & 0x0F) << 4) | (v2 >> 2));
+        if (v3 >= 0 && o < maxout) out[o++] = (unsigned char)(((v2 & 0x03) << 6) | v3);
+        i += 4;
+        if (v2 == -2 || v3 == -2) break;
+    }
+    return o;
+}
+
+static int decode_163_payload(const unsigned char* b64, size_t b64_len, char* id_out, size_t id_cap) {
+    if (b64_len < 16) return 0;
+    size_t clean_len = 0;
+    while (clean_len < b64_len) {
+        unsigned char ch = b64[clean_len];
+        if (ch == '=') {
+            clean_len++;
+            if (clean_len < b64_len && b64[clean_len] == '=') clean_len++;
+            break;
+        }
+        if (b64_val(ch) < 0) break;
+        clean_len++;
+    }
+    clean_len &= ~(size_t)3;
+    if (clean_len < 16 || clean_len > 8192) return 0;
+    unsigned char dec[6144];
+    size_t dlen = b64_decode((const char*)b64, clean_len, dec, sizeof(dec) - 1);
+    if (dlen < 16 || (dlen % 16) != 0) return 0;
+
+    static const unsigned char key163[16] = {
+        '#','1','4','l','j','k','_','!','\\',']','&','0','U','<','\'','('
+    };
+    unsigned char rk[176];
+    aes128_expand_key(key163, rk);
+    for (size_t off = 0; off < dlen; off += 16) aes128_decrypt_block(rk, dec + off);
+    unsigned char pad = dec[dlen - 1];
+    if (pad >= 1 && pad <= 16) dlen -= pad;
+    dec[dlen] = 0;
+    const char* mid = strstr((const char*)dec, "\"musicId\":");
+    if (!mid) return 0;
+    mid += 10;
+    while (*mid == ' ' || *mid == '\t' || *mid == '"') mid++;
+    size_t k = 0;
+    while (isdigit((unsigned char)mid[k]) && k + 1 < id_cap) {
+        id_out[k] = mid[k];
+        k++;
+    }
+    id_out[k] = 0;
+    return k > 0;
+}
+
+static int extract_163_music_id(const char* path, char* id_out, size_t id_cap) {
+    id_out[0] = 0;
+    FILE* f = plat_fopen(path, "rb");
+    if (!f) return 0;
+    unsigned char h10[10];
+    if (fread(h10, 1, 10, f) == 10 && memcmp(h10, "ID3", 3) == 0 && (h10[3] == 3 || h10[3] == 4)) {
+        uint32_t tsz = lrc_syncsafe32(h10 + 6);
+        if (tsz > 0 && tsz <= 16u * 1024u * 1024u) {
+            unsigned char* tag = (unsigned char*)malloc(tsz);
+            if (tag) {
+                size_t got = fread(tag, 1, tsz, f);
+                size_t pos = 0;
+                int ver = h10[3];
+                if ((h10[5] & 0x40) && got >= 4) {
+                    uint32_t ex = (ver == 4) ? lrc_syncsafe32(tag) : (lrc_be32(tag) + 4);
+                    pos += ex;
+                }
+                while (pos + 10 <= got) {
+                    if (tag[pos] == 0) break;
+                    uint32_t fsz = (ver == 4) ? lrc_syncsafe32(tag + pos + 4) : lrc_be32(tag + pos + 4);
+                    if (fsz == 0 || pos + 10 + fsz > got) break;
+                    const unsigned char* body = tag + pos + 10;
+                    if (memcmp(tag + pos, "COMM", 4) == 0 || memcmp(tag + pos, "TXXX", 4) == 0) {
+                        const char* sig = "163 key(Don't modify):";
+                        size_t slen = strlen(sig);
+                        for (size_t j = 0; j + slen < fsz; j++) {
+                            if (memcmp(body + j, sig, slen) == 0) {
+                                size_t rem = fsz - (j + slen);
+                                if (decode_163_payload(body + j + slen, rem, id_out, id_cap)) {
+                                    free(tag);
+                                    fclose(f);
+                                    return 1;
+                                }
+                            }
+                        }
+                    }
+                    pos += 10 + fsz;
+                }
+                free(tag);
+            }
+        }
+    }
+    // 兜底：FLAC/OGG 等前 512KB 内扫描
+    fseek(f, 0, SEEK_SET);
+    size_t scan_n = 512 * 1024;
+    unsigned char* buf = (unsigned char*)malloc(scan_n);
+    int found = 0;
+    if (buf) {
+        size_t got = fread(buf, 1, scan_n, f);
+        const char* sig = "163 key(Don't modify):";
+        size_t slen = strlen(sig);
+        for (size_t j = 0; j + slen + 16 < got; j++) {
+            if (memcmp(buf + j, sig, slen) == 0) {
+                size_t rem = got - (j + slen);
+                if (decode_163_payload(buf + j + slen, rem, id_out, id_cap)) {
+                    found = 1;
+                    break;
+                }
+            }
+        }
+        free(buf);
+    }
+    fclose(f);
+    return found;
+}
+
+static void url_encode(const char* s, char* out, size_t cap) {
+    static const char hex[] = "0123456789ABCDEF";
+    size_t o = 0;
+    for (const unsigned char* p = (const unsigned char*)s; *p && o + 4 < cap; p++) {
+        unsigned char c = *p;
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+            c == '-' || c == '_' || c == '.' || c == '~') {
+            out[o++] = (char)c;
+        } else {
+            out[o++] = '%';
+            out[o++] = hex[(c >> 4) & 0xF];
+            out[o++] = hex[c & 0xF];
+        }
+    }
+    out[o] = 0;
+}
+
+static int http_get_utf8(const char* host, const char* path_query, char** out_buf, size_t* out_len) {
+    *out_buf = NULL;
+    *out_len = 0;
+#ifdef _WIN32
+    typedef void* HINTERNET;
+    typedef HINTERNET (WINAPI *PFN_WinHttpOpen)(LPCWSTR, DWORD, LPCWSTR, LPCWSTR, DWORD);
+    typedef HINTERNET (WINAPI *PFN_WinHttpConnect)(HINTERNET, LPCWSTR, WORD, DWORD);
+    typedef HINTERNET (WINAPI *PFN_WinHttpOpenRequest)(HINTERNET, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR*, DWORD);
+    typedef BOOL (WINAPI *PFN_WinHttpSendRequest)(HINTERNET, LPCWSTR, DWORD, LPVOID, DWORD, DWORD, DWORD_PTR);
+    typedef BOOL (WINAPI *PFN_WinHttpReceiveResponse)(HINTERNET, LPVOID);
+    typedef BOOL (WINAPI *PFN_WinHttpQueryDataAvailable)(HINTERNET, LPDWORD);
+    typedef BOOL (WINAPI *PFN_WinHttpReadData)(HINTERNET, LPVOID, DWORD, LPDWORD);
+    typedef BOOL (WINAPI *PFN_WinHttpCloseHandle)(HINTERNET);
+    typedef BOOL (WINAPI *PFN_WinHttpSetTimeouts)(HINTERNET, int, int, int, int);
+
+    HMODULE hMod = LoadLibraryW(L"winhttp.dll");
+    if (!hMod) return 0;
+    PFN_WinHttpOpen pOpen = (PFN_WinHttpOpen)(void*)GetProcAddress(hMod, "WinHttpOpen");
+    PFN_WinHttpConnect pConn = (PFN_WinHttpConnect)(void*)GetProcAddress(hMod, "WinHttpConnect");
+    PFN_WinHttpOpenRequest pReq = (PFN_WinHttpOpenRequest)(void*)GetProcAddress(hMod, "WinHttpOpenRequest");
+    PFN_WinHttpSendRequest pSend = (PFN_WinHttpSendRequest)(void*)GetProcAddress(hMod, "WinHttpSendRequest");
+    PFN_WinHttpReceiveResponse pRecv = (PFN_WinHttpReceiveResponse)(void*)GetProcAddress(hMod, "WinHttpReceiveResponse");
+    PFN_WinHttpQueryDataAvailable pAvail = (PFN_WinHttpQueryDataAvailable)(void*)GetProcAddress(hMod, "WinHttpQueryDataAvailable");
+    PFN_WinHttpReadData pRead = (PFN_WinHttpReadData)(void*)GetProcAddress(hMod, "WinHttpReadData");
+    PFN_WinHttpCloseHandle pClose = (PFN_WinHttpCloseHandle)(void*)GetProcAddress(hMod, "WinHttpCloseHandle");
+    PFN_WinHttpSetTimeouts pTimeouts = (PFN_WinHttpSetTimeouts)(void*)GetProcAddress(hMod, "WinHttpSetTimeouts");
+    if (!pOpen || !pConn || !pReq || !pSend || !pRecv || !pAvail || !pRead || !pClose) return 0;
+
+    wchar_t whost[256], wpath[2048];
+    plat_utf8_to_wide(host, whost, 256);
+    plat_utf8_to_wide(path_query, wpath, 2048);
+
+    HINTERNET hSes = pOpen(L"Mozilla/5.0 Sirene/1.2.6", 0, NULL, NULL, 0);
+    if (!hSes) return 0;
+    if (pTimeouts) pTimeouts(hSes, 3000, 4000, 4000, 5000);
+    HINTERNET hCon = pConn(hSes, whost, 443, 0);
+    HINTERNET hReq = hCon ? pReq(hCon, L"GET", wpath, NULL, L"https://music.163.com/", NULL, 0x00800000u) : NULL;
+    int ok = 0;
+    if (hReq && pSend(hReq, NULL, 0, NULL, 0, 0, 0) && pRecv(hReq, NULL)) {
+        size_t cap = 4096, len = 0;
+        char* buf = (char*)malloc(cap);
+        if (buf) {
+            DWORD avail = 0;
+            while (pAvail(hReq, &avail) && avail > 0) {
+                if (len + avail + 1 > 512 * 1024) break;
+                if (len + avail + 1 > cap) {
+                    cap = (len + avail + 1) * 2;
+                    char* nb = (char*)realloc(buf, cap);
+                    if (!nb) break;
+                    buf = nb;
+                }
+                DWORD rd = 0;
+                if (!pRead(hReq, buf + len, avail, &rd) || rd == 0) break;
+                len += rd;
+            }
+            buf[len] = 0;
+            if (len > 0) { *out_buf = buf; *out_len = len; ok = 1; }
+            else free(buf);
+        }
+    }
+    if (hReq) pClose(hReq);
+    if (hCon) pClose(hCon);
+    pClose(hSes);
+    return ok;
+#else
+    char url[2304];
+    snprintf(url, sizeof(url), "https://%s%s", host, path_query);
+    int pfd[2];
+    if (pipe(pfd) != 0) return 0;
+    pid_t pid = fork();
+    if (pid == 0) {
+        close(pfd[0]);
+        dup2(pfd[1], STDOUT_FILENO);
+        close(pfd[1]);
+        char* argv[] = {
+            "curl", "-fsSL", "--max-time", "6",
+            "-A", "Mozilla/5.0", "-H", "Referer: https://music.163.com/",
+            url, NULL
+        };
+        execvp("curl", argv);
+        _exit(127);
+    }
+    close(pfd[1]);
+    if (pid < 0) { close(pfd[0]); return 0; }
+    size_t cap = 4096, len = 0;
+    char* buf = (char*)malloc(cap);
+    if (buf) {
+        for (;;) {
+            if (len + 1024 + 1 > 512 * 1024) break;
+            if (len + 1024 + 1 > cap) {
+                cap *= 2;
+                char* nb = (char*)realloc(buf, cap);
+                if (!nb) break;
+                buf = nb;
+            }
+            ssize_t r = read(pfd[0], buf + len, 1024);
+            if (r <= 0) break;
+            len += (size_t)r;
+        }
+        buf[len] = 0;
+    }
+    close(pfd[0]);
+    int st = 0;
+    waitpid(pid, &st, 0);
+    if (buf && len > 0 && WIFEXITED(st) && WEXITSTATUS(st) == 0) {
+        *out_buf = buf;
+        *out_len = len;
+        return 1;
+    }
+    free(buf);
+    return 0;
+#endif
+}
+
+static char* json_extract_str_after(const char* start, const char* key) {
+    if (!start || !key) return NULL;
+    const char* k = strstr(start, key);
+    if (!k) return NULL;
+    const char* p = strchr(k + strlen(key), ':');
+    if (!p) return NULL;
+    p++;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    if (*p != '"') return NULL;
+    p++;
+    size_t cap = 4096, len = 0;
+    char* out = (char*)malloc(cap);
+    if (!out) return NULL;
+    while (*p && *p != '"') {
+        if (len + 8 >= cap) {
+            cap *= 2;
+            char* nb = (char*)realloc(out, cap);
+            if (!nb) { free(out); return NULL; }
+            out = nb;
+        }
+        if (*p == '\\' && p[1]) {
+            p++;
+            if (*p == 'n') { out[len++] = '\n'; p++; }
+            else if (*p == 'r') { p++; }
+            else if (*p == 't') { out[len++] = '\t'; p++; }
+            else if (*p == '"' || *p == '\\' || *p == '/') { out[len++] = *p++; }
+            else if (*p == 'u' && isxdigit((unsigned char)p[1]) && isxdigit((unsigned char)p[2]) &&
+                     isxdigit((unsigned char)p[3]) && isxdigit((unsigned char)p[4])) {
+                uint32_t cp = 0;
+                for (int i = 1; i <= 4; i++) {
+                    char c = p[i];
+                    uint32_t d = (c >= '0' && c <= '9') ? (uint32_t)(c - '0')
+                               : (c >= 'a' && c <= 'f') ? (uint32_t)(c - 'a' + 10)
+                               : (uint32_t)(c - 'A' + 10);
+                    cp = (cp << 4) | d;
+                }
+                p += 5;
+                if (cp >= 0xD800 && cp <= 0xDBFF && p[0] == '\\' && p[1] == 'u' &&
+                    isxdigit((unsigned char)p[2]) && isxdigit((unsigned char)p[3]) &&
+                    isxdigit((unsigned char)p[4]) && isxdigit((unsigned char)p[5])) {
+                    uint32_t lo = 0;
+                    for (int i = 2; i <= 5; i++) {
+                        char c = p[i];
+                        uint32_t d = (c >= '0' && c <= '9') ? (uint32_t)(c - '0')
+                                   : (c >= 'a' && c <= 'f') ? (uint32_t)(c - 'a' + 10)
+                                   : (uint32_t)(c - 'A' + 10);
+                        lo = (lo << 4) | d;
+                    }
+                    if (lo >= 0xDC00 && lo <= 0xDFFF) {
+                        cp = 0x10000u + (((cp - 0xD800u) << 10) | (lo - 0xDC00u));
+                        p += 6;
+                    }
+                }
+                if (cp < 0x80u) {
+                    out[len++] = (char)cp;
+                } else if (cp < 0x800u) {
+                    out[len++] = (char)(0xC0u | (cp >> 6));
+                    out[len++] = (char)(0x80u | (cp & 0x3Fu));
+                } else if (cp < 0x10000u) {
+                    out[len++] = (char)(0xE0u | (cp >> 12));
+                    out[len++] = (char)(0x80u | ((cp >> 6) & 0x3Fu));
+                    out[len++] = (char)(0x80u | (cp & 0x3Fu));
+                } else {
+                    out[len++] = (char)(0xF0u | (cp >> 18));
+                    out[len++] = (char)(0x80u | ((cp >> 12) & 0x3Fu));
+                    out[len++] = (char)(0x80u | ((cp >> 6) & 0x3Fu));
+                    out[len++] = (char)(0x80u | (cp & 0x3Fu));
+                }
+            } else {
+                out[len++] = *p++;
+            }
+        } else {
+            out[len++] = *p++;
+        }
+    }
+    out[len] = 0;
+    return out;
+}
+
+static char* fetch_netease_by_id(const char* music_id) {
+    char pq[256], *json = NULL;
+    size_t jlen = 0;
+    snprintf(pq, sizeof(pq), "/api/song/lyric?id=%s&lv=1&tv=-1", music_id);
+    if (!http_get_utf8("music.163.com", pq, &json, &jlen)) return NULL;
+    const char* lrc_sec = strstr(json, "\"lrc\":");
+    char* raw = json_extract_str_after(lrc_sec ? lrc_sec : json, "\"lyric\"");
+    if (!raw || !raw[0]) {
+        free(raw);
+        const char* tsec = strstr(json, "\"tlyric\":");
+        raw = json_extract_str_after(tsec ? tsec : json, "\"lyric\"");
+    }
+    free(json);
+    if (raw && !raw[0]) { free(raw); return NULL; }
+    return raw;
+}
+
+static void clean_search_term(const char* in, char* out, size_t cap) {
+    if (!in) { out[0] = 0; return; }
+    snprintf(out, cap, "%s", in);
+    // 去掉扩展名或多余前后空格
+    char* p = out;
+    while (*p == ' ') p++;
+    if (p != out) memmove(out, p, strlen(p) + 1);
+    size_t n = strlen(out);
+    while (n > 0 && out[n - 1] == ' ') out[--n] = 0;
+}
+
+static char* fetch_online_lrc_text(const char* path, const char* title, const char* artist, double dur, const char** out_src) {
+    char mid[32] = {0};
+    if (extract_163_music_id(path, mid, sizeof(mid))) {
+        char* raw = fetch_netease_by_id(mid);
+        if (raw) { *out_src = "网易云歌词"; return raw; }
+    }
+
+    char ct[256], ca[256], et[768], ea[768], pq[2048];
+    clean_search_term(title, ct, sizeof(ct));
+    clean_search_term(artist, ca, sizeof(ca));
+    if (!ct[0]) return NULL;
+    url_encode(ct, et, sizeof(et));
+    url_encode(ca, ea, sizeof(ea));
+
+    char* json = NULL;
+    size_t jlen = 0;
+    if (ca[0]) {
+        if (dur > 5.0)
+            snprintf(pq, sizeof(pq), "/api/get?artist_name=%s&track_name=%s&duration=%d", ea, et, (int)(dur + 0.5));
+        else
+            snprintf(pq, sizeof(pq), "/api/get?artist_name=%s&track_name=%s", ea, et);
+        if (http_get_utf8("lrclib.net", pq, &json, &jlen)) {
+            char* raw = json_extract_str_after(json, "\"syncedLyrics\"");
+            if (!raw || !raw[0]) { free(raw); raw = json_extract_str_after(json, "\"plainLyrics\""); }
+            free(json);
+            if (raw && raw[0]) { *out_src = "LRCLIB 在线"; return raw; }
+            free(raw);
+        }
+    }
+
+    char q[520], eq[1560];
+    if (ca[0]) snprintf(q, sizeof(q), "%s %s", ca, ct);
+    else snprintf(q, sizeof(q), "%s", ct);
+    url_encode(q, eq, sizeof(eq));
+
+    snprintf(pq, sizeof(pq), "/api/search?q=%s", eq);
+    if (http_get_utf8("lrclib.net", pq, &json, &jlen)) {
+        char* raw = json_extract_str_after(json, "\"syncedLyrics\"");
+        if (!raw || !raw[0]) { free(raw); raw = json_extract_str_after(json, "\"plainLyrics\""); }
+        free(json);
+        if (raw && raw[0]) { *out_src = "LRCLIB 在线"; return raw; }
+        free(raw);
+    }
+
+    snprintf(pq, sizeof(pq), "/api/search/get/web?s=%s&type=1&limit=3", eq);
+    if (http_get_utf8("music.163.com", pq, &json, &jlen)) {
+        const char* songs = strstr(json, "\"songs\":");
+        const char* idp = songs ? strstr(songs, "\"id\":") : NULL;
+        if (idp) {
+            idp += 5;
+            while (*idp == ' ') idp++;
+            size_t k = 0;
+            while (isdigit((unsigned char)idp[k]) && k + 1 < sizeof(mid)) { mid[k] = idp[k]; k++; }
+            mid[k] = 0;
+            if (k > 0) {
+                char* raw = fetch_netease_by_id(mid);
+                if (raw) { free(json); *out_src = "网易云搜索"; return raw; }
+            }
+        }
+        free(json);
+    }
+    return NULL;
+}
+
+static PlatMutex g_onl_mtx;
+static PlatThread g_onl_th;
+static int g_onl_inited = 0;
+static int g_onl_req_seq = 0;
+static int g_onl_has_job = 0;
+static int g_onl_done_id = 0;
+static char g_onl_path[600];
+static char g_onl_title[256];
+static char g_onl_artist[256];
+static double g_onl_dur = 0;
+static int g_onl_ready_id = 0;
+static Lyrics* g_onl_ready_lyr = NULL;
+
+static void online_worker_fn(void* arg) {
+    (void)arg;
+    for (;;) {
+        char path[600], title[256], artist[256];
+        double dur = 0;
+        int my_id = 0;
+
+        plat_mutex_lock(&g_onl_mtx);
+        if (g_onl_has_job) {
+            my_id = g_onl_req_seq;
+            snprintf(path, sizeof(path), "%s", g_onl_path);
+            snprintf(title, sizeof(title), "%s", g_onl_title);
+            snprintf(artist, sizeof(artist), "%s", g_onl_artist);
+            dur = g_onl_dur;
+            g_onl_has_job = 0;
+        }
+        plat_mutex_unlock(&g_onl_mtx);
+
+        if (!my_id) {
+            plat_sleep_ms(30);
+            continue;
+        }
+
+        const char* src = "在线歌词";
+        char* raw = fetch_online_lrc_text(path, title, artist, dur, &src);
+        Lyrics* parsed = NULL;
+        if (raw) {
+            parsed = parse_lyrics_utf8(raw, src);
+            if (parsed && parsed->n > 0 && g_lrc_cache_dir[0]) {
+                plat_mkdir_p(g_lrc_cache_dir);
+                char cp[600];
+                if (build_cache_lrc_path(path, cp, sizeof(cp))) {
+                    FILE* cf = plat_fopen(cp, "wb");
+                    if (cf) {
+                        fwrite(raw, 1, strlen(raw), cf);
+                        fclose(cf);
+                    }
+                }
+            }
+            free(raw);
+        }
+
+        plat_mutex_lock(&g_onl_mtx);
+        g_onl_done_id = my_id;
+        if (my_id == g_onl_req_seq) {
+            if (g_onl_ready_lyr) lyrics_free(g_onl_ready_lyr);
+            g_onl_ready_lyr = parsed;
+            g_onl_ready_id = my_id;
+        } else if (parsed) {
+            lyrics_free(parsed);
+        }
+        plat_mutex_unlock(&g_onl_mtx);
+    }
+}
+
+int lyrics_start_online(const char* media_path, const char* title, const char* artist, double duration_sec) {
+    if (!media_path || !*media_path) return 0;
+    if (!g_onl_inited) {
+        plat_mutex_init(&g_onl_mtx);
+        if (plat_thread_create(&g_onl_th, online_worker_fn, NULL) != 0) return 0;
+        g_onl_inited = 1;
+    }
+    plat_mutex_lock(&g_onl_mtx);
+    int id = ++g_onl_req_seq;
+    snprintf(g_onl_path, sizeof(g_onl_path), "%s", media_path);
+    snprintf(g_onl_title, sizeof(g_onl_title), "%s", title ? title : "");
+    snprintf(g_onl_artist, sizeof(g_onl_artist), "%s", artist ? artist : "");
+    g_onl_dur = duration_sec;
+    g_onl_has_job = 1;
+    if (g_onl_ready_lyr) { lyrics_free(g_onl_ready_lyr); g_onl_ready_lyr = NULL; }
+    g_onl_ready_id = 0;
+    plat_mutex_unlock(&g_onl_mtx);
+    return id;
+}
+
+int lyrics_poll_online(int req_id, Lyrics** out) {
+    if (!g_onl_inited || req_id <= 0 || !out) return 0;
+    *out = NULL;
+    int got = 0;
+    plat_mutex_lock(&g_onl_mtx);
+    if (g_onl_ready_id == req_id) {
+        *out = g_onl_ready_lyr;
+        g_onl_ready_lyr = NULL;
+        g_onl_ready_id = 0;
+        got = 1;
+    }
+    plat_mutex_unlock(&g_onl_mtx);
+    return got;
+}
+
+int lyrics_online_busy(int req_id) {
+    if (!g_onl_inited || req_id <= 0) return 0;
+    plat_mutex_lock(&g_onl_mtx);
+    int busy = (req_id == g_onl_req_seq && g_onl_done_id != req_id);
+    plat_mutex_unlock(&g_onl_mtx);
+    return busy;
+}
+#else
+int  lyrics_start_online(const char* p, const char* t, const char* a, double d) { (void)p;(void)t;(void)a;(void)d; return 0; }
+int  lyrics_poll_online(int req_id, Lyrics** out) { (void)req_id; if (out) *out = NULL; return 0; }
+int  lyrics_online_busy(int req_id) { (void)req_id; return 0; }
+#endif
+
 Lyrics* lyrics_load_ex(const char* media_path, const char* title, const char* artist) {
     if (!media_path || !*media_path) {
         set_diag("路径为空");
@@ -1150,13 +1888,19 @@ Lyrics* lyrics_load_ex(const char* media_path, const char* title, const char* ar
     Lyrics* l = NULL;
     if (ci_ends_with(media_path, ".mp3")) l = extract_mp3_lyrics(media_path);
     else if (ci_ends_with(media_path, ".flac")) l = extract_flac_lyrics(media_path);
-    else if (ci_ends_with(media_path, ".ogg")) l = extract_ogg_lyrics(media_path);
+    else if (ci_ends_with(media_path, ".ogg") || ci_ends_with(media_path, ".oga")) l = extract_ogg_lyrics(media_path);
+    else if (ci_ends_with(media_path, ".m4a") || ci_ends_with(media_path, ".mp4") || ci_ends_with(media_path, ".m4b") || ci_ends_with(media_path, ".alac"))
+        l = extract_mp4_lyrics(media_path);
     else if (ci_ends_with(media_path, ".wav") || ci_ends_with(media_path, ".wave"))
         l = extract_wav_lyrics(media_path);
     if (l) return l;
 
     // 终极二进制扫描兜底
     l = fallback_scan_embedded_lrc(media_path);
+    if (l) return l;
+
+    // 命中本地在线歌词缓存
+    l = load_cached_online_lrc(media_path);
     if (l) return l;
 
     set_diag("未检测到同名.lrc或音频内嵌歌词标签");

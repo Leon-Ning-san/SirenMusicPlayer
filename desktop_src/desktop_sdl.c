@@ -13,6 +13,9 @@ static SDL_Renderer* g_ren = NULL;
 static SDL_Texture*  g_tex = NULL;
 static uint32_t*     g_backbuf = NULL;
 static int           g_running = 1;
+static int           g_vp_x = 0, g_vp_y = 0, g_vp_w = BE_W, g_vp_h = BE_H;
+static int           g_win_vp_x = 0, g_win_vp_y = 0, g_win_vp_w = BE_W, g_win_vp_h = BE_H;
+static int           g_buf_w = 0, g_buf_h = 0;
 
 static int g_m_held = 0, g_m_down = 0, g_m_up = 0, g_was_down = 0;
 static int g_m_x = 0, g_m_y = 0, g_prev_x = 0, g_prev_y = 0;
@@ -73,6 +76,49 @@ static uint64_t sym_to_btn(SDL_Keycode k) {
     }
 }
 
+static void calc_fit_vp(int cw, int ch, int* vx, int* vy, int* vw, int* vh) {
+    if (cw < 1) cw = 1;
+    if (ch < 1) ch = 1;
+    double target_r = (double)BE_W / (double)BE_H;
+    double win_r = (double)cw / (double)ch;
+    if (win_r > target_r) {
+        *vh = ch;
+        *vw = (int)(ch * target_r + 0.5);
+        *vx = (cw - *vw) / 2;
+        *vy = 0;
+    } else {
+        *vw = cw;
+        *vh = (int)(cw / target_r + 0.5);
+        *vx = 0;
+        *vy = (ch - *vh) / 2;
+    }
+    if (*vw < 160) *vw = 160;
+    if (*vh < 90)  *vh = 90;
+}
+
+static void update_sdl_viewport(void) {
+    if (!g_win || !g_ren) return;
+    int ww = BE_W, wh = BE_H, rw = BE_W, rh = BE_H;
+    SDL_GetWindowSize(g_win, &ww, &wh);
+    if (SDL_GetRendererOutputSize(g_ren, &rw, &rh) != 0 || rw <= 0 || rh <= 0) {
+        rw = ww; rh = wh;
+    }
+    calc_fit_vp(ww, wh, &g_win_vp_x, &g_win_vp_y, &g_win_vp_w, &g_win_vp_h);
+    calc_fit_vp(rw, rh, &g_vp_x, &g_vp_y, &g_vp_w, &g_vp_h);
+}
+
+static void ensure_sdl_buffers(int w, int h) {
+    if (w < 160) w = 160;
+    if (h < 90) h = 90;
+    if (w == g_buf_w && h == g_buf_h && g_tex && g_backbuf) return;
+    free(g_backbuf);
+    if (g_tex) SDL_DestroyTexture(g_tex);
+    g_tex = SDL_CreateTexture(g_ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, w, h);
+    g_backbuf = (uint32_t*)calloc((size_t)w * h, 4);
+    g_buf_w = w;
+    g_buf_h = h;
+}
+
 int be_init(void) {
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) return -1;
@@ -115,9 +161,8 @@ int be_init(void) {
     if (!g_ren) g_ren = SDL_CreateRenderer(g_win, -1, SDL_RENDERER_SOFTWARE);
     if (!g_ren) return -1;
 
-    SDL_RenderSetLogicalSize(g_ren, BE_W, BE_H);
-    g_tex = SDL_CreateTexture(g_ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, BE_W, BE_H);
-    g_backbuf = (uint32_t*)calloc((size_t)BE_W * BE_H, 4);
+    update_sdl_viewport();
+    ensure_sdl_buffers(g_vp_w, g_vp_h);
     if (!g_tex || !g_backbuf) return -1;
 
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
@@ -126,6 +171,7 @@ int be_init(void) {
 
 void be_exit(void) {
     free(g_backbuf); g_backbuf = NULL;
+    g_buf_w = g_buf_h = 0;
     if (g_cur_arrow) { SDL_FreeCursor(g_cur_arrow); g_cur_arrow = NULL; }
     if (g_cur_hand)  { SDL_FreeCursor(g_cur_hand);  g_cur_hand = NULL; }
     if (g_tex) { SDL_DestroyTexture(g_tex); g_tex = NULL; }
@@ -134,25 +180,38 @@ void be_exit(void) {
     SDL_Quit();
 }
 
+void be_viewport_size(int* out_w, int* out_h) {
+    update_sdl_viewport();
+    if (out_w) *out_w = g_vp_w;
+    if (out_h) *out_h = g_vp_h;
+}
+
 uint32_t* be_begin(int* stride) {
-    if (stride) *stride = BE_W;
+    update_sdl_viewport();
+    ensure_sdl_buffers(g_vp_w, g_vp_h);
+    if (stride) *stride = g_buf_w;
     return g_backbuf;
 }
 
 void be_end(void) {
-    if (!g_ren || !g_tex || !g_backbuf) return;
-    SDL_UpdateTexture(g_tex, NULL, g_backbuf, BE_W * 4);
+    if (!g_ren || !g_tex || !g_backbuf || g_buf_w <= 0 || g_buf_h <= 0) return;
+    SDL_UpdateTexture(g_tex, NULL, g_backbuf, g_buf_w * 4);
     SDL_SetRenderDrawColor(g_ren, 22, 26, 34, 255);
     SDL_RenderClear(g_ren);
-    SDL_RenderCopy(g_ren, g_tex, NULL, NULL);
+    SDL_Rect dst = { g_vp_x, g_vp_y, g_vp_w, g_vp_h };
+    SDL_RenderCopy(g_ren, g_tex, NULL, &dst);
     SDL_RenderPresent(g_ren);
 }
 
-static void clamp_xy(int* x, int* y) {
-    if (*x < 0) *x = 0;
-    if (*x >= BE_W) *x = BE_W - 1;
-    if (*y < 0) *y = 0;
-    if (*y >= BE_H) *y = BE_H - 1;
+static void map_mouse_xy(int wx, int wy, int* x, int* y) {
+    int lx = (int)((double)(wx - g_win_vp_x) * (double)BE_W / (double)(g_win_vp_w > 0 ? g_win_vp_w : BE_W));
+    int ly = (int)((double)(wy - g_win_vp_y) * (double)BE_H / (double)(g_win_vp_h > 0 ? g_win_vp_h : BE_H));
+    if (lx < 0) lx = 0;
+    if (lx >= BE_W) lx = BE_W - 1;
+    if (ly < 0) ly = 0;
+    if (ly >= BE_H) ly = BE_H - 1;
+    *x = lx;
+    *y = ly;
 }
 
 void be_input_update(void) {
@@ -164,30 +223,29 @@ void be_input_update(void) {
             g_running = 0;
             break;
         case SDL_WINDOWEVENT:
-            if (ev.window.event == SDL_WINDOWEVENT_LEAVE) {
+            if (ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+                update_sdl_viewport();
+            } else if (ev.window.event == SDL_WINDOWEVENT_LEAVE) {
                 g_hover_x = -1;
                 g_hover_y = -1;
             }
             break;
         case SDL_MOUSEBUTTONDOWN:
             if (ev.button.button == SDL_BUTTON_LEFT) {
-                g_m_x = ev.button.x; g_m_y = ev.button.y;
-                clamp_xy(&g_m_x, &g_m_y);
+                map_mouse_xy(ev.button.x, ev.button.y, &g_m_x, &g_m_y);
                 g_hover_x = g_m_x; g_hover_y = g_m_y;
                 g_m_held = 1; g_m_down = 1;
             }
             break;
         case SDL_MOUSEMOTION:
-            g_hover_x = ev.motion.x; g_hover_y = ev.motion.y;
-            clamp_xy(&g_hover_x, &g_hover_y);
+            map_mouse_xy(ev.motion.x, ev.motion.y, &g_hover_x, &g_hover_y);
             if (g_m_held) {
                 g_m_x = g_hover_x; g_m_y = g_hover_y;
             }
             break;
         case SDL_MOUSEBUTTONUP:
             if (ev.button.button == SDL_BUTTON_LEFT) {
-                g_m_x = ev.button.x; g_m_y = ev.button.y;
-                clamp_xy(&g_m_x, &g_m_y);
+                map_mouse_xy(ev.button.x, ev.button.y, &g_m_x, &g_m_y);
                 g_m_held = 0; g_m_up = 1;
             }
             break;

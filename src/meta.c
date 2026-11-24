@@ -530,6 +530,119 @@ static void fallback_art(const char* path, TrackMeta* m, size_t scan_limit) {
     free(buf);
 }
 
+static uint32_t meta_be32(const unsigned char* p) {
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
+}
+
+static int meta_mp4_find(FILE* f, long start, long end, const char tag[4], long* ds, long* de) {
+    long pos = start;
+    unsigned char hdr[16];
+    while (pos + 8 <= end) {
+        if (fseek(f, pos, SEEK_SET) != 0 || fread(hdr, 1, 8, f) != 8) break;
+        uint32_t sz32 = meta_be32(hdr);
+        long hlen = 8, sz = (long)sz32;
+        if (sz32 == 1) {
+            if (pos + 16 > end || fread(hdr + 8, 1, 8, f) != 8) break;
+            uint64_t sz64 = ((uint64_t)meta_be32(hdr + 8) << 32) | meta_be32(hdr + 12);
+            if (sz64 < 16 || sz64 > 0x7FFFFFFFULL) break;
+            sz = (long)sz64; hlen = 16;
+        } else if (sz32 == 0) {
+            sz = end - pos;
+        }
+        if (sz < hlen || pos + sz > end) break;
+        if (memcmp(hdr + 4, tag, 4) == 0) {
+            *ds = pos + hlen; *de = pos + sz;
+            return 1;
+        }
+        pos += sz;
+    }
+    return 0;
+}
+
+static void mp4_read_str_atom(FILE* f, long s, long e, char* out, size_t cap) {
+    long ds, de;
+    if (!meta_mp4_find(f, s, e, "data", &ds, &de) || ds + 8 >= de) return;
+    long n = de - (ds + 8);
+    if (n <= 0) return;
+    if ((size_t)n >= cap) n = (long)cap - 1;
+    if (fseek(f, ds + 8, SEEK_SET) != 0) return;
+    size_t got = fread(out, 1, (size_t)n, f);
+    out[got] = 0;
+}
+
+static int parse_mp4_meta(const char* path, TrackMeta* m) {
+    FILE* f = plat_fopen(path, "rb");
+    if (!f) return 0;
+    fseek(f, 0, SEEK_END);
+    long fsz = ftell(f);
+    long s0, e0, s1, e1;
+    if (fsz < 16 || !meta_mp4_find(f, 0, fsz, "moov", &s0, &e0) ||
+        !meta_mp4_find(f, s0, e0, "udta", &s1, &e1) ||
+        !meta_mp4_find(f, s1, e1, "meta", &s0, &e0) || s0 + 4 > e0 ||
+        !meta_mp4_find(f, s0 + 4, e0, "ilst", &s1, &e1)) {
+        fclose(f);
+        return 0;
+    }
+    int got = 0;
+    long pos = s1;
+    unsigned char hdr[8];
+    while (pos + 8 <= e1) {
+        if (fseek(f, pos, SEEK_SET) != 0 || fread(hdr, 1, 8, f) != 8) break;
+        uint32_t sz = meta_be32(hdr);
+        if (sz < 8 || pos + (long)sz > e1) break;
+        long as = pos + 8, ae = pos + (long)sz;
+        if (hdr[0+4] == 0xA9 && memcmp(hdr + 5, "nam", 3) == 0) { mp4_read_str_atom(f, as, ae, m->title, sizeof(m->title)); got = 1; }
+        else if (hdr[0+4] == 0xA9 && memcmp(hdr + 5, "ART", 3) == 0) { mp4_read_str_atom(f, as, ae, m->artist, sizeof(m->artist)); got = 1; }
+        else if (hdr[0+4] == 0xA9 && memcmp(hdr + 5, "alb", 3) == 0) { mp4_read_str_atom(f, as, ae, m->album, sizeof(m->album)); got = 1; }
+        else if (memcmp(hdr + 4, "covr", 4) == 0 && !m->art) {
+            long ds, de;
+            if (meta_mp4_find(f, as, ae, "data", &ds, &de) && ds + 8 < de) {
+                long n = de - (ds + 8);
+                if (n > 32 && n <= 8 * 1024 * 1024) {
+                    unsigned char* buf = (unsigned char*)malloc((size_t)n);
+                    if (buf && fseek(f, ds + 8, SEEK_SET) == 0 && fread(buf, 1, (size_t)n, f) == (size_t)n) {
+                        int w = 0, h = 0;
+                        unsigned char* img = stbi_load_from_memory(buf, (int)n, &w, &h, NULL, 4);
+                        if (img && w > 16 && h > 16) { m->art = img; m->art_w = w; m->art_h = h; got = 1; }
+                        else if (img) stbi_image_free(img);
+                    }
+                    free(buf);
+                }
+            }
+        }
+        pos += (long)sz;
+    }
+    fclose(f);
+    return got;
+}
+
+static int parse_aiff_meta(const char* path, TrackMeta* m) {
+    FILE* f = plat_fopen(path, "rb");
+    if (!f) return 0;
+    unsigned char hdr[12];
+    if (fread(hdr, 1, 12, f) != 12 || memcmp(hdr, "FORM", 4) != 0) { fclose(f); return 0; }
+    fseek(f, 0, SEEK_END);
+    long fsz = ftell(f), pos = 12;
+    int got = 0;
+    while (pos + 8 <= fsz) {
+        unsigned char ck[8];
+        if (fseek(f, pos, SEEK_SET) != 0 || fread(ck, 1, 8, f) != 8) break;
+        uint32_t sz = meta_be32(ck + 4);
+        long cdata = pos + 8;
+        if (cdata + (long)sz > fsz) break;
+        if (memcmp(ck, "NAME", 4) == 0 && sz > 0 && sz < 512 && !m->title[0]) {
+            size_t n = sz < sizeof(m->title) - 1 ? sz : sizeof(m->title) - 1;
+            if (fread(m->title, 1, n, f) == n) { m->title[n] = 0; got = 1; }
+        } else if (memcmp(ck, "AUTH", 4) == 0 && sz > 0 && sz < 512 && !m->artist[0]) {
+            size_t n = sz < sizeof(m->artist) - 1 ? sz : sizeof(m->artist) - 1;
+            if (fread(m->artist, 1, n, f) == n) { m->artist[n] = 0; got = 1; }
+        }
+        pos = cdata + (long)((sz + 1u) & ~1u);
+    }
+    fclose(f);
+    return got;
+}
+
 static int meta_load_impl(const char* path, TrackMeta* m, size_t scan_limit, int check_ext) {
     memset(m, 0, sizeof(*m));
     int got = 0;
@@ -540,7 +653,11 @@ static int meta_load_impl(const char* path, TrackMeta* m, size_t scan_limit, int
             got = id3_parse(&id, m);
             free(id.body);
         }
-    } else if (ci_ends_with(path, ".ogg")) got = parse_ogg(path, m);
+    } else if (ci_ends_with(path, ".ogg") || ci_ends_with(path, ".oga")) got = parse_ogg(path, m);
+    else if (ci_ends_with(path, ".m4a") || ci_ends_with(path, ".mp4") || ci_ends_with(path, ".m4b") || ci_ends_with(path, ".alac"))
+        got = parse_mp4_meta(path, m);
+    else if (ci_ends_with(path, ".aiff") || ci_ends_with(path, ".aif") || ci_ends_with(path, ".aifc"))
+        got = parse_aiff_meta(path, m);
 
     fallback_art(path, m, scan_limit);
     if (check_ext && !m->art) try_external_cover(path, m);

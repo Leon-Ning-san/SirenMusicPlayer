@@ -4,6 +4,8 @@
 
 typedef struct {
     int w, h;
+    int lw, lh;
+    float s;
     uint32_t* px; // RGBA8888, memory bytes: R,G,B,A
     int clip_x0, clip_y0, clip_x1, clip_y1;
 } Canvas;
@@ -11,6 +13,7 @@ typedef struct {
 #define COL(r,g,b,a) (((uint32_t)(a)<<24)|((uint32_t)(b)<<16)|((uint32_t)(g)<<8)|(uint32_t)(r))
 
 Canvas* canvas_new(int w, int h);
+Canvas* canvas_new_scaled(int lw, int lh, float s);
 void canvas_free(Canvas* c);
 void canvas_set_clip(Canvas* c, int x0, int y0, int x1, int y1);
 void canvas_reset_clip(Canvas* c);

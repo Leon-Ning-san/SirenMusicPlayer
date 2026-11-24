@@ -16,11 +16,12 @@
 #include "plat.h"
 
 static HWND      g_hwnd = NULL;
-static uint32_t* g_backbuf = NULL;   // BE_W x BE_H (720x1280) RGBA
-static uint32_t* g_bgra = NULL;      // 720x1280 BGRA for GDI StretchDIBits
+static uint32_t* g_backbuf = NULL;   // g_buf_w x g_buf_h RGBA
+static uint32_t* g_bgra = NULL;      // g_buf_w x g_buf_h BGRA for GDI SetDIBitsToDevice
 static BITMAPINFO g_bmi;
 static int       g_running = 1;
-static int       g_vp_x = 0, g_vp_y = 0, g_vp_w = 468, g_vp_h = 832;
+static int       g_vp_x = 0, g_vp_y = 0, g_vp_w = BE_W, g_vp_h = BE_H;
+static int       g_buf_w = 0, g_buf_h = 0;
 
 // Mouse / Touch emulation state
 static int g_m_held = 0, g_m_down = 0, g_m_up = 0, g_was_down = 0;
@@ -128,8 +129,28 @@ static void handle_wchar(wchar_t ch) {
     if (u8[0]) push_text_ev(0, u8);
 }
 
+static void ensure_win_buffers(int w, int h) {
+    if (w < 160) w = 160;
+    if (h < 90) h = 90;
+    if (w == g_buf_w && h == g_buf_h && g_backbuf && g_bgra) return;
+    free(g_backbuf);
+    free(g_bgra);
+    g_backbuf = (uint32_t*)calloc((size_t)w * h, 4);
+    g_bgra    = (uint32_t*)calloc((size_t)w * h, 4);
+    g_buf_w = w;
+    g_buf_h = h;
+    g_has_frame = 0;
+    memset(&g_bmi, 0, sizeof(g_bmi));
+    g_bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    g_bmi.bmiHeader.biWidth = w;
+    g_bmi.bmiHeader.biHeight = -h;
+    g_bmi.bmiHeader.biPlanes = 1;
+    g_bmi.bmiHeader.biBitCount = 32;
+    g_bmi.bmiHeader.biCompression = BI_RGB;
+}
+
 static void present_to_hdc(HDC hdc, HWND hwnd) {
-    if (!hdc || !hwnd || !g_has_frame || !g_bgra) return;
+    if (!hdc || !hwnd || !g_has_frame || !g_bgra || g_buf_w <= 0 || g_buf_h <= 0) return;
     RECT cr;
     GetClientRect(hwnd, &cr);
     int cw = cr.right - cr.left, ch = cr.bottom - cr.top;
@@ -145,14 +166,14 @@ static void present_to_hdc(HDC hdc, HWND hwnd) {
         }
         DeleteObject(br);
     }
-    if (g_vp_w == BE_W && g_vp_h == BE_H) {
-        SetDIBitsToDevice(hdc, g_vp_x, g_vp_y, BE_W, BE_H, 0, 0, 0, BE_H,
+    if (g_vp_w == g_buf_w && g_vp_h == g_buf_h) {
+        SetDIBitsToDevice(hdc, g_vp_x, g_vp_y, g_buf_w, g_buf_h, 0, 0, 0, g_buf_h,
                           g_bgra, &g_bmi, DIB_RGB_COLORS);
     } else {
         SetStretchBltMode(hdc, HALFTONE);
         SetBrushOrgEx(hdc, 0, 0, NULL);
         StretchDIBits(hdc, g_vp_x, g_vp_y, g_vp_w, g_vp_h,
-                      0, 0, BE_W, BE_H, g_bgra, &g_bmi, DIB_RGB_COLORS, SRCCOPY);
+                      0, 0, g_buf_w, g_buf_h, g_bgra, &g_bmi, DIB_RGB_COLORS, SRCCOPY);
     }
 }
 
@@ -344,36 +365,36 @@ int be_init(void) {
     if (ico_sm || ico_big) SendMessageW(g_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)(ico_sm ? ico_sm : ico_big));
 
     update_viewport(init_w, init_h);
-    g_backbuf = (uint32_t*)calloc((size_t)BE_W * BE_H, 4);
-    g_bgra    = (uint32_t*)calloc((size_t)BE_W * BE_H, 4);
+    ensure_win_buffers(g_vp_w, g_vp_h);
     if (!g_backbuf || !g_bgra) return -1;
-
-    memset(&g_bmi, 0, sizeof(g_bmi));
-    g_bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    g_bmi.bmiHeader.biWidth = BE_W;
-    g_bmi.bmiHeader.biHeight = -BE_H;
-    g_bmi.bmiHeader.biPlanes = 1;
-    g_bmi.bmiHeader.biBitCount = 32;
-    g_bmi.bmiHeader.biCompression = BI_RGB;
     return 0;
 }
 
 void be_exit(void) {
     free(g_backbuf); g_backbuf = NULL;
     free(g_bgra);    g_bgra = NULL;
+    g_buf_w = g_buf_h = 0;
     if (g_hwnd) { DestroyWindow(g_hwnd); g_hwnd = NULL; }
     timeEndPeriod(1);
     CoUninitialize();
 }
 
+void be_viewport_size(int* out_w, int* out_h) {
+    int w = g_vp_w < 160 ? 160 : g_vp_w;
+    int h = g_vp_h < 90  ? 90  : g_vp_h;
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+}
+
 uint32_t* be_begin(int* stride) {
-    if (stride) *stride = BE_W;
+    ensure_win_buffers(g_vp_w, g_vp_h);
+    if (stride) *stride = g_buf_w;
     return g_backbuf;
 }
 
 void be_end(void) {
-    if (!g_hwnd || !g_backbuf || !g_bgra) return;
-    size_t n = (size_t)BE_W * BE_H;
+    if (!g_hwnd || !g_backbuf || !g_bgra || g_buf_w <= 0 || g_buf_h <= 0) return;
+    size_t n = (size_t)g_buf_w * g_buf_h;
     for (size_t i = 0; i < n; i++) {
         uint32_t p = g_backbuf[i];
         g_bgra[i] = (p & 0xFF00FF00u) | ((p & 0xFFu) << 16) | ((p >> 16) & 0xFFu);

@@ -24,3 +24,9 @@ void lyrics_free(Lyrics* l);
 int lyrics_index(const Lyrics* l, double t);
 // Diagnostic string from last lyrics_load_ex call
 const char* lyrics_last_diag(void);
+
+// 桌面端异步联网匹配歌词（网易云 163 key musicId / 网易云搜索 / LRCLIB + 本地缓存）
+void lyrics_set_cache_dir(const char* dir);
+int  lyrics_start_online(const char* media_path, const char* title, const char* artist, double duration_sec);
+int  lyrics_poll_online(int req_id, Lyrics** out);
+int  lyrics_online_busy(int req_id);

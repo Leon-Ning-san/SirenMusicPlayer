@@ -43,3 +43,4 @@ int be_default_music_dirs(char dirs[][600], int max_dirs);
 void be_set_cli_path(const char* p);
 void be_mouse_pos(int* x, int* y);
 void be_set_cursor(int hand);
+void be_viewport_size(int* out_w, int* out_h);
