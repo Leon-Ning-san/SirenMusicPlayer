@@ -59,12 +59,12 @@ static void update_layout(void) {
     L_M = portrait() ? 22 : 28;
     L_THUMB = 84;
     if (portrait()) {
-        L_TOP = 134;
-        L_BAR = 92;
-        L_ROW = 130;
-        L_TITLE = 25;
-        L_ART = 17;
-        L_ARTIST2 = 15;
+        L_TOP = 138;
+        L_BAR = 96;
+        L_ROW = 134;
+        L_TITLE = 27;
+        L_ART = 18;
+        L_ARTIST2 = 16;
     } else {
         L_TOP = 82;
         L_BAR = 76;
@@ -1269,7 +1269,8 @@ static void draw_list(void) {
         if (view == VIEW_SEARCH && search_q[0]) snprintf(sub, sizeof(sub), "%d 首匹配", nvisible);
         else if (view == VIEW_FAVORITE) snprintf(sub, sizeof(sub), "%d 首收藏", nvisible);
         else snprintf(sub, sizeof(sub), "%d 首", ntracks);
-        draw_text(screen, font, 16, 146, 33, C_TXT3, sub);
+        int cnt_x = 68 + text_width(font, 26, "Siren") + 14;
+        draw_text(screen, font, 16, cnt_x, 33, C_TXT3, sub);
 
         int px = SCR_W - L_M;
         int ph = 36, py = 23;
@@ -1297,36 +1298,39 @@ static void draw_list(void) {
         int aw = text_width(font, 15, "全部") + 26;
         px -= aw + 10; rc_tab_all = draw_pill_btn(px, py, ph, 15, "全部", view == VIEW_HOME, C_PRIMARY);
     } else {
-        fill_ellipse_aa(screen, 38, 36, 16, 16, C_PRIMARY);
-        draw_note(screen, 29, 27, 18, C_ONPRIM);
-        draw_text(screen, font, 26, 64, 21, C_TXT, "Siren");
+        fill_ellipse_aa(screen, 38, 37, 16, 16, C_PRIMARY);
+        draw_note(screen, 29, 28, 18, C_ONPRIM);
+        draw_text(screen, font, 28, 64, 21, C_TXT, "Siren");
 
         char sub[64];
-        snprintf(sub, sizeof(sub), "%d 首", nvisible);
-        draw_text(screen, font, 15, 142, 30, C_TXT3, sub);
+        if (view == VIEW_SEARCH && search_q[0]) snprintf(sub, sizeof(sub), "%d 首匹配", nvisible);
+        else if (view == VIEW_FAVORITE) snprintf(sub, sizeof(sub), "%d 首收藏", nvisible);
+        else snprintf(sub, sizeof(sub), "%d 首", nvisible);
+        int cnt_x = 64 + text_width(font, 28, "Siren") + 14;
+        draw_text(screen, font, 17, cnt_x, 30, C_TXT3, sub);
 
         int px = SCR_W - L_M;
-        int dw = text_width(font, 15, "自检") + 24;
-        px -= dw; rc_btn_diag = draw_pill_btn(px, 18, 36, 15, "自检", 0, C_PRIMARY);
-        int ow = text_width(font, 15, "横/竖") + 24;
-        px -= ow + 8; rc_btn_ori = draw_pill_btn(px, 18, 36, 15, "横/竖", ori_mode != 0, C_PRIMARY);
+        int dw = text_width(font, 16, "自检") + 26;
+        px -= dw; rc_btn_diag = draw_pill_btn(px, 18, 38, 16, "自检", 0, C_PRIMARY);
+        int ow = text_width(font, 16, "横/竖") + 26;
+        px -= ow + 10; rc_btn_ori = draw_pill_btn(px, 18, 38, 16, "横/竖", ori_mode != 0, C_PRIMARY);
 
         int x2 = L_M;
-        rc_tab_all = draw_pill_btn(x2, 72, 38, 15, "全部", view == VIEW_HOME, C_PRIMARY);
+        rc_tab_all = draw_pill_btn(x2, 74, 40, 16, "全部", view == VIEW_HOME, C_PRIMARY);
         x2 += rc_tab_all.w + 10;
 
         char fav_lbl[32];
         snprintf(fav_lbl, sizeof(fav_lbl), "喜欢 %d", fav_count);
-        rc_tab_fav = draw_pill_btn(x2, 72, 38, 15, fav_lbl, view == VIEW_FAVORITE, C_HEART);
+        rc_tab_fav = draw_pill_btn(x2, 74, 40, 16, fav_lbl, view == VIEW_FAVORITE, C_HEART);
         x2 += rc_tab_fav.w + 10;
 
         const char* sr_lbl = (view == VIEW_SEARCH && search_q[0]) ? "清除搜索" : "搜索";
-        rc_btn_search = draw_pill_btn(x2, 72, 38, 15, sr_lbl, view == VIEW_SEARCH, C_PRIMARY);
+        rc_btn_search = draw_pill_btn(x2, 74, 40, 16, sr_lbl, view == VIEW_SEARCH, C_PRIMARY);
         x2 += rc_btn_search.w + 10;
 
         char th_lbl[32];
         snprintf(th_lbl, sizeof(th_lbl), "主题:%s", theme_names[cur_theme]);
-        rc_btn_theme = draw_pill_btn(x2, 72, 38, 15, th_lbl, 0, C_PRIMARY);
+        rc_btn_theme = draw_pill_btn(x2, 74, 40, 16, th_lbl, 0, C_PRIMARY);
     }
 
     // 底部迷你播放条
@@ -1351,9 +1355,9 @@ static void draw_list(void) {
         int txt_maxw = SCR_W - txt_x - ctrl_w - 16;
         if (txt_maxw < 80) txt_maxw = 80;
 
-        draw_text_max(screen, font, portrait() ? 20 : 18, txt_x, midy - 22,
+        draw_text_max(screen, font, portrait() ? 22 : 18, txt_x, midy - 23,
                       C_TXT, p_title[0] ? p_title : "Siren", txt_maxw);
-        draw_text_max(screen, font, L_ARTIST2, txt_x, midy + 3,
+        draw_text_max(screen, font, L_ARTIST2, txt_x, midy + 4,
                       C_TXT3, p_artist[0] ? p_artist : p_fmt, txt_maxw);
 
         int bx3 = SCR_W - 44;
@@ -1472,21 +1476,23 @@ static void draw_lyric_or_spectrum(int x0, int x1, int ly_top, int ly_bot, int s
             if (y > ly_bot) break;
             if (dist == 0) {
                 if (centered) {
-                    draw_text_centered_max(screen, font, 25, x0, x1, y, C_PRIMARY, lyr->lines[i].text);
+                    draw_text_centered_max(screen, font, 28, x0, x1, y, C_PRIMARY, lyr->lines[i].text);
                 } else {
                     fill_round_rect_aa(screen, x0, y + 3, 4, 26, 2, C_PRIMARY);
                     draw_text_max(screen, font, 25, x0 + 16, y, C_PRIMARY, lyr->lines[i].text, rw - 16);
                 }
-                y += 48;
+                y += centered ? 52 : 48;
             } else {
-                float px = (dist == -1 || dist == 1) ? 20.0f : 17.0f;
+                float px = centered
+                    ? ((dist == -1 || dist == 1) ? 22.0f : 18.0f)
+                    : ((dist == -1 || dist == 1) ? 20.0f : 17.0f);
                 uint32_t cc = (dist == -1 || dist == 1) ? C_TXT2 : C_TXT3;
                 if (centered) {
                     draw_text_centered_max(screen, font, px, x0, x1, y, cc, lyr->lines[i].text);
                 } else {
                     draw_text_max(screen, font, px, x0 + 16, y, cc, lyr->lines[i].text, rw - 16);
                 }
-                y += (int)px + 20;
+                y += (int)px + (centered ? 22 : 20);
             }
         }
     } else {
@@ -1515,7 +1521,7 @@ static void draw_lyric_or_spectrum(int x0, int x1, int ly_top, int ly_bot, int s
             fill_round_rect_aa_a(screen, bx, py_dot, bw, 4, 2, C_TXT2, 180);
         }
         if (centered) {
-            draw_text_centered(screen, font, 15, x0, x1, spec_hint_y, C_TXT3,
+            draw_text_centered(screen, font, 16, x0, x1, spec_hint_y, C_TXT3,
                                "纯音乐 / 无歌词 · 同目录放入 .lrc 自动同步");
         } else {
             draw_text(screen, font, 15, x0, spec_hint_y, C_TXT3,
@@ -1536,8 +1542,9 @@ static void draw_progress_bar(int py, double pos, double dur) {
     char t1[32], t2[32];
     fmt_time(pos, t1, sizeof(t1));
     fmt_time(dur, t2, sizeof(t2));
-    draw_text(screen, font, 15, ui_px0, py + 18, C_TXT2, t1);
-    draw_text_right(screen, font, 15, ui_px1, py + 18, C_TXT2, t2);
+    float tsz = portrait() ? 16.0f : 15.0f;
+    draw_text(screen, font, tsz, ui_px0, py + 18, C_TXT2, t1);
+    draw_text_right(screen, font, tsz, ui_px1, py + 18, C_TXT2, t2);
 }
 
 static void draw_controls(int cy) {
@@ -1583,9 +1590,15 @@ static void draw_player(void) {
     rc_p_back = (Rect){ 26, 18, 96, 36 };
 
     char top_info[64];
-    snprintf(top_info, sizeof(top_info), "正在播放 · %s · %d/%d", p_fmt[0] ? p_fmt : "AUDIO",
+    snprintf(top_info, sizeof(top_info), "%s · %d/%d", p_fmt[0] ? p_fmt : "AUDIO",
              playing_idx >= 0 ? playing_idx + 1 : 0, ntracks);
-    draw_text_centered(screen, font, 15, 130, SCR_W - 220, 27, C_TXT2, top_info);
+    if (portrait()) {
+        draw_text_centered(screen, font, 16, 128, SCR_W - 196, 27, C_TXT2, top_info);
+    } else {
+        char land_info[80];
+        snprintf(land_info, sizeof(land_info), "正在播放 · %s", top_info);
+        draw_text_centered(screen, font, 16, 130, SCR_W - 220, 27, C_TXT2, land_info);
+    }
 
     int rx = SCR_W - 26;
     int dw = text_width(font, 15, "自检") + 24;
@@ -1643,12 +1656,12 @@ static void draw_player(void) {
         }
         stroke_round_rect_aa(screen, cx, cy, csz, csz, 28, 1, COL(255, 255, 255, 255), 36);
 
-        float tpx = text_width(font, 32, p_title) > (SCR_W - 80) ? 26.0f : 32.0f;
-        draw_text_centered_max(screen, font, tpx, 40, SCR_W - 40, cy + csz + 26, C_TXT, p_title);
-        draw_text_centered_max(screen, font, 19, 40, SCR_W - 40, cy + csz + 74, C_TXT2,
+        float tpx = text_width(font, 36, p_title) > (SCR_W - 80) ? 28.0f : 36.0f;
+        draw_text_centered_max(screen, font, tpx, 40, SCR_W - 40, cy + csz + 24, C_TXT, p_title);
+        draw_text_centered_max(screen, font, 20, 40, SCR_W - 40, cy + csz + 76, C_TXT2,
                                p_artist[0] ? p_artist : "未知艺术家");
 
-        draw_lyric_or_spectrum(40, SCR_W - 40, cy + csz + 128, 956, 920, 952, pos, 1);
+        draw_lyric_or_spectrum(40, SCR_W - 40, cy + csz + 132, 956, 920, 954, pos, 1);
 
         int py = SCR_H - 224;
         ui_px0 = 56; ui_px1 = SCR_W - 56; ui_py = py;
@@ -1824,10 +1837,13 @@ int main(int argc, char** argv) {
 
         if (touch_now.held || touch_now.up) {
             if (ori == ORI_PORT_A) {
-                int nx = touch_now.y, ny = touch_now.x;
+                // 顺时针竖持：硬件 (x, y) -> 竖屏画布 (719 - y, x)
+                int nx = 719 - touch_now.y;
+                int ny = touch_now.x;
                 touch_now.x = nx; touch_now.y = ny;
             } else if (ori == ORI_PORT_B) {
-                int nx = 719 - touch_now.y;
+                // 逆时针竖持：硬件 (x, y) -> 竖屏画布 (y, 1279 - x)
+                int nx = touch_now.y;
                 int ny = 1279 - touch_now.x;
                 touch_now.x = nx; touch_now.y = ny;
             }
@@ -1907,16 +1923,19 @@ int main(int argc, char** argv) {
                 memcpy(dst, src, (size_t)SCR_W * 4);
             }
         } else if (ori == ORI_PORT_A) {
+            // 顺时针竖持 90° 纯旋转 (det=+1)：fb[y][x] = screen(px=719-y, py=x)
             for (int y = 0; y < 720; y++) {
                 uint32_t* d = fb + (size_t)y * stride;
+                int px = 719 - y;
                 for (int x = 0; x < 1280; x++)
-                    d[x] = screen->px[(size_t)x * 720 + y];
+                    d[x] = screen->px[(size_t)x * 720 + px];
             }
         } else {
+            // 逆时针竖持 90° 纯旋转 (det=+1)：fb[y][x] = screen(px=y, py=1279-x)
             for (int y = 0; y < 720; y++) {
                 uint32_t* d = fb + (size_t)y * stride;
                 for (int x = 0; x < 1280; x++)
-                    d[x] = screen->px[(size_t)(1279 - x) * 720 + (719 - y)];
+                    d[x] = screen->px[(size_t)(1279 - x) * 720 + y];
             }
         }
         be_end();

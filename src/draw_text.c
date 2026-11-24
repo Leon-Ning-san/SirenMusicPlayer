@@ -128,14 +128,14 @@ int text_width(Font* f, float px, const char* utf8) {
     if (!f || !utf8 || !*utf8) return 0;
     int ipx = (int)(px + 0.5f);
     if (ipx < 1) ipx = 1;
-    int w = 0;
+    float w = 0.0f;
     const char* p = utf8;
     while (*p) {
         uint32_t cp = next_cp(&p);
         Glyph* g = glyph_get(f, ipx, cp);
-        if (g) w += (int)(g->adv + 0.5f);
+        if (g) w += g->adv;
     }
-    return w;
+    return (int)(w + 0.5f);
 }
 
 void draw_text(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8) {
@@ -148,15 +148,16 @@ void draw_text(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const c
     int cr = col & 0xFF, cg = (col >> 8) & 0xFF, cb = (col >> 16) & 0xFF;
     uint8_t ca = (col >> 24) & 0xFF;
     if (ca == 0) ca = 255;
-    int cx = x;
+    float fcx = (float)x;
     const char* p = utf8;
     while (*p) {
         uint32_t cp = next_cp(&p);
         Glyph* g = glyph_get(f, ipx, cp);
         if (!g) continue;
+        int cx = (int)(fcx + 0.5f);
         if (g->bmp) {
             int gx = cx + g->x0;
-            int gy = (int)baseline + g->y0;
+            int gy = (int)(baseline + 0.5f) + g->y0;
             for (int j = 0; j < g->bh; j++) {
                 int ty = gy + j;
                 if (ty < 0 || ty >= c->h) continue;
@@ -176,7 +177,7 @@ void draw_text(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const c
                 }
             }
         }
-        cx += (int)(g->adv + 0.5f);
+        fcx += g->adv;
     }
 }
 
@@ -195,7 +196,7 @@ int text_width_max(Font* f, float px, const char* utf8, int max_w) {
     if (!f || !utf8 || !*utf8) return 0;
     int ipx = (int)(px + 0.5f);
     if (ipx < 1) ipx = 1;
-    int w = 0;
+    float w = 0.0f;
     const char* p = utf8;
     const char* ell = "\xE2\x80\xA6"; // …
     int ellw = text_width(f, px, ell);
@@ -203,13 +204,12 @@ int text_width_max(Font* f, float px, const char* utf8, int max_w) {
         uint32_t cp = next_cp(&p);
         Glyph* g = glyph_get(f, ipx, cp);
         if (!g) continue;
-        int adv = (int)(g->adv + 0.5f);
-        if (w + adv > max_w - ellw) {
-            return w + ellw;
+        if (w + g->adv > (float)(max_w - ellw)) {
+            return (int)(w + 0.5f) + ellw;
         }
-        w += adv;
+        w += g->adv;
     }
-    return w;
+    return (int)(w + 0.5f);
 }
 
 int draw_text_max(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8, int max_w) {
@@ -220,14 +220,13 @@ int draw_text_max(Canvas* c, Font* f, float px, int x, int y, uint32_t col, cons
     int ellw = text_width(f, px, ell);
     char buf[256];
     const char* p = utf8;
-    int w = 0;
+    float w = 0.0f;
     while (*p) {
         const char* save = p;
         uint32_t cp = next_cp(&p);
         Glyph* g = glyph_get(f, ipx, cp);
         if (!g) continue;
-        int adv = (int)(g->adv + 0.5f);
-        if (w + adv > max_w - ellw) {
+        if (w + g->adv > (float)(max_w - ellw)) {
             size_t n = (size_t)(save - utf8);
             if (n >= sizeof(buf)) n = sizeof(buf) - 1;
             memcpy(buf, utf8, n);
@@ -237,7 +236,7 @@ int draw_text_max(Canvas* c, Font* f, float px, int x, int y, uint32_t col, cons
             draw_text(c, f, px, x, y, col, cat);
             return 1;
         }
-        w += adv;
+        w += g->adv;
     }
     draw_text(c, f, px, x, y, col, utf8);
     return 0;
