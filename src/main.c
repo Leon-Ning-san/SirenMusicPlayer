@@ -1737,7 +1737,7 @@ static void draw_diag(void) {
     fill_round_rect_shadow(screen, cx, cy, cw, ch, 26, 64);
     fill_round_rect_aa(screen, cx, cy, cw, ch, 26, C_PANEL);
 
-    draw_text(screen, font, 24, cx + 32, cy + 30, C_ACCENT_TXT, "Siren v1.2.0 系统与音频自检");
+    draw_text(screen, font, 24, cx + 32, cy + 30, C_ACCENT_TXT, "Siren v1.2.1 系统与音频自检");
     draw_text_right(screen, font, 14, cx + cw - 32, cy + 38, C_TXT3, "点击或按 B/Y 关闭");
 
     char buf[1024];

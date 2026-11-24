@@ -17,7 +17,7 @@ INCLUDES := src deps
 APP_TITLE := Siren
 APP_DESCRIPTION := A minimal immersive music player
 APP_AUTHOR := Siren
-APP_VERSION := 1.2.0
+APP_VERSION := 1.2.1
 APP_ICON := icon.jpg
 
 #---------------------------------------------------------------------------------
