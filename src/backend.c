@@ -136,3 +136,9 @@ void be_set_dark_titlebar(int dark) { (void)dark; }
 void be_toggle_fullscreen(void) {}
 int  be_is_fullscreen(void) { return 0; }
 int  be_ensure_desktop_shortcut(int only_repair) { (void)only_repair; return 0; }
+void be_buffer_size(int* out_w, int* out_h) { if (out_w) *out_w = BE_W; if (out_h) *out_h = BE_H; }
+int  be_is_minimized(void) { return 0; }
+int  be_poll_media_cmd(void) { return 0; }
+void be_set_media_state(int has_track, int playing, float frac, const char* title, const char* artist) {
+    (void)has_track; (void)playing; (void)frac; (void)title; (void)artist;
+}

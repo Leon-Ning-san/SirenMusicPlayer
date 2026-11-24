@@ -34,6 +34,7 @@ typedef struct {
     int has_native_bold;
     int used;
     int evict;
+    uint32_t last_use;
     int16_t hash_slot[GLYPH_HASH_CAP];
     Glyph g[GLYPH_CACHE_PER_SIZE];
 #ifdef _WIN32
@@ -47,6 +48,7 @@ struct Font {
     int ascent, descent, linegap;
     Bucket* buckets[MAX_BUCKETS];
     int nbuckets;
+    uint32_t stamp;
 };
 
 #ifdef _WIN32
@@ -169,16 +171,46 @@ static void raster_glyph(Font* f, Bucket* b, Glyph* g, uint32_t cp) {
     raster_glyph_stb(f, b, g, cp);
 }
 
+static void bucket_destroy(Bucket* b) {
+    if (!b) return;
+    for (int j = 0; j < b->used; j++) free(b->g[j].bmp);
+#ifdef _WIN32
+    if (b->hfont) DeleteObject(b->hfont);
+    if (b->hfont_jp) DeleteObject(b->hfont_jp);
+#endif
+    free(b);
+}
+
 static Bucket* get_bucket_ex(Font* f, int px, int bold) {
+    if (!f) return NULL;
     bold = bold ? 1 : 0;
+    f->stamp++;
     for (int i = 0; i < f->nbuckets; i++) {
-        if (f->buckets[i]->px == px && f->buckets[i]->bold == bold) return f->buckets[i];
+        if (f->buckets[i]->px == px && f->buckets[i]->bold == bold) {
+            f->buckets[i]->last_use = f->stamp;
+            return f->buckets[i];
+        }
     }
-    if (f->nbuckets >= MAX_BUCKETS) return NULL;
+    int slot = -1;
+    if (f->nbuckets < MAX_BUCKETS) {
+        slot = f->nbuckets++;
+    } else {
+        uint32_t oldest = f->buckets[0]->last_use;
+        slot = 0;
+        for (int i = 1; i < f->nbuckets; i++) {
+            if (f->buckets[i]->last_use < oldest) {
+                oldest = f->buckets[i]->last_use;
+                slot = i;
+            }
+        }
+        bucket_destroy(f->buckets[slot]);
+        f->buckets[slot] = NULL;
+    }
     Bucket* b = (Bucket*)calloc(1, sizeof(Bucket));
     if (!b) return NULL;
     b->px = px;
     b->bold = bold;
+    b->last_use = f->stamp;
     b->scale = stbtt_ScaleForPixelHeight(&f->info, (float)px);
     b->ascent = (int)(f->ascent * b->scale + 0.5f);
     memset(b->hash_slot, 0xFF, sizeof(b->hash_slot));
@@ -203,7 +235,7 @@ static Bucket* get_bucket_ex(Font* f, int px, int bold) {
     }
 #endif
 
-    f->buckets[f->nbuckets++] = b;
+    f->buckets[slot] = b;
     return b;
 }
 
@@ -246,27 +278,36 @@ Font* font_load(const void* data, size_t len) {
 
 void font_free(Font* f) {
     if (!f) return;
-    for (int i = 0; i < f->nbuckets; i++) {
-        Bucket* b = f->buckets[i];
-        for (int j = 0; j < b->used; j++) free(b->g[j].bmp);
-#ifdef _WIN32
-        if (b->hfont) DeleteObject(b->hfont);
-        if (b->hfont_jp) DeleteObject(b->hfont_jp);
-#endif
-        free(b);
-    }
+    for (int i = 0; i < f->nbuckets; i++) bucket_destroy(f->buckets[i]);
     free(f);
 }
 
 static inline uint32_t next_cp(const char** p) {
     const unsigned char* s = (const unsigned char*)*p;
     uint32_t c = *s++;
-    if (c >= 0xF0 && c <= 0xF7) {
-        if (*s) { c = ((c & 0x07) << 18) | ((s[0] & 0x3F) << 12); if (s[1]) c |= ((s[1] & 0x3F) << 6); if (s[2]) c |= (s[2] & 0x3F); if (s[0]) s++; if (*s) s++; if (*s) s++; }
-    } else if (c >= 0xE0 && c <= 0xEF) {
-        if (*s) { c = ((c & 0x0F) << 12) | ((s[0] & 0x3F) << 6); if (s[1]) c |= (s[1] & 0x3F); if (s[0]) s++; if (*s) s++; }
-    } else if (c >= 0xC0 && c <= 0xDF) {
-        if (*s) { c = ((c & 0x1F) << 6) | (s[0] & 0x3F); if (s[0]) s++; }
+    if (c >= 0xF0u && c <= 0xF7u) {
+        if (s[0] && s[1] && s[2]) {
+            c = ((c & 0x07u) << 18) | ((s[0] & 0x3Fu) << 12) | ((s[1] & 0x3Fu) << 6) | (s[2] & 0x3Fu);
+            s += 3;
+        } else {
+            c = 0xFFFDu;
+            while (*s && (((unsigned char)*s) & 0xC0u) == 0x80u) s++;
+        }
+    } else if (c >= 0xE0u && c <= 0xEFu) {
+        if (s[0] && s[1]) {
+            c = ((c & 0x0Fu) << 12) | ((s[0] & 0x3Fu) << 6) | (s[1] & 0x3Fu);
+            s += 2;
+        } else {
+            c = 0xFFFDu;
+            while (*s && (((unsigned char)*s) & 0xC0u) == 0x80u) s++;
+        }
+    } else if (c >= 0xC0u && c <= 0xDFu) {
+        if (s[0]) {
+            c = ((c & 0x1Fu) << 6) | (s[0] & 0x3Fu);
+            s += 1;
+        } else {
+            c = 0xFFFDu;
+        }
     }
     *p = (const char*)s;
     return c;

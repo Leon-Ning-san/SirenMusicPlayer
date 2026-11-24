@@ -1877,8 +1877,10 @@ static void draw_dynamic_island(int mx, int my) {
     int max_half = rc_fab_import.x - 16 - center_x;
     if (center_x - RAIL_W - 14 < max_half) max_half = center_x - RAIL_W - 14;
     int max_w = max_half * 2;
+    if (max_w < 240) max_w = 240;
     int base_w = max_w < 820 ? max_w : 820;
-    if (base_w < 460) base_w = 460;
+    if (base_w > 460 && max_w < 460) base_w = max_w;
+    else if (base_w < 460 && max_w >= 460) base_w = 460;
 
     int raw_hov = in_rect(mx, my, center_x - base_w / 2 - 20, H - 96, base_w + 40, 88) || scrub_drag == 1 || vol_drag;
     float tgt_exp = raw_hov ? 1.0f : 0.0f;
@@ -2106,6 +2108,7 @@ static void draw_immersive_view(int mx, int my) {
         int line_ys[512];
         int line_hs[512];
         int max_n = lyr->n < 512 ? lyr->n : 512;
+        if (cur_idx >= max_n) cur_idx = max_n - 1;
         int cur_acc_y = 0;
         for (int i = 0; i < max_n; i++) {
             char o_lines[4][256], s_lines[3][256];
@@ -2282,6 +2285,19 @@ static void toggle_theme_smooth(int ox, int oy) {
 }
 
 static void handle_input(void) {
+    int mcmd = 0;
+    while ((mcmd = be_poll_media_cmd()) != 0) {
+        if (mcmd == 1) {
+            toggle_play_pause_action();
+        } else if (mcmd == 2) {
+            if (ntracks > 0) load_track(pick_prev(playing_idx));
+        } else if (mcmd == 3) {
+            if (ntracks > 0) load_track(pick_next(playing_idx, 1));
+        } else if (mcmd == 4) {
+            if (playing_idx >= 0 && !audio_paused()) audio_pause();
+        }
+    }
+
     const char* dp = NULL;
     while ((dp = be_poll_dropped_path()) != NULL) handle_dropped(dp);
 
@@ -2567,7 +2583,7 @@ static void handle_input(void) {
     }
 }
 
-static void sync_canvas_to_window(void) {
+static int sync_canvas_to_window(void) {
     int pw = 1360, ph = 840;
     float sc = 1.0f;
     be_screen_metrics(&pw, &ph, &sc);
@@ -2576,8 +2592,8 @@ static void sync_canvas_to_window(void) {
     if (sc < 1.0f) sc = 1.0f;
     int lw = (int)((float)pw / sc + 0.5f);
     int lh = (int)((float)ph / sc + 0.5f);
-    if (lw < 320) lw = 320;
-    if (lh < 240) lh = 240;
+    if (lw < 200) lw = 200;
+    if (lh < 150) lh = 150;
     W = lw;
     H = lh;
     g_ui_scale = sc;
@@ -2592,7 +2608,9 @@ static void sync_canvas_to_window(void) {
         }
         if (trans_shot) { canvas_free(trans_shot); trans_shot = NULL; }
         fade_armed = 0;
+        return 1;
     }
+    return 0;
 }
 
 static void render_frame(int mx, int my) {
@@ -2763,20 +2781,36 @@ int main(int argc, char** argv) {
         }
 
         handle_input();
-        int mx = 0, my = 0;
-        be_mouse_pos(&mx, &my);
-        update_hover_cursor(mx, my);
-        render_frame(mx, my);
+        sync_canvas_to_window();
 
-        int stride = 0;
-        uint32_t* fb = be_begin(&stride);
-        if (fb && screen && stride > 0) {
-            int cw = screen->w < stride ? screen->w : stride;
-            for (int y = 0; y < screen->h; y++) {
-                memcpy(fb + (size_t)y * stride, screen->px + (size_t)y * screen->w, (size_t)cw * 4);
+        double cur_dur = (playing_idx >= 0) ? audio_duration() : 0.0;
+        double cur_pos = (playing_idx >= 0) ? (scrub_drag ? scrub_sec : audio_position()) : 0.0;
+        float cur_frac = (cur_dur > 0.1) ? clampf((float)(cur_pos / cur_dur), 0.0f, 1.0f) : 0.0f;
+        be_set_media_state(playing_idx >= 0, playing_idx >= 0 && !audio_paused(), cur_frac, p_title, p_artist);
+
+        if (!be_is_minimized()) {
+            int mx = 0, my = 0;
+            be_mouse_pos(&mx, &my);
+            update_hover_cursor(mx, my);
+            render_frame(mx, my);
+
+            int stride = 0;
+            uint32_t* fb = be_begin(&stride);
+            int bw = 0, bh = 0;
+            be_buffer_size(&bw, &bh);
+            if (fb && screen && stride > 0 && bw > 0 && bh > 0) {
+                int cw = screen->w;
+                if (stride < cw) cw = stride;
+                if (bw < cw) cw = bw;
+                int ch = screen->h < bh ? screen->h : bh;
+                for (int y = 0; y < ch; y++) {
+                    memcpy(fb + (size_t)y * stride, screen->px + (size_t)y * screen->w, (size_t)cw * 4);
+                }
             }
+            be_end();
+        } else {
+            be_sleep_ms(14);
         }
-        be_end();
         be_sleep_ms(1);
     }
 

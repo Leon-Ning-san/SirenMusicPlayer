@@ -80,6 +80,7 @@ static uint64_t sym_to_btn(SDL_Keycode k) {
 
 static void update_sdl_viewport(void) {
     if (!g_win || !g_ren) return;
+    if (SDL_GetWindowFlags(g_win) & SDL_WINDOW_MINIMIZED) return;
     int ww = 1360, wh = 840, rw = 1360, rh = 840;
     SDL_GetWindowSize(g_win, &ww, &wh);
     if (SDL_GetRendererOutputSize(g_ren, &rw, &rh) != 0 || rw <= 0 || rh <= 0) {
@@ -435,4 +436,28 @@ void be_set_cursor(int hand) {
 }
 
 int be_ensure_desktop_shortcut(int only_repair) { (void)only_repair; return 0; }
+void be_buffer_size(int* out_w, int* out_h) {
+    if (out_w) *out_w = g_buf_w;
+    if (out_h) *out_h = g_buf_h;
+}
+int be_is_minimized(void) {
+    return g_win ? ((SDL_GetWindowFlags(g_win) & SDL_WINDOW_MINIMIZED) != 0) : 0;
+}
+int be_poll_media_cmd(void) { return 0; }
+void be_set_media_state(int has_track, int playing, float frac, const char* title, const char* artist) {
+    (void)playing; (void)frac;
+    if (!g_win) return;
+    static char last_cap[512] = {0};
+    char cap[512];
+    if (has_track && title && title[0]) {
+        if (artist && artist[0]) snprintf(cap, sizeof(cap), "%.180s - %.100s \xC2\xB7 Sir\xC3\xA8ne", title, artist);
+        else                     snprintf(cap, sizeof(cap), "%.180s \xC2\xB7 Sir\xC3\xA8ne", title);
+    } else {
+        snprintf(cap, sizeof(cap), "Sir\xC3\xA8ne \xC2\xB7 \xE6\x9C\xAC\xE5\x9C\xB0\xE9\x9F\xB3\xE4\xB9\x90\xE6\x92\xAD\xE6\x94\xBE\xE5\x99\xA8");
+    }
+    if (strcmp(cap, last_cap) != 0) {
+        snprintf(last_cap, sizeof(last_cap), "%s", cap);
+        SDL_SetWindowTitle(g_win, cap);
+    }
+}
 #endif

@@ -16,6 +16,7 @@ static inline void canvas_clip_bounds(const Canvas* c, int* x0, int* y0, int* x1
 }
 
 Canvas* canvas_new(int w, int h) {
+    if (w <= 0 || h <= 0) return NULL;
     Canvas* c = (Canvas*)malloc(sizeof(Canvas));
     if (!c) return NULL;
     c->w = w; c->h = h;
@@ -24,6 +25,7 @@ Canvas* canvas_new(int w, int h) {
     c->clip_x0 = 0; c->clip_y0 = 0;
     c->clip_x1 = w; c->clip_y1 = h;
     c->px = (uint32_t*)calloc((size_t)w * h, 4);
+    if (!c->px) { free(c); return NULL; }
     return c;
 }
 
@@ -59,6 +61,7 @@ void canvas_free(Canvas* c) {
 }
 
 void canvas_clear(Canvas* c, uint32_t col) {
+    if (!c || !c->px || c->w <= 0 || c->h <= 0) return;
     size_t n = (size_t)c->w * c->h;
     uint32_t* px = c->px;
     for (size_t i = 0; i < n; i++) px[i] = col;
@@ -363,6 +366,7 @@ void blit_rgba_round_px(Canvas* dst, int dx, int dy, const uint32_t* src, int sw
 }
 
 void resample_bilinear(const uint32_t* src, int sw, int sh, uint32_t* dst, int dw, int dh) {
+    if (!src || !dst || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
     float sx = (float)sw / (float)dw;
     float sy = (float)sh / (float)dh;
     for (int y = 0; y < dh; y++) {
@@ -402,8 +406,9 @@ void resample_bilinear(const uint32_t* src, int sw, int sh, uint32_t* dst, int d
 }
 
 void box_blur(uint32_t* img, int w, int h, int radius, int passes) {
-    if (radius < 1) return;
+    if (!img || w <= 0 || h <= 0 || radius < 1) return;
     uint32_t* tmp = (uint32_t*)malloc((size_t)w * h * 4);
+    if (!tmp) return;
     for (int p = 0; p < passes; p++) {
         for (int y = 0; y < h; y++) {
             uint32_t* row = img + (size_t)y * w;
@@ -573,8 +578,10 @@ static void fill_round_layer_skip(Canvas* c, int sx, int sy, int sw, int sh, int
     int hy1 = hy + hh;
     int hx1 = hx + hw;
 
-    int y0 = sy < 0 ? 0 : sy;
-    int y1 = (sy + sh > c->h) ? c->h : (sy + sh);
+    int cx0, cy0, cx1, cy1;
+    canvas_clip_bounds(c, &cx0, &cy0, &cx1, &cy1);
+    int y0 = sy < cy0 ? cy0 : sy;
+    int y1 = (sy + sh > cy1) ? cy1 : (sy + sh);
     for (int y = y0; y < y1; y++) {
         int j = y - sy;
         int in_corner_y = (j < sr || j >= sh - sr);

@@ -49,3 +49,8 @@ void be_set_dark_titlebar(int dark);
 void be_toggle_fullscreen(void);
 int  be_is_fullscreen(void);
 int  be_ensure_desktop_shortcut(int only_repair);
+void be_buffer_size(int* out_w, int* out_h);
+int  be_is_minimized(void);
+// 媒体控制命令队列（任务栏缩略图按钮 / 系统媒体键）：0=无, 1=播放/暂停, 2=上一首, 3=下一首, 4=暂停/停止
+int  be_poll_media_cmd(void);
+void be_set_media_state(int has_track, int playing, float frac, const char* title, const char* artist);
