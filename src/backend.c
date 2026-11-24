@@ -124,3 +124,5 @@ int be_poll_hotkey(void) { return 0; }
 const char* be_config_dir(void) { return "sdmc:/Sirene"; }
 int be_default_music_dirs(char dirs[][600], int max_dirs) { (void)dirs; (void)max_dirs; return 0; }
 void be_set_cli_path(const char* p) { (void)p; }
+void be_mouse_pos(int* x, int* y) { if (x) *x = -1; if (y) *y = -1; }
+void be_set_cursor(int hand) { (void)hand; }

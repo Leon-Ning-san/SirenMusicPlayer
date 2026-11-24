@@ -2,13 +2,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#ifdef __SWITCH__
 #define BE_W 1280
 #define BE_H 720
-#else
-#define BE_W 720
-#define BE_H 1280
-#endif
 
 int be_init(void);
 void be_exit(void);
@@ -46,3 +41,5 @@ int be_poll_hotkey(void);
 const char* be_config_dir(void);
 int be_default_music_dirs(char dirs[][600], int max_dirs);
 void be_set_cli_path(const char* p);
+void be_mouse_pos(int* x, int* y);
+void be_set_cursor(int hand);

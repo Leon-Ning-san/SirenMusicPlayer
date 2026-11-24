@@ -2,54 +2,58 @@
   <img src="icon.jpg" width="128" alt="Sirène Icon" />
 </p>
 
-<h1 align="center">Sirène · 跨平台本地音乐播放器（v1.2.4）</h1>
+<h1 align="center">Sirène · 跨平台本地音乐播放器（v1.2.5）</h1>
 
 <p align="center">
-  <b>Nintendo Switch（<code>.nro</code>）· Windows · Linux · macOS</b><br/>
-  <b>乔布斯 iPod Click Wheel × 现代 Apple 悬浮毛玻璃 × Google Material You 融合设计</b><br/>
-  <b>桌面端原生单向竖屏随身听（720×1280 等比缩放 · 实时歌词栏 · Material You 波浪进度条）</b>
+  <b>Windows · Linux · macOS（桌面横屏 Material You 专版）&nbsp;|&nbsp;Nintendo Switch（<code>.nro</code>）</b><br/>
+  <b>桌面端 1:1 点对点高清横屏双栏 × 大圆角方块按钮 × 全功能鼠标适配 × Material You 粗波浪进度条</b><br/>
+  <b>左栏曲库严格裁剪 · 右栏封面与可点击实时歌词 · 原生应用图标（EXE / ICO / App ICNS / Window Icon）</b>
 </p>
 
-纯软件渲染、无需 GPU，融合乔布斯经典 iPod 转盘骨架、现代 Apple 流体光晕卡片与 Google Material You 表现力色调与**粗波浪动态进度条**，所有切页、切歌、旋转与弹窗均采用轻量丝滑 **60 FPS 淡入动画**。Windows / Linux / macOS 桌面端专注于简洁顺手的**经典竖屏随身听**体验，支持列表内嵌实时同步歌词、`.lrc` 直接拖入窗口、WAV / MP3 / FLAC / OGG 无损音频与多形态歌词/封面解析。
+纯软件渲染、无需 GPU：Switch 端继续保留 **乔布斯 iPod Click Wheel × 现代 Apple × M3** 融合形态与横竖屏无手柄全触控体验；**Windows / Linux / macOS 桌面端则彻底重构为符合 PC 审美的 1:1 高清 1280×720 横屏双栏播放器**——去掉冗大 iPod 圆形转盘，改用 **Material You 大圆角卡片与大方块圆角播控键**、直觉化鼠标悬停/指针/滚动条拖拽/音量直拖/点击歌词跳转，并完整嵌入 `icon.jpg` 系统图标。
 
 ## 界面预览
 
-| 桌面竖屏列表（实时歌词栏 + 列表严格裁剪） | 竖屏全屏播放（Material You 粗波浪进度条） |
+| PC 桌面横屏双栏（1280×720 点对点高清 · 右栏实时歌词） | PC 桌面沉浸全屏歌词（Fluid 光晕 · Material You 粗波浪条） |
 | :---: | :---: |
-| ![桌面竖屏列表](previews/list_port.png) | ![竖屏播放页](previews/player_port.png) |
+| ![桌面横屏双栏](previews/desktop_land.png) | ![桌面沉浸全屏](previews/desktop_full.png) |
 
 | Switch 横屏双栏（冰霜白 Apple × M3） | Switch 横屏全屏播放（钛空黑 · 流体光晕 + 波浪条） |
 | :---: | :---: |
 | ![横屏列表页](previews/list_land.png) | ![横屏全屏播放](previews/player_land.png) |
 
-| 钛空黑主题 | 青瓷绿 Material You 主题 |
+| Switch 竖屏列表（列表视口严格防溢出） | 青瓷绿 Material You 主题 |
 | :---: | :---: |
-| ![钛空黑主题](previews/list_blue.png) | ![青瓷绿主题](previews/list_sage.png) |
+| ![竖屏列表页](previews/list_port.png) | ![青瓷绿主题](previews/list_sage.png) |
 
-## 多平台支持（v1.2.4）
+## 多平台支持（v1.2.5）
 
-| 平台 | 产物文件名 | 渲染与音频后端 | 窗口 / 形态说明 |
+| 平台 | 产物文件名 | 渲染与音频后端 | 窗口 / 图标与交互亮点 |
 |---|---|---|---|
-| **Windows x64** | `Sirene-v1.2.4-Windows-x64.exe` | 原生 Win32 GDI + WinMM | 单文件免安装，零外部 DLL 依赖；默认 `468×832` 锁定纵横比竖屏窗口 |
-| **Linux x86_64** | `Sirene-v1.2.4-Linux-x86_64.tar.gz` | SDL2 逻辑缩放 + SDL2 Audio | 竖屏窗口（支持 HiDPI / 自由缩放），原生支持 `zenity` / `kdialog` 选目录 |
-| **macOS Apple Silicon** | `Sirene-v1.2.4-macOS-arm64.zip` | SDL2 逻辑缩放 + SDL2 Audio | 独立 `Sirène.app`（已内置 SDL2/SDL3 运行库，开箱即用），原生支持文件夹选择器 |
-| **Nintendo Switch** | `Sirene.nro` | Switch 帧缓冲 + SDL2 | 横屏/竖屏自动或手动切换，无手柄纯触屏闭环 + 专属按键映射 |
+| **Windows x64** | `Sirene-v1.2.5-Windows-x64.exe` | Win32 GDI `1:1`（DPI V2）+ WinMM | 内嵌多尺寸高清 `sirene.ico`（资源管理器/任务栏/标题栏可见）；`1280×720` 点对点锐利渲染 |
+| **Linux x86_64** | `Sirene-v1.2.5-Linux-x86_64.tar.gz` | SDL2 + SDL2 Audio | `1280×720` 横屏双栏窗口、`SDL_SetWindowIcon` 窗口图标、原生 `zenity`/`kdialog` 选目录 |
+| **macOS Apple Silicon** | `Sirene-v1.2.5-macOS-arm64.zip` | SDL2 + SDL2 Audio | 独立 `Sirène.app`（已内置 SDL2/SDL3 运行库 + `.icns` 桌面图标），支持 `osascript` 选目录 |
+| **Nintendo Switch** | `Sirene.nro` | Switch 线性帧缓冲 + SDL2 | 保留横屏/竖屏 Click Wheel 与无手柄触控 + 自定义 A/X/Y/左方向键映射 |
 
-## 核心特性（v1.2.4）
+## 核心特性（v1.2.5）
 
-- **列表视口严格像素裁剪（修复封面越界）**：为软光栅画布加入全局裁剪矩形（`Canvas` clip），列表上下滚动时最顶端与最底端歌曲的**专辑封面、高亮边框、文字与收藏心形**严格限制在列表视窗内部，绝不再突破边框覆盖顶栏或胶囊标签。
-- **Material You 粗波浪动态进度条**：全屏播放页与桌面底部播控栏全面升级为 **Google Material 3 Expressive 风格粗波浪进度条**（法向等距抗锯齿正弦波 + 平滑收敛圆头 + 4px 间距竖向胶囊游标 + 播放时实时流体波动 / 暂停自动归平）。
-- **PC 三平台歌词强化与列表实时歌词栏**：
-  - Windows / Linux / macOS 竖屏列表底部新增 **Apple × M3 实时歌词灵动栏**，无需切进全屏即可同步高亮当前歌词；点击卡片或 `歌词全屏`（`F` / `X`）可淡入展开多行居中歌词页。
-  - 增强 `.lrc` 与内嵌解析：支持 `歌手-歌名.lrc` 无空格匹配、括弧后缀反向模糊匹配、`[mm:ss,xx]` 逗号毫秒、上级/当前 `Lyrics/lrc` 子目录扫描、非标准单字节 `\0` UTF-16 ID3 `USLT` 帧，并支持**直接将 `.lrc` 文件拖入桌面窗口即时加载**。
-- **60 FPS 流畅引擎 + 融合设计**：
-  - 时间驱动 Cubic Ease-Out 淡入动画 + Click Wheel 精灵缓存 + O(R) 扫描线光栅 + O(1) 字形哈希表；内置**冰霜白**、**钛空黑**、**青瓷绿**三套主题。
+- **PC 专属横屏双栏 Material You 美学**：
+  - 彻底移除 PC 端巨大的 iPod 圆形转盘与伪竖屏缩放，采用 **`1280×720` 横屏分栏布局**：左侧 Material You 大圆角曲库卡片（可拖滚动条 + 视口防溢出严格裁剪）+ 右侧专辑光晕大封面与多行实时滚动歌词卡片 + 底部悬浮播控与直接音量条。
+  - **1:1 锐利不模糊**：Windows 启用 Per-Monitor DPI v2 感知，在 `1280×720` 窗口下使用 `SetDIBitsToDevice` 零插值点对点直出，文字与封面边缘锐利清晰。
+  - **Material You 风格方块圆角与粗波浪进度条**：主播放按钮升级为 Material You 大圆角方块按钮，配合 7px 粗波浪正弦动态进度条与竖向胶囊滑块。
+- **全面桌面鼠标适配**：
+  - 全界面真实 **Hover 悬停高亮** + 自动切换 **手型指针**；
+  - 曲库左侧单击播/停、右侧点击爱心收藏、最右滚动条**点击/按住拖拽翻页**、鼠标滚轮分区响应（曲库翻页 / 音量 bar 调音量 / 进度条快进退）；
+  - 右栏歌词支持**鼠标点击任意一行直接跳转该句时间进度**，并支持将音乐文件夹、单曲或 `.lrc` 歌词文件直接拖进窗口。
+- **完整系统应用图标**：已将萌猫耳机原画（`icon.jpg`）编译打包进 Windows `.exe`（`.ico`）、macOS `Sirène.app`（`.icns`）、Linux 窗口图标及应用顶栏 Logo。
+- **全能歌词与 60 FPS 轻量引擎**：延续高精度时间驱动 Cubic Ease-Out 淡入动画、O(1) 字形哈希表与全能外挂/内嵌歌词解析（含无空格 `歌手-歌名.lrc`、逗号毫秒、非标 UTF-16 `USLT`）。
 
 ## 版本归档（独立 Release）
 
-- **v1.2.4（最新 · Material You 波浪条 + 列表防溢出 + PC 歌词全面升级）**：修复滚动时顶部歌曲封面突破列表框问题，新增 Material You 粗波浪进度条、PC 端列表实时歌词栏、外部 `.lrc` 拖放与多处 ID3/模糊匹配增强，统一打包 Windows / Linux / macOS / Switch 于 `v1.2.4`。
-- **v1.2.3**：新增 Windows / Linux / macOS 竖屏桌面版 + 60 FPS 流畅优化引擎。
-- **v1.2.2**：`Sirène` 法语命名 + 乔布斯 Click Wheel × 现代 Apple × Material You 融合 UI + 无手柄全触控闭环 + 深度歌词/封面修复 + 专属手柄映射。
+- **v1.2.5（最新 · PC 横屏 Material You 重塑 + 1:1 高清 + 鼠标全适配 + 应用图标）**：专为 PC 重构 `1280×720` 1:1 高清横屏双栏 UI（去掉 iPod 大转盘改用 Material You 大圆角方块按钮与内联音量条）、全量鼠标悬停/指针/拖拽/点击歌词跳转、并内嵌 Windows/macOS/Linux 原生应用图标，统一随 Switch `.nro` 发布于 `v1.2.5`。
+- **v1.2.4**：列表严格像素裁剪防溢出 + Material You 粗波浪进度条 + `.lrc` 拖放与解析增强。
+- **v1.2.3**：首批 Windows / Linux / macOS 桌面端与 60 FPS 光栅引擎重构。
+- **v1.2.2**：`Sirène` 法语命名 + Switch 无手柄全触控闭环 + 歌词/封面深度修复。
 - **v1.2.1**：现代 Hi-Res 便携 MP4 双栏版。
 - **v1.2.0**：复古乔布斯 iPod Classic 版。
 - **v1.1.0**：Material You 初版。
@@ -57,66 +61,34 @@
 ## 安装与使用说明
 
 ### 桌面端（Windows / Linux / macOS）
-1. 前往 [**Releases v1.2.4 页面**](../../releases/tag/v1.2.4) 下载对应系统的桌面版压缩包或单文件运行即可：
-   - **Windows**：直接双击 `Sirene-v1.2.4-Windows-x64.exe`（可传入目录或音频路径作为启动参数）。
-   - **Linux**：解压 `Sirene-v1.2.4-Linux-x86_64.tar.gz` 后运行 `./Sirene`（需系统已安装 `libsdl2` 运行库）。
-   - **macOS**：解压 `Sirene-v1.2.4-macOS-arm64.zip` 后打开 `Sirène.app`（已内置 SDL2/SDL3 运行库；若遇系统拦截可运行 `xattr -cr Sirène.app`）。
-2. **添加歌曲与歌词**：
-   - 将歌曲和 `.lrc` 放入系统 **`音乐 / Music`** 文件夹（或程序旁的 `music/` 目录），启动自动扫描；
-   - 点击列表顶栏 **`选目录`**（或按 `O` / `Ctrl+O`）选择任意音乐文件夹（配置自动保存在 `%APPDATA%\Sirene` / `~/.config/sirene` / `~/Library/Application Support/Sirene`）；
-   - 支持直接将**音乐文件夹、音频文件或单独的 `.lrc` 歌词文件拖进播放器窗口**即可切换或加载。
+1. 前往 [**Releases v1.2.5 页面**](../../releases/tag/v1.2.5) 下载对应系统安装包：
+   - **Windows**：直接双击 `Sirene-v1.2.5-Windows-x64.exe`（可传入目录或曲目作参数）。
+   - **Linux**：解压 `Sirene-v1.2.5-Linux-x86_64.tar.gz` 后运行 `./Sirene`（需系统安装 `libsdl2` 运行库）。
+   - **macOS**：解压 `Sirene-v1.2.5-macOS-arm64.zip` 打开 `Sirène.app`（如遇未知开发者拦截可执行 `xattr -cr Sirène.app`）。
+2. **添加歌曲与鼠标操控**：
+   - 自动扫描系统 `Music` 文件夹，也可点击顶栏 **`选目录`**（`Ctrl/Cmd+O`）或将**文件夹 / 音频 / `.lrc` 文件直接拖入窗口**；
+   - 点击右侧任意一句歌词立即跳转到对应时间戳；滚动条、粗波浪进度条、右下音量条均支持直接点击或鼠标按住拖动；按 `F` 或点击 `沉浸全屏` 进入全屏大图歌词。
 
 ### Nintendo Switch（`.nro`）
-1. 从 [**Releases 页面**](../../releases) 下载 `Sirene.nro`（或兼容名 `Siren.nro`），放入 SD 卡 `sdmc:/switch/Sirene.nro`。
-2. 音频与 `.lrc` 放入 `sdmc:/music/` 或 SD 卡任意非系统目录。
-3. **直接启动**：在 Switch 主菜单按住 **`R` 键打开任意游戏（Title Override）** 进入 hbmenu 启动 **Sirène**。
-4. **桌面前端图标**：内置标准 `256×256` 图标与 UTF-8 `Sirène` NACP，可通过机内 **Sphaira -> Install Forwarder** 或电脑端 **SAK / Nro2Nsp + 本机 `prod.keys`** 生成 `.nsp` 转发器安装。
-
-## 操控与快捷键说明
-
-### 桌面端键盘与鼠标
-- **鼠标操作**：点击或拖拽界面按钮 / 列表 / 进度条 / 音量滑块；在 **Click Wheel 转盘**上顺/逆时针环形拖动可快速选曲或调音量；鼠标滚轮上下滚动列表或调音量；点击底部实时歌词播控栏即可打开全屏歌词。
-- **快捷键**：
-  - `↑ / ↓`：移动列表光标 / 全屏调节音量
-  - `← / →`：切换上一首 / 下一首
-  - `Space / Enter / A`：列表页**就地播放 / 暂停**选中歌曲；全屏页暂停 / 继续
-  - `F / X`：淡入进入 / 退出全屏歌词页
-  - `Ctrl+F`（macOS `Cmd+F`）/ `S` / `/`：打开内置搜索框（支持中英文输入过滤）
-  - `Ctrl+O`（macOS `Cmd+O`）/ `O`：打开系统文件夹选择器更换曲库目录
-  - `T`：切换主题（冰霜白 / 钛空黑 / 青瓷绿） · `H`：收藏切换 · `V`：音量面板 · `D`：歌词与系统诊断 · `M / Esc`：返回/退出确认
-
-### Nintendo Switch 手柄专属映射
-| 按键 | 列表页 | 全屏播放页 |
-|---|---|---|
-| **`A`** | **就地播放 / 暂停选中歌曲（不跳进全屏）** | 暂停 / 继续 |
-| **`X`** | **淡入进入全屏歌词页** | **淡入返回曲库列表** |
-| **`Y`** | **一键切换横屏 / 单向竖屏** | **一键切换横屏 / 单向竖屏** |
-| **`左手柄方向键 ← / →`（非摇杆）或 `L / R`** | **切换上一首 / 下一首** | **切换上一首 / 下一首** |
-| `↑ / ↓` 或 `左摇杆 ↑ / ↓` | 上下移动选曲光标 | 调节音量（`↑ / ↓`） |
-| `左摇杆 ← / →` | —（不误触切歌） | 快退 / 快进 10 秒 |
-| `右摇杆 ↑ / ↓` | 调节音量 `− / +` | 调节音量 `− / +` |
-| `ZL / ZR` | `ZL` 收藏 · `ZR` 切换主题 | `ZL` 收藏 · `ZR` 切换主题 |
-| `− (Minus)` / `B` / `+` | `−` 软键盘搜索 · `B` 退出确认 · `+` 退出 | `−` 搜索 · `B` 返回列表 · `+` 退出 |
+1. 下载 `Sirene.nro` 放入 `sdmc:/switch/Sirene.nro`，歌曲与 `.lrc` 放入 `sdmc:/music/`。
+2. 在 Switch 主界面按住 **`R` 键打开任意游戏**进入 hbmenu 启动 **Sirène**。
 
 ## 从源码构建
 
 ### 桌面端（Windows / Linux / macOS）
-使用仓库内的 [`Makefile.desktop`](Makefile.desktop)：
-- **Windows（MinGW-w64 GCC，零额外依赖）**：
-  ```bash
-  mingw32-make -f Makefile.desktop
-  ```
-- **Linux（需要 `libsdl2-dev`、`pkg-config`）**：
-  ```bash
-  make -f Makefile.desktop
-  ```
-- **macOS（需要 Homebrew `sdl2`、`pkg-config`）**：
-  ```bash
-  make -f Makefile.desktop macos-app
-  ```
+使用 [`Makefile.desktop`](Makefile.desktop)：
+```bash
+# Windows (MinGW-w64 + windres)
+mingw32-make -f Makefile.desktop
+
+# Linux (libsdl2-dev + pkg-config)
+make -f Makefile.desktop
+
+# macOS (Homebrew sdl2 + pkg-config)
+make -f Makefile.desktop macos-app
+```
 
 ### Nintendo Switch（`.nro`）
-需要 [devkitPro](https://devkitpro.org/) 工具链（`switch-dev`、`switch-sdl2`）：
 ```bash
 make clean && make
 ```

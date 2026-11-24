@@ -25,6 +25,8 @@ static int       g_vp_x = 0, g_vp_y = 0, g_vp_w = 468, g_vp_h = 832;
 // Mouse / Touch emulation state
 static int g_m_held = 0, g_m_down = 0, g_m_up = 0, g_was_down = 0;
 static int g_m_x = 0, g_m_y = 0, g_prev_x = 0, g_prev_y = 0;
+static int g_hover_x = -1, g_hover_y = -1;
+static int g_track_leave = 0, g_cursor_hand = 0, g_has_frame = 0;
 static int g_touch_reset = 0;
 static int g_wheel_accum = 0, g_wheel_frame = 0;
 
@@ -126,6 +128,34 @@ static void handle_wchar(wchar_t ch) {
     if (u8[0]) push_text_ev(0, u8);
 }
 
+static void present_to_hdc(HDC hdc, HWND hwnd) {
+    if (!hdc || !hwnd || !g_has_frame || !g_bgra) return;
+    RECT cr;
+    GetClientRect(hwnd, &cr);
+    int cw = cr.right - cr.left, ch = cr.bottom - cr.top;
+    if (g_vp_x > 0 || g_vp_y > 0) {
+        HBRUSH br = CreateSolidBrush(RGB(22, 26, 34));
+        if (g_vp_x > 0) {
+            RECT r1 = { 0, 0, g_vp_x, ch }; FillRect(hdc, &r1, br);
+            RECT r2 = { g_vp_x + g_vp_w, 0, cw, ch }; FillRect(hdc, &r2, br);
+        }
+        if (g_vp_y > 0) {
+            RECT r3 = { 0, 0, cw, g_vp_y }; FillRect(hdc, &r3, br);
+            RECT r4 = { 0, g_vp_y + g_vp_h, cw, ch }; FillRect(hdc, &r4, br);
+        }
+        DeleteObject(br);
+    }
+    if (g_vp_w == BE_W && g_vp_h == BE_H) {
+        SetDIBitsToDevice(hdc, g_vp_x, g_vp_y, BE_W, BE_H, 0, 0, 0, BE_H,
+                          g_bgra, &g_bmi, DIB_RGB_COLORS);
+    } else {
+        SetStretchBltMode(hdc, HALFTONE);
+        SetBrushOrgEx(hdc, 0, 0, NULL);
+        StretchDIBits(hdc, g_vp_x, g_vp_y, g_vp_w, g_vp_h,
+                      0, 0, BE_W, BE_H, g_bgra, &g_bmi, DIB_RGB_COLORS, SRCCOPY);
+    }
+}
+
 static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_CLOSE:
@@ -133,19 +163,50 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         g_running = 0;
         PostQuitMessage(0);
         return 0;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        present_to_hdc(hdc, hwnd);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_SETCURSOR:
+        if (LOWORD(lp) == HTCLIENT) {
+            SetCursor(LoadCursorW(NULL, (LPCWSTR)(g_cursor_hand ? IDC_HAND : IDC_ARROW)));
+            return TRUE;
+        }
+        break;
     case WM_SIZE:
         update_viewport(LOWORD(lp), HIWORD(lp));
         return 0;
     case WM_LBUTTONDOWN:
         SetCapture(hwnd);
         map_mouse_xy(GET_X_LPARAM(lp), GET_Y_LPARAM(lp), &g_m_x, &g_m_y);
+        g_hover_x = g_m_x; g_hover_y = g_m_y;
         g_m_held = 1;
         g_m_down = 1;
         return 0;
     case WM_MOUSEMOVE:
-        if (g_m_held) {
-            map_mouse_xy(GET_X_LPARAM(lp), GET_Y_LPARAM(lp), &g_m_x, &g_m_y);
+        if (!g_track_leave) {
+            TRACKMOUSEEVENT tme;
+            tme.cbSize = sizeof(tme);
+            tme.dwFlags = TME_LEAVE;
+            tme.hwndTrack = hwnd;
+            tme.dwHoverTime = 0;
+            if (TrackMouseEvent(&tme)) g_track_leave = 1;
         }
+        map_mouse_xy(GET_X_LPARAM(lp), GET_Y_LPARAM(lp), &g_hover_x, &g_hover_y);
+        if (g_m_held) {
+            g_m_x = g_hover_x;
+            g_m_y = g_hover_y;
+        }
+        return 0;
+    case WM_MOUSELEAVE:
+        g_track_leave = 0;
+        g_hover_x = -1;
+        g_hover_y = -1;
         return 0;
     case WM_LBUTTONUP:
         if (GetCapture() == hwnd) ReleaseCapture();
@@ -209,42 +270,78 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 int be_init(void) {
+    typedef BOOL (WINAPI *SetDpiCtxFn)(HANDLE);
     typedef BOOL (WINAPI *SetDpiFn)(void);
     HMODULE u32 = GetModuleHandleW(L"user32.dll");
     if (u32) {
-        SetDpiFn fn = (SetDpiFn)(void*)GetProcAddress(u32, "SetProcessDPIAware");
-        if (fn) fn();
+        SetDpiCtxFn fn2 = (SetDpiCtxFn)(void*)GetProcAddress(u32, "SetProcessDpiAwarenessContext");
+        if (!fn2 || !fn2((HANDLE)(intptr_t)-4)) {
+            SetDpiFn fn = (SetDpiFn)(void*)GetProcAddress(u32, "SetProcessDPIAware");
+            if (fn) fn();
+        }
     }
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     timeBeginPeriod(1);
 
-    WNDCLASSW wc;
+    HINSTANCE hInst = GetModuleHandleW(NULL);
+    HICON ico_big = (HICON)LoadImageW(hInst, MAKEINTRESOURCEW(1), IMAGE_ICON,
+                                      GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR);
+    HICON ico_sm  = (HICON)LoadImageW(hInst, MAKEINTRESOURCEW(1), IMAGE_ICON,
+                                      GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+    if (!ico_big) ico_big = LoadIconW(hInst, MAKEINTRESOURCEW(1));
+
+    WNDCLASSEXW wc;
     memset(&wc, 0, sizeof(wc));
+    wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = win_proc;
-    wc.hInstance = GetModuleHandleW(NULL);
+    wc.hInstance = hInst;
+    wc.hIcon = ico_big;
+    wc.hIconSm = ico_sm ? ico_sm : ico_big;
     wc.hCursor = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
     wc.lpszClassName = L"SirenePlayerWindow";
-    RegisterClassW(&wc);
+    RegisterClassExW(&wc);
 
-    int init_w = 468, init_h = 832;
-    int scr_h = GetSystemMetrics(SM_CYSCREEN);
-    if (scr_h > 0 && scr_h < 920) {
-        init_h = scr_h - 110;
-        init_w = init_h * BE_W / BE_H;
+    RECT wa = { 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN) };
+    HMONITOR hm = MonitorFromPoint((POINT){0, 0}, MONITOR_DEFAULTTOPRIMARY);
+    MONITORINFO mi;
+    mi.cbSize = sizeof(mi);
+    if (hm && GetMonitorInfoW(hm, &mi)) wa = mi.rcWork;
+    int work_w = wa.right - wa.left;
+    int work_h = wa.bottom - wa.top;
+
+    int init_w = BE_W, init_h = BE_H;
+    if (work_w > 0 && work_h > 0 && (work_w < BE_W + 48 || work_h < BE_H + 64)) {
+        int max_w = (int)(work_w * 0.92);
+        int max_h = (int)(work_h * 0.88);
+        if (max_w * BE_H <= max_h * BE_W) {
+            init_w = max_w;
+            init_h = init_w * BE_H / BE_W;
+        } else {
+            init_h = max_h;
+            init_w = init_h * BE_W / BE_H;
+        }
     }
     RECT rc = { 0, 0, init_w, init_h };
     DWORD style = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
     AdjustWindowRect(&rc, style, FALSE);
+    int win_w = rc.right - rc.left;
+    int win_h = rc.bottom - rc.top;
+    int win_x = wa.left + (work_w - win_w) / 2;
+    int win_y = wa.top + (work_h - win_h) / 2;
+    if (win_x < wa.left) win_x = wa.left;
+    if (win_y < wa.top) win_y = wa.top;
 
     g_hwnd = CreateWindowExW(
         WS_EX_ACCEPTFILES,
         L"SirenePlayerWindow",
         L"Sir\x00E8ne \x00B7 \x672C\x5730\x97F3\x4E50\x64AD\x653E\x5668",
         style,
-        CW_USEDEFAULT, CW_USEDEFAULT,
-        rc.right - rc.left, rc.bottom - rc.top,
-        NULL, NULL, wc.hInstance, NULL);
+        win_x, win_y,
+        win_w, win_h,
+        NULL, NULL, hInst, NULL);
     if (!g_hwnd) return -1;
+    if (ico_big) SendMessageW(g_hwnd, WM_SETICON, ICON_BIG, (LPARAM)ico_big);
+    if (ico_sm || ico_big) SendMessageW(g_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)(ico_sm ? ico_sm : ico_big));
 
     update_viewport(init_w, init_h);
     g_backbuf = (uint32_t*)calloc((size_t)BE_W * BE_H, 4);
@@ -281,26 +378,10 @@ void be_end(void) {
         uint32_t p = g_backbuf[i];
         g_bgra[i] = (p & 0xFF00FF00u) | ((p & 0xFFu) << 16) | ((p >> 16) & 0xFFu);
     }
+    g_has_frame = 1;
     HDC hdc = GetDC(g_hwnd);
     if (hdc) {
-        RECT cr;
-        GetClientRect(g_hwnd, &cr);
-        int cw = cr.right - cr.left, ch = cr.bottom - cr.top;
-        HBRUSH br = CreateSolidBrush(RGB(22, 26, 34));
-        if (g_vp_x > 0) {
-            RECT r1 = { 0, 0, g_vp_x, ch }; FillRect(hdc, &r1, br);
-            RECT r2 = { g_vp_x + g_vp_w, 0, cw, ch }; FillRect(hdc, &r2, br);
-        }
-        if (g_vp_y > 0) {
-            RECT r3 = { 0, 0, cw, g_vp_y }; FillRect(hdc, &r3, br);
-            RECT r4 = { 0, g_vp_y + g_vp_h, cw, ch }; FillRect(hdc, &r4, br);
-        }
-        DeleteObject(br);
-
-        SetStretchBltMode(hdc, HALFTONE);
-        SetBrushOrgEx(hdc, 0, 0, NULL);
-        StretchDIBits(hdc, g_vp_x, g_vp_y, g_vp_w, g_vp_h,
-                      0, 0, BE_W, BE_H, g_bgra, &g_bmi, DIB_RGB_COLORS, SRCCOPY);
+        present_to_hdc(hdc, g_hwnd);
         ReleaseDC(g_hwnd, hdc);
     }
 
@@ -457,4 +538,17 @@ int be_default_music_dirs(char dirs[][600], int max_dirs) {
     }
     return n;
 }
+void be_mouse_pos(int* x, int* y) {
+    if (x) *x = g_hover_x;
+    if (y) *y = g_hover_y;
+}
+
+void be_set_cursor(int hand) {
+    int h = hand ? 1 : 0;
+    if (h != g_cursor_hand) {
+        g_cursor_hand = h;
+        SetCursor(LoadCursorW(NULL, (LPCWSTR)(h ? IDC_HAND : IDC_ARROW)));
+    }
+}
+
 #endif

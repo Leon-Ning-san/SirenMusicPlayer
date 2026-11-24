@@ -70,7 +70,17 @@ static int L_X0, L_X1, L_TOP, L_ROW, L_CARD_H, L_TITLE, L_ART;
 static int W_CX, W_CY, W_RO, W_RI;
 
 static void update_layout(void) {
-    if (portrait()) {
+    if (be_is_desktop()) {
+        LCD_X = 20; LCD_Y = 66; LCD_W = 742; LCD_H = 550;
+        L_X0 = LCD_X + 14;
+        L_X1 = LCD_X + LCD_W - 22;
+        L_TOP = LCD_Y + 48;
+        L_ROW = 62;
+        L_CARD_H = 54;
+        L_TITLE = 16;
+        L_ART = 12;
+        W_CX = 0; W_CY = 0; W_RO = 0; W_RI = 0;
+    } else if (portrait()) {
         LCD_X = 24; LCD_Y = 22; LCD_W = 672; LCD_H = 636;
         L_X0 = LCD_X + 14;
         L_X1 = LCD_X + LCD_W - 14;
@@ -100,6 +110,7 @@ static void update_layout(void) {
 }
 
 static int list_bottom_y(void) {
+    if (be_is_desktop()) return LCD_Y + LCD_H - 12;
     return LCD_Y + LCD_H - ((portrait() && be_is_desktop()) ? 116 : 68);
 }
 
@@ -300,6 +311,18 @@ static int  vol_sx0, vol_sx1, vol_sy;
 static Rect rc_exit_box, rc_exit_ok, rc_exit_cancel;
 static Rect rc_diag_close, rc_diag_box;
 static Rect rc_sr_box, rc_sr_ok, rc_sr_clear, rc_sr_cancel;
+
+// Desktop PC Material You 界面交互状态
+static int desktop_full = 0;
+static int touch_sb_drag = 0;
+static int touch_vol_inline = 0;
+static Rect rc_desk_sb, rc_desk_prev, rc_desk_play, rc_desk_next, rc_desk_mute, rc_desk_sr_clear;
+static Rect rc_desk_vol_track, rc_desk_full_mode;
+#define MAX_DESK_LYR_HITS 12
+typedef struct { Rect rc; int idx; } DeskLyrHit;
+static DeskLyrHit desk_lyr_hits[MAX_DESK_LYR_HITS];
+static int ndesk_lyr_hits = 0;
+static int desk_lyr_y0 = 0, desk_lyr_y1 = 0, desk_lyr_x0 = 0, desk_lyr_x1 = 0;
 
 // ---------- 淡入过渡辅助 ----------
 static void capture_fade(void) {
@@ -719,6 +742,20 @@ static void icon_play_pause(Canvas* c, int x, int y, int s, uint32_t col) {
     fill_round_rect_aa(c, x + s * 11 / 20 + bw + 3, y + 2, bw, h, 1, col);
 }
 
+static void icon_play_only(Canvas* c, int x, int y, int s, uint32_t col) {
+    fill_tri_aa(c, x + 2, y + 1, x + s - 1, y + s / 2, x + 2, y + s - 1, col);
+}
+
+static void icon_pause_only(Canvas* c, int x, int y, int s, uint32_t col) {
+    int bw = s / 4;
+    if (bw < 3) bw = 3;
+    int gap = s / 5;
+    if (gap < 3) gap = 3;
+    int x0 = x + (s - bw * 2 - gap) / 2;
+    fill_round_rect_aa(c, x0, y + 2, bw, s - 4, 2, col);
+    fill_round_rect_aa(c, x0 + bw + gap, y + 2, bw, s - 4, 2, col);
+}
+
 static void icon_heart(Canvas* c, int x, int y, int s, uint32_t col) {
     int rx = s / 4;
     if (rx < 2) rx = 2;
@@ -753,25 +790,27 @@ static void make_default_art(uint32_t* dst, int n, const char* seed) {
     draw_note(&c, n / 6, n / 6, n * 2 / 3, COL(255, 255, 255, 225));
 }
 
-// Apple Music 风格柔和封面流体光晕（渲染到全屏播放 LCD 内部）
+// Apple Music 风格柔和封面流体光晕（渲染到全屏播放 / 桌面英雄卡片内部）
 static void rebuild_lcd_ambient(void) {
     if (!cover_src) return;
-    if (lcd_ambient && (lcd_ambient->w != LCD_W || lcd_ambient->h != LCD_H)) {
+    int aw = be_is_desktop() ? (desktop_full ? 1240 : 484) : LCD_W;
+    int ah = be_is_desktop() ? 550 : LCD_H;
+    if (lcd_ambient && (lcd_ambient->w != aw || lcd_ambient->h != ah)) {
         canvas_free(lcd_ambient);
         lcd_ambient = NULL;
     }
-    if (!lcd_ambient) lcd_ambient = canvas_new(LCD_W, LCD_H);
+    if (!lcd_ambient) lcd_ambient = canvas_new(aw, ah);
     if (!lcd_ambient) return;
 
     uint32_t small[48 * 48];
     resample_bilinear(cover_src, COVER_SRC_SZ, COVER_SRC_SZ, small, 48, 48);
     box_blur(small, 48, 48, 4, 2);
-    resample_bilinear(small, 48, 48, lcd_ambient->px, LCD_W, LCD_H);
+    resample_bilinear(small, 48, 48, lcd_ambient->px, aw, ah);
 
     // 与当前主题 Surface 柔和融合，保证浅色与深色下文字都极度清晰
     uint8_t sr = C_SURFACE & 0xFF, sg = (C_SURFACE >> 8) & 0xFF, sb = (C_SURFACE >> 16) & 0xFF;
     float mix = g_is_light ? 0.80f : 0.72f;
-    size_t total = (size_t)LCD_W * LCD_H;
+    size_t total = (size_t)aw * ah;
     for (size_t i = 0; i < total; i++) {
         uint32_t c = lcd_ambient->px[i];
         uint8_t r = (uint8_t)((c & 0xFF) * (1.0f - mix) + sr * mix);
@@ -2263,6 +2302,751 @@ static void draw_player(void) {
     draw_hardware_controls();
 }
 
+// ---------- PC 桌面端 Material You 现代横屏双栏 UI + 鼠标交互 ----------
+static Rect draw_m3_sq_btn(int x, int y, int w, int h, int rad, float px, const char* txt,
+                           int active, int hovered) {
+    uint32_t bgc = active ? C_TONAL_BG : (hovered ? C_CARD_SEL : C_CHIP);
+    uint32_t fgc = active ? C_TONAL_TXT : (hovered ? C_TXT : C_TXT2);
+    fill_round_rect_aa(screen, x, y, w, h, rad, bgc);
+    if (hovered && !active) {
+        stroke_round_rect_aa(screen, x, y, w, h, rad, 1, C_ACCENT, 120);
+    }
+    draw_text_centered(screen, font, px, x + 6, x + w - 6, y + (h - (int)px) / 2 - 1, fgc, txt);
+    return (Rect){ x, y, w, h };
+}
+
+static void toggle_desktop_fullscreen(void) {
+    capture_fade();
+    desktop_full = !desktop_full;
+    if (cover_ready && cover_src) rebuild_lcd_ambient();
+}
+
+static void draw_desktop_lyrics_block(int x0, int x1, int y0, int y1, double pos, double dur,
+                                      int mx, int my, int big_font) {
+    ndesk_lyr_hits = 0;
+    desk_lyr_x0 = x0; desk_lyr_x1 = x1; desk_lyr_y0 = y0; desk_lyr_y1 = y1;
+    int rw = x1 - x0;
+    if (rw < 60 || y1 <= y0 + 40) return;
+
+    canvas_set_clip(screen, x0, y0, x1, y1);
+    if (lyr && lyr->n > 0) {
+        int act = lyr->unsynced
+            ? (dur > 0.0 && lyr->n > 1 ? (int)((pos / dur) * (double)(lyr->n - 1)) : 0)
+            : lyrics_index(lyr, pos);
+        if (act < 0) act = 0;
+        if (act >= lyr->n) act = lyr->n - 1;
+
+        int idxs[10];
+        int n = 0;
+        int lo_d = big_font ? -2 : -2;
+        int hi_d = big_font ? 5 : 4;
+        for (int d = lo_d; d <= hi_d; d++) {
+            int i = act + d;
+            if (i >= 0 && i < lyr->n && n < 10) idxs[n++] = i;
+        }
+        float act_px = big_font ? 21.0f : 17.0f;
+        float near_px = big_font ? 17.0f : 14.5f;
+        float far_px = big_font ? 15.0f : 13.0f;
+        int act_h = big_font ? 44 : 38;
+
+        int y = y0 + 6;
+        for (int k = 0; k < n; k++) {
+            int i = idxs[k];
+            int dist = i - act;
+            if (y + 24 > y1) break;
+            if (dist == 0) {
+                Rect hr = { x0, y, rw, act_h };
+                if (ndesk_lyr_hits < MAX_DESK_LYR_HITS) {
+                    desk_lyr_hits[ndesk_lyr_hits++] = (DeskLyrHit){ hr, i };
+                }
+                fill_round_rect_aa_a(screen, hr.x, hr.y, hr.w, hr.h, 14, C_TONAL_BG, 232);
+                fill_round_rect_aa(screen, hr.x + 8, hr.y + 8, 4, act_h - 16, 2, C_ACCENT);
+                draw_text_max(screen, font, act_px, hr.x + 20, hr.y + (act_h - (int)act_px) / 2 - 1,
+                              C_TONAL_TXT, lyr->lines[i].text, rw - 30);
+                y += act_h + 8;
+            } else {
+                float px = (dist == -1 || dist == 1) ? near_px : far_px;
+                int row_h = (int)px + 14;
+                Rect hr = { x0, y - 3, rw, row_h };
+                int hov = !show_diag && !show_search_box && in_rc(mx, my, hr);
+                if (hov) {
+                    fill_round_rect_aa_a(screen, hr.x, hr.y, hr.w, hr.h, 10, C_CARD_SEL, 195);
+                }
+                if (ndesk_lyr_hits < MAX_DESK_LYR_HITS) {
+                    desk_lyr_hits[ndesk_lyr_hits++] = (DeskLyrHit){ hr, i };
+                }
+                uint32_t cc = hov ? C_TXT : ((dist == -1 || dist == 1) ? C_TXT : C_TXT3);
+                draw_text_max(screen, font, px, x0 + 16, y, cc, lyr->lines[i].text, rw - 24);
+                y += row_h + 2;
+            }
+        }
+    } else {
+        float sp[28];
+        audio_get_spectrum(sp);
+        for (int i = 0; i < 28; i++) bars[i] = sp[i];
+
+        int n = big_font ? 24 : 18;
+        int bw = big_font ? 16 : 13;
+        int span = rw - 24;
+        int gap = (span - n * bw) / (n - 1);
+        if (gap < 4) gap = 4;
+        int total_w = n * bw + (n - 1) * gap;
+        int bx0 = x0 + (rw - total_w) / 2;
+        int spec_base = y1 - 46;
+        int max_h = y1 - y0 - 84;
+        if (max_h > 190) max_h = 190;
+        if (max_h < 60) max_h = 60;
+        for (int i = 0; i < n; i++) {
+            float v = clampf(bars[i], 0.06f, 1.0f);
+            int hgt = (int)(v * max_h);
+            int bx = bx0 + i * (bw + gap);
+            fill_round_rect_aa_a(screen, bx, spec_base - hgt, bw, hgt, bw / 2, C_ACCENT, 215);
+        }
+        draw_text_centered(screen, font, 13.0f, x0 + 8, x1 - 8, y1 - 30, C_TXT3, lyrics_last_diag());
+    }
+    canvas_reset_clip(screen);
+}
+
+static void draw_desktop_ui(void) {
+    int mx = -1, my = -1;
+    be_mouse_pos(&mx, &my);
+    if (show_search_box || show_diag) { mx = -1; my = -1; }
+
+    canvas_clear(screen, C_BODY);
+    rc_vol_box = rc_exit_box = rc_pod_card = rc_empty_rescan = (Rect){ 0, 0, 0, 0 };
+    rc_btn_vol = rc_btn_exit = (Rect){ 0, 0, 0, 0 };
+
+    // 1. 顶部 PC 应用栏（App 图标 + Sirène + 视图/目录/搜索/主题）
+    int icon_x = 24, icon_y = 17;
+    if (logo_img) blit_rgb_round(screen, icon_x, icon_y, logo_img, LOGO_SZ, LOGO_SZ, 9);
+    draw_text(screen, font, 22, 62, 20, C_TXT, "Sirène");
+
+    char cnt_lbl[32], all_l[32], fav_l[32], th_l[36];
+    snprintf(cnt_lbl, sizeof(cnt_lbl), "%d 首", ntracks);
+    snprintf(all_l, sizeof(all_l), "全部 %d", ntracks);
+    snprintf(fav_l, sizeof(fav_l), "喜欢 %d", fav_count);
+    snprintf(th_l, sizeof(th_l), "主题:%s", theme_names[cur_theme]);
+
+    int cnt_w = text_width(font, 12.5f, cnt_lbl) + 18;
+    fill_round_rect_aa(screen, 134, 21, cnt_w, 24, 10, C_SURF_SUB);
+    draw_text_centered(screen, font, 12.5f, 134, 134 + cnt_w, 26, C_TXT2, cnt_lbl);
+
+    int tx = 144 + cnt_w + 14;
+    int ty = 16, bh = 34;
+    int aw = text_width(font, 13.5f, all_l) + 26;
+    rc_tab_all = draw_m3_sq_btn(tx, ty, aw, bh, 12, 13.5f, all_l, view == VIEW_HOME, in_rc(mx, my, (Rect){tx,ty,aw,bh}));
+    tx += aw + 8;
+
+    int fw = text_width(font, 13.5f, fav_l) + 26;
+    rc_tab_fav = draw_m3_sq_btn(tx, ty, fw, bh, 12, 13.5f, fav_l, view == VIEW_FAVORITE, in_rc(mx, my, (Rect){tx,ty,fw,bh}));
+    tx += fw + 8;
+
+    rc_btn_ori = draw_m3_sq_btn(tx, ty, 74, bh, 12, 13.5f, "选目录", 0, in_rc(mx, my, (Rect){tx,ty,74,bh}));
+    tx += 82;
+
+    rc_btn_rescan = draw_m3_sq_btn(tx, ty, 64, bh, 12, 13.5f, "扫库", 0, in_rc(mx, my, (Rect){tx,ty,64,bh}));
+    tx += 72;
+
+    int mw = text_width(font, 13.5f, mode_names[play_mode]) + 24;
+    rc_btn_mode = draw_m3_sq_btn(tx, ty, mw, bh, 12, 13.5f, mode_names[play_mode],
+                                 play_mode != MODE_LOOP_ALL, in_rc(mx, my, (Rect){tx,ty,mw,bh}));
+
+    // 右侧搜索框 + 主题 + 诊断
+    int rx = 1260;
+    int dw = 62;
+    rx -= dw;
+    rc_btn_diag = draw_m3_sq_btn(rx, ty, dw, bh, 12, 13.5f, "诊断", show_diag, in_rc(mx, my, (Rect){rx,ty,dw,bh}));
+    rx -= 8;
+
+    int thw = text_width(font, 13.5f, th_l) + 24;
+    rx -= thw;
+    rc_btn_theme = draw_m3_sq_btn(rx, ty, thw, bh, 12, 13.5f, th_l, 0, in_rc(mx, my, (Rect){rx,ty,thw,bh}));
+    rx -= 10;
+
+    int sr_w = rx - (tx + mw + 16);
+    if (sr_w > 260) sr_w = 260;
+    if (sr_w < 160) sr_w = 160;
+    int sr_x = rx - sr_w;
+    Rect sr_rc = { sr_x, ty, sr_w, bh };
+    int sr_hov = in_rc(mx, my, sr_rc);
+    fill_round_rect_aa(screen, sr_x, ty, sr_w, bh, 12, (view == VIEW_SEARCH && search_q[0]) ? C_TONAL_BG : C_SURFACE);
+    stroke_round_rect_aa(screen, sr_x, ty, sr_w, bh, 12, 1, sr_hov ? C_ACCENT : C_WHEEL_RING, sr_hov ? 200 : 140);
+    if (search_q[0]) {
+        char sq[140];
+        snprintf(sq, sizeof(sq), "搜索: %s", search_q);
+        draw_text_max(screen, font, 13.5f, sr_x + 12, ty + 9, C_TONAL_TXT, sq, sr_w - 54);
+        rc_desk_sr_clear = (Rect){ sr_x + sr_w - 38, ty + 4, 34, bh - 8 };
+        fill_round_rect_aa(screen, rc_desk_sr_clear.x, rc_desk_sr_clear.y, rc_desk_sr_clear.w, rc_desk_sr_clear.h,
+                           8, C_SURFACE);
+        draw_text_centered(screen, font, 12.0f, rc_desk_sr_clear.x, rc_desk_sr_clear.x + rc_desk_sr_clear.w,
+                           ty + 10, C_TXT2, "清除");
+    } else {
+        rc_desk_sr_clear = (Rect){ 0, 0, 0, 0 };
+        draw_text_max(screen, font, 13.5f, sr_x + 14, ty + 9, C_TXT3, "搜索歌曲 / 歌手 (Ctrl+F)", sr_w - 24);
+    }
+    rc_btn_search = sr_rc;
+
+    double pos = audio_position();
+    double dur = audio_duration();
+    if (dur > 0 && pos > dur) pos = dur;
+    int fav_on = (playing_idx >= 0 && tracks[playing_idx].fav);
+
+    // 2. 主内容区 (y = 66..616)
+    if (!desktop_full) {
+        rc_desk_full_mode = (Rect){ 0, 0, 0, 0 };
+        // ---- 左栏：Material You 曲库大圆角卡片 (742 x 550) ----
+        fill_round_rect_shadow(screen, LCD_X, LCD_Y, LCD_W, LCD_H, 24, g_is_light ? 22 : 46);
+        fill_round_rect_aa(screen, LCD_X, LCD_Y, LCD_W, LCD_H, 24, C_SURFACE);
+        stroke_round_rect_aa(screen, LCD_X, LCD_Y, LCD_W, LCD_H, 24, 1, C_WHEEL_RING, 110);
+
+        const char* list_title = "全部曲库";
+        if (view == VIEW_FAVORITE) list_title = "我喜欢的歌曲";
+        else if (view == VIEW_SEARCH && search_q[0]) list_title = "搜索匹配结果";
+        draw_text(screen, font, 16.5f, LCD_X + 20, LCD_Y + 14, C_TXT, list_title);
+        draw_text_right(screen, font, 12.0f, LCD_X + LCD_W - 22, LCD_Y + 17, C_TXT3,
+                        "单击播放/暂停 · 滚轮/拖滚动条翻页 · 拖入文件夹或 .lrc");
+        fill_rect_a(screen, LCD_X + 16, LCD_Y + 42, LCD_W - 32, 1, C_WHEEL_RING, 95);
+
+        int list_bot = list_bottom_y();
+        int cardw = L_X1 - L_X0;
+        rc_desk_sb = (Rect){ 0, 0, 0, 0 };
+        rc_p_back = (Rect){ 0, 0, 0, 0 };
+
+        ensure_visible_thumbs();
+        if (nvisible == 0) {
+            int bw = 540, bh2 = 190;
+            int bx = L_X0 + (cardw - bw) / 2;
+            int by = L_TOP + (list_area_h() - bh2) / 2;
+            fill_round_rect_aa(screen, bx, by, bw, bh2, 22, C_SURF_SUB);
+            const char* tmsg = "未找到本地音频文件";
+            const char* smsg = "支持 MP3 / FLAC / OGG / WAV · 点击「选择目录」或直接将文件夹拖进窗口";
+            if (view == VIEW_FAVORITE && ntracks > 0) {
+                tmsg = "暂无收藏歌曲";
+                smsg = "点击曲目右侧爱心即可收藏";
+            } else if (view == VIEW_SEARCH && ntracks > 0) {
+                tmsg = "没有匹配的搜索结果";
+                smsg = "点击右上角搜索栏中的「清除」恢复完整曲库";
+            }
+            draw_text_centered(screen, font, 19, bx + 16, bx + bw - 16, by + 36, C_TXT, tmsg);
+            draw_text_centered(screen, font, 13.5f, bx + 16, bx + bw - 16, by + 74, C_TXT2, smsg);
+            int bt_w = 180, bt_h = 40;
+            int bt_x = bx + (bw - bt_w) / 2, bt_y = by + 118;
+            fill_round_rect_aa(screen, bt_x, bt_y, bt_w, bt_h, 14, C_ACCENT);
+            draw_text_centered(screen, font, 14.5f, bt_x, bt_x + bt_w, bt_y + 11, C_ON_ACCENT, "选择音乐目录");
+            rc_empty_rescan = (Rect){ bt_x, bt_y, bt_w, bt_h };
+        } else {
+            int i0 = (int)floorf(scroll_px / (float)L_ROW) - 1;
+            if (i0 < 0) i0 = 0;
+            int i1 = (int)ceilf((scroll_px + (float)list_area_h()) / (float)L_ROW) + 1;
+            if (i1 > nvisible) i1 = nvisible;
+
+            int hover_pos = -1;
+            if (!touch_drag && mx >= L_X0 && mx < L_X1 && my >= L_TOP && my < list_bot) {
+                hover_pos = (int)floorf(((float)(my - L_TOP) + scroll_px) / (float)L_ROW);
+            }
+
+            canvas_set_clip(screen, LCD_X + 6, L_TOP, LCD_X + LCD_W - 6, list_bot);
+            for (int i = i0; i < i1; i++) {
+                int idx = vis_at(i);
+                if (idx < 0) break;
+                int y = L_TOP + i * L_ROW - (int)scroll_px;
+                int pad_v = (L_ROW - L_CARD_H) / 2;
+                int cy0 = y + pad_v;
+                int ch = L_CARD_H;
+                if (cy0 + ch <= L_TOP || cy0 >= list_bot) continue;
+
+                int is_playing = (idx == playing_idx);
+                int is_hov = (i == hover_pos) || (touch_drag && touch_press_idx == i);
+                int is_sel = (idx == sel);
+
+                uint32_t row_bg = C_CARD;
+                if (is_playing) row_bg = C_TONAL_BG;
+                else if (is_hov || is_sel) row_bg = C_CARD_SEL;
+
+                fill_round_rect_aa(screen, L_X0, cy0, cardw - 10, ch, 15, row_bg);
+                if (is_hov && !is_playing) {
+                    stroke_round_rect_aa(screen, L_X0, cy0, cardw - 10, ch, 15, 1, C_ACCENT, 130);
+                }
+                if (is_playing) {
+                    fill_round_rect_aa(screen, L_X0 + 7, cy0 + ch / 2 - 11, 4, 22, 2, C_ACCENT);
+                }
+
+                int th_x = L_X0 + 16;
+                int th_y = cy0 + (ch - THUMB_SZ) / 2;
+                if (tracks[idx].thumb)
+                    blit_rgb_round(screen, th_x, th_y, tracks[idx].thumb, THUMB_SZ, THUMB_SZ, 12);
+
+                char nm[256];
+                basename_no_ext(tracks[idx].path, nm, sizeof(nm));
+                const char* ttl = tracks[idx].meta.title[0] ? tracks[idx].meta.title : nm;
+                const char* art = tracks[idx].meta.artist[0] ? tracks[idx].meta.artist : "未知艺术家";
+
+                uint32_t tc = is_playing ? C_TONAL_TXT : C_TXT;
+                uint32_t sc = is_playing ? C_TONAL_TXT : C_TXT3;
+                int txtx = th_x + THUMB_SZ + 14;
+                int right_res = 62 + (is_playing ? 64 : 0);
+                int maxw = (L_X0 + cardw - 10) - txtx - right_res;
+                if (maxw < 80) maxw = 80;
+
+                int block = L_TITLE + 4 + L_ART;
+                int ty2 = cy0 + (ch - block) / 2 - 1;
+                draw_text_max(screen, font, (float)L_TITLE, txtx, ty2, tc, ttl, maxw);
+
+                char fmt[12];
+                track_format_tag(tracks[idx].path, fmt, sizeof(fmt));
+                char subline[300];
+                snprintf(subline, sizeof(subline), "%s · %s", fmt, art);
+                draw_text_max(screen, font, (float)L_ART, txtx, ty2 + L_TITLE + 4, sc, subline, maxw);
+
+                if (is_playing) {
+                    const char* st_tag = audio_paused() ? "已暂停" : "播放中";
+                    draw_text_right(screen, font, 12.5f, L_X1 - 54, cy0 + (ch - 13) / 2, C_ACCENT, st_tag);
+                }
+
+                int hx = L_X1 - 40;
+                int hy = cy0 + (ch - 18) / 2;
+                int h_hov = (mx >= hx - 8 && mx <= hx + 26 && my >= cy0 && my < cy0 + ch);
+                icon_heart(screen, hx, hy, 18, tracks[idx].fav ? C_HEART : (h_hov ? C_TXT2 : C_TRACK_BG));
+            }
+            canvas_reset_clip(screen);
+
+            float ms = max_scroll_px();
+            if (ms > 0.0f) {
+                int sbx = LCD_X + LCD_W - 14;
+                int track_h = list_area_h() - 12;
+                int thumb_h = (int)((float)list_area_h() / (float)(nvisible * L_ROW) * (float)track_h);
+                if (thumb_h < 32) thumb_h = 32;
+                if (thumb_h > track_h) thumb_h = track_h;
+                int thumb_y = L_TOP + 6 + (int)((scroll_px / ms) * (float)(track_h - thumb_h));
+                rc_desk_sb = (Rect){ sbx - 6, L_TOP + 2, 18, list_area_h() - 4 };
+                int sb_hot = touch_sb_drag || in_rc(mx, my, rc_desk_sb);
+                fill_round_rect_aa(screen, sbx, L_TOP + 6, 6, track_h, 3, C_TRACK_BG);
+                fill_round_rect_aa(screen, sbx, thumb_y, 6, thumb_h, 3, sb_hot ? C_ACCENT : C_TXT3);
+            }
+        }
+
+        // ---- 右栏：正在播放封面与常驻实时歌词卡片 (484 x 550) ----
+        int rpx = 776, rpy = 66, rpw = 484, rph = 550;
+        fill_round_rect_shadow(screen, rpx, rpy, rpw, rph, 24, g_is_light ? 22 : 46);
+        if (playing_idx >= 0 && cover_ready && cover_src) {
+            if (!lcd_ambient || lcd_ambient->w != rpw || lcd_ambient->h != rph) rebuild_lcd_ambient();
+            if (lcd_ambient) blit_rgb_round(screen, rpx, rpy, lcd_ambient->px, lcd_ambient->w, lcd_ambient->h, 24);
+            else fill_round_rect_aa(screen, rpx, rpy, rpw, rph, 24, C_SURFACE);
+        } else {
+            fill_round_rect_aa(screen, rpx, rpy, rpw, rph, 24, C_SURFACE);
+        }
+        stroke_round_rect_aa(screen, rpx, rpy, rpw, rph, 24, 1, C_WHEEL_RING, 120);
+
+        int cx = rpx + 20, cy = rpy + 20, csz = COVER_PORT_SZ;
+        ui_cover_x = cx; ui_cover_y = cy; ui_cover_sz = csz;
+        fill_round_rect_shadow(screen, cx, cy, csz, csz, 22, g_is_light ? 30 : 54);
+        const uint32_t* hero_cov = (playing_idx >= 0 && cover_port) ? cover_port : poster_pod;
+        if (playing_idx >= 0 && cover_port) {
+            blit_rgb_round(screen, cx, cy, cover_port, COVER_PORT_SZ, COVER_PORT_SZ, 22);
+        } else if ((size_t)(poster_end - poster_start) >= 320 * 320 * 4) {
+            uint32_t tmp_cov[COVER_PORT_SZ * COVER_PORT_SZ];
+            resample_cover_square((const uint32_t*)poster_start, 320, 320, tmp_cov, COVER_PORT_SZ, 1);
+            blit_rgb_round(screen, cx, cy, tmp_cov, COVER_PORT_SZ, COVER_PORT_SZ, 22);
+        } else if (hero_cov) {
+            blit_rgb_round(screen, cx, cy, hero_cov, POD_ART_SZ, POD_ART_SZ, 22);
+        }
+
+        int mx_col = cx + csz + 18;
+        int mw_col = (rpx + rpw - 18) - mx_col;
+        if (playing_idx >= 0) {
+            char fmt_b[64];
+            snprintf(fmt_b, sizeof(fmt_b), "%s · %d/%d", p_fmt[0] ? p_fmt : "AUDIO", playing_idx + 1, ntracks);
+            int bdg_w = text_width(font, 11.5f, fmt_b) + 18;
+            fill_round_rect_aa(screen, mx_col, cy + 4, bdg_w, 24, 10, C_TONAL_BG);
+            draw_text_centered(screen, font, 11.5f, mx_col, mx_col + bdg_w, cy + 9, C_TONAL_TXT, fmt_b);
+
+            draw_text_max(screen, font, 20, mx_col, cy + 38, C_TXT, p_title, mw_col);
+            draw_text_max(screen, font, 14, mx_col, cy + 70, C_TXT2, p_artist[0] ? p_artist : "未知艺术家", mw_col);
+
+            if (lyr && lyr->source[0]) {
+                char lsrc[80];
+                snprintf(lsrc, sizeof(lsrc), "歌词: %s (%d行)", lyr->source, lyr->n);
+                draw_text_max(screen, font, 12, mx_col, cy + 100, C_TONAL_TXT, lsrc, mw_col);
+            } else {
+                draw_text_max(screen, font, 12, mx_col, cy + 100, C_TXT3, "可拖入同名 .lrc 显示歌词", mw_col);
+            }
+
+            rc_btn_fav_p = draw_m3_sq_btn(mx_col, cy + 144, 108, 36, 12, 13.5f,
+                                          fav_on ? "♥ 已喜欢" : "♡ 喜欢", fav_on,
+                                          in_rc(mx, my, (Rect){mx_col, cy + 144, 108, 36}));
+            rc_btn_full  = draw_m3_sq_btn(mx_col + 116, cy + 144, 118, 36, 12, 13.5f,
+                                          "沉浸全屏 [F]", 0,
+                                          in_rc(mx, my, (Rect){mx_col + 116, cy + 144, 118, 36}));
+        } else {
+            rc_btn_fav_p = (Rect){ 0, 0, 0, 0 };
+            rc_btn_full  = (Rect){ 0, 0, 0, 0 };
+            draw_text(screen, font, 21, mx_col, cy + 28, C_TXT, "Sirène");
+            draw_text_max(screen, font, 13.5f, mx_col, cy + 62, C_TXT2, "点击左侧曲目即刻开始播放", mw_col);
+            draw_text_max(screen, font, 12.5f, mx_col, cy + 92, C_TXT3, "右侧区域将自动滚动显示歌词", mw_col);
+        }
+
+        fill_rect_a(screen, rpx + 18, cy + csz + 14, rpw - 36, 1, C_WHEEL_RING, 90);
+        draw_desktop_lyrics_block(rpx + 16, rpx + rpw - 16, cy + csz + 24, rpy + rph - 16, pos, dur, mx, my, 0);
+    } else {
+        // ---- 桌面沉浸式全屏歌词视图 (1240 x 550 大圆角英雄卡) ----
+        int hx = 20, hy = 66, hw = 1240, hh = 550;
+        fill_round_rect_shadow(screen, hx, hy, hw, hh, 24, g_is_light ? 24 : 50);
+        if (playing_idx >= 0 && cover_ready && cover_src) {
+            if (!lcd_ambient || lcd_ambient->w != hw || lcd_ambient->h != hh) rebuild_lcd_ambient();
+            if (lcd_ambient) blit_rgb_round(screen, hx, hy, lcd_ambient->px, lcd_ambient->w, lcd_ambient->h, 24);
+            else fill_round_rect_aa(screen, hx, hy, hw, hh, 24, C_SURFACE);
+        } else {
+            fill_round_rect_aa(screen, hx, hy, hw, hh, 24, C_SURFACE);
+        }
+        stroke_round_rect_aa(screen, hx, hy, hw, hh, 24, 1, C_WHEEL_RING, 120);
+
+        rc_btn_full = (Rect){ 0, 0, 0, 0 };
+        rc_desk_sb = (Rect){ 0, 0, 0, 0 };
+        rc_p_back = draw_m3_sq_btn(hx + 22, hy + 18, 132, 34, 12, 13.5f, "← 返回双栏 [F]", 1,
+                                   in_rc(mx, my, (Rect){hx + 22, hy + 18, 132, 34}));
+
+        int csz = COVER_SRC_SZ;
+        int cx = hx + 58, cy = hy + 96;
+        ui_cover_x = cx; ui_cover_y = cy; ui_cover_sz = csz;
+        fill_round_rect_shadow(screen, cx, cy, csz, csz, 26, g_is_light ? 36 : 60);
+        if (cover_src) blit_rgb_round(screen, cx, cy, cover_src, COVER_SRC_SZ, COVER_SRC_SZ, 26);
+
+        rc_btn_fav_p = draw_m3_sq_btn(cx + 30, cy + csz + 24, 124, 38, 14, 14.0f,
+                                      fav_on ? "♥ 已喜欢" : "♡ 喜欢", fav_on,
+                                      in_rc(mx, my, (Rect){cx + 30, cy + csz + 24, 124, 38}));
+        rc_desk_full_mode = draw_m3_sq_btn(cx + 166, cy + csz + 24, 124, 38, 14, 14.0f,
+                                           mode_names[play_mode], play_mode != MODE_LOOP_ALL,
+                                           in_rc(mx, my, (Rect){cx + 166, cy + csz + 24, 124, 38}));
+
+        int lx0 = cx + csz + 56, lx1 = hx + hw - 44;
+        draw_text_max(screen, font, 28, lx0, hy + 34, C_TXT, playing_idx >= 0 ? p_title : "Sirène", lx1 - lx0);
+        draw_text_max(screen, font, 16, lx0, hy + 72, C_TXT2,
+                      (playing_idx >= 0 && p_artist[0]) ? p_artist : "本地音乐播放器", lx1 - lx0);
+        fill_round_rect_aa(screen, lx0, hy + 104, 52, 4, 2, C_ACCENT);
+        draw_desktop_lyrics_block(lx0, lx1, hy + 124, hy + hh - 20, pos, dur, mx, my, 1);
+    }
+
+    // 3. 底部 Material You 播控与粗波浪进度条栏 (x=20..1260, y=628..702, 大圆角方块按钮)
+    int dx = 20, dy = 628, dw_bar = 1240, dh = 74;
+    fill_round_rect_shadow(screen, dx, dy, dw_bar, dh, 22, g_is_light ? 20 : 44);
+    fill_round_rect_aa(screen, dx, dy, dw_bar, dh, 22, C_SURFACE);
+    stroke_round_rect_aa(screen, dx, dy, dw_bar, dh, 22, 1, C_WHEEL_RING, 115);
+
+    rc_mini_bar = (Rect){ dx + 12, dy + 10, 276, 54 };
+    const uint32_t* mimg = (playing_idx >= 0 && cover_mini) ? cover_mini : poster_mini;
+    if (mimg) blit_rgb_round(screen, dx + 16, dy + 16, mimg, MINI_ART_SZ, MINI_ART_SZ, 12);
+    if (playing_idx >= 0) {
+        draw_text_max(screen, font, 15, dx + 68, dy + 17, C_TXT, p_title, 214);
+        draw_text_max(screen, font, 12.5f, dx + 68, dy + 39, C_TXT2,
+                      p_artist[0] ? p_artist : p_fmt, 214);
+    } else {
+        draw_text(screen, font, 15, dx + 68, dy + 18, C_TXT, "Sirène Desktop");
+        draw_text(screen, font, 12, dx + 68, dy + 39, C_TXT3, "1:1 清晰横屏版");
+    }
+
+    // 中左：Material You 大方块圆角播控键（取代巨大 iPod 圆形转盘）
+    rc_desk_prev = (Rect){ 310, dy + 15, 44, 44 };
+    rc_desk_play = (Rect){ 364, dy + 12, 62, 50 };
+    rc_desk_next = (Rect){ 436, dy + 15, 44, 44 };
+
+    fill_round_rect_aa(screen, rc_desk_prev.x, rc_desk_prev.y, rc_desk_prev.w, rc_desk_prev.h, 14,
+                       in_rc(mx, my, rc_desk_prev) ? C_CARD_SEL : C_SURF_SUB);
+    icon_prev(screen, rc_desk_prev.x + 13, rc_desk_prev.y + 13, 18, C_TXT);
+
+    uint32_t play_bg = C_ACCENT;
+    fill_round_rect_aa(screen, rc_desk_play.x, rc_desk_play.y, rc_desk_play.w, rc_desk_play.h, 16, play_bg);
+    if (in_rc(mx, my, rc_desk_play)) {
+        stroke_round_rect_aa(screen, rc_desk_play.x - 1, rc_desk_play.y - 1,
+                             rc_desk_play.w + 2, rc_desk_play.h + 2, 17, 2, C_TONAL_BG, 210);
+    }
+    if (playing_idx >= 0 && !audio_paused()) {
+        icon_pause_only(screen, rc_desk_play.x + 20, rc_desk_play.y + 14, 22, C_ON_ACCENT);
+    } else {
+        icon_play_only(screen, rc_desk_play.x + 21, rc_desk_play.y + 14, 22, C_ON_ACCENT);
+    }
+
+    fill_round_rect_aa(screen, rc_desk_next.x, rc_desk_next.y, rc_desk_next.w, rc_desk_next.h, 14,
+                       in_rc(mx, my, rc_desk_next) ? C_CARD_SEL : C_SURF_SUB);
+    icon_next(screen, rc_desk_next.x + 13, rc_desk_next.y + 13, 18, C_TXT);
+
+    // 中右：Material You 粗波浪动态进度条 + 起止时间
+    ui_px0 = 552; ui_px1 = 964; ui_py = dy + 33;
+    char t1[32], t2[32];
+    fmt_time(pos, t1, sizeof(t1));
+    fmt_time(dur, t2, sizeof(t2));
+    draw_text_right(screen, font, 12.5f, ui_px0 - 12, dy + 30, C_TXT2, t1);
+    draw_text(screen, font, 12.5f, ui_px1 + 12, dy + 30, C_TXT2, t2);
+
+    float frac = (dur > 0.0) ? clampf((float)(pos / dur), 0.0f, 1.0f) : 0.0f;
+    float amp = (playing_idx >= 0 && !audio_paused()) ? wave_amp_cur : (wave_amp_cur > 0.05f ? wave_amp_cur : 0.0f);
+    if (playing_idx >= 0 && !audio_paused() && amp < 0.5f) amp = 4.4f;
+    draw_m3_wavy_progress(screen, ui_px0, ui_px1, dy + 37, frac,
+                          wave_phase, amp, 28.0f, 7, 6, 1, C_ACCENT, C_TRACK_BG);
+
+    // 最右：鼠标直拖音量滑块 + 静音按键
+    rc_desk_mute = (Rect){ 1036, dy + 19, 36, 36 };
+    fill_round_rect_aa(screen, rc_desk_mute.x, rc_desk_mute.y, rc_desk_mute.w, rc_desk_mute.h, 11,
+                       in_rc(mx, my, rc_desk_mute) ? C_CARD_SEL : C_SURF_SUB);
+    icon_speaker(screen, rc_desk_mute.x + 9, rc_desk_mute.y + 9, 18,
+                 audio_volume() <= 0.01f ? C_HEART : C_ACCENT);
+
+    float vol = audio_volume();
+    vol_sx0 = 1082; vol_sx1 = 1192; vol_sy = dy + 37;
+    rc_desk_vol_track = (Rect){ vol_sx0 - 8, dy + 16, (vol_sx1 - vol_sx0) + 16, 42 };
+    int vsw = vol_sx1 - vol_sx0;
+    fill_round_rect_aa(screen, vol_sx0, vol_sy - 3, vsw, 6, 3, C_TRACK_BG);
+    int vfw = (int)(vsw * vol + 0.5f);
+    if (vfw > 0) fill_round_rect_aa(screen, vol_sx0, vol_sy - 3, vfw, 6, 3, C_ACCENT);
+    fill_ellipse_aa(screen, vol_sx0 + vfw, vol_sy, in_rc(mx, my, rc_desk_vol_track) || touch_vol_inline ? 9 : 7,
+                    in_rc(mx, my, rc_desk_vol_track) || touch_vol_inline ? 9 : 7, C_ACCENT);
+
+    char vpct[16];
+    snprintf(vpct, sizeof(vpct), "%d%%", (int)(vol * 100 + 0.5f));
+    draw_text_right(screen, font, 12.5f, 1244, dy + 30, C_TXT2, vpct);
+
+    // 指针反馈：悬停在任意可交互区域时切换手型指针
+    int hand = 0;
+    if (in_rc(mx, my, rc_tab_all) || in_rc(mx, my, rc_tab_fav) || in_rc(mx, my, rc_btn_ori) ||
+        in_rc(mx, my, rc_btn_rescan) || in_rc(mx, my, rc_btn_mode) || in_rc(mx, my, rc_btn_search) ||
+        in_rc(mx, my, rc_btn_theme) || in_rc(mx, my, rc_btn_diag) || in_rc(mx, my, rc_desk_prev) ||
+        in_rc(mx, my, rc_desk_play) || in_rc(mx, my, rc_desk_next) || in_rc(mx, my, rc_desk_mute) ||
+        in_rc(mx, my, rc_desk_vol_track) || in_rc(mx, my, rc_btn_fav_p) || in_rc(mx, my, rc_btn_full) ||
+        in_rc(mx, my, rc_p_back) || in_rc(mx, my, rc_desk_sb) || in_rc(mx, my, rc_mini_bar) ||
+        in_rc(mx, my, rc_desk_full_mode) || in_rc(mx, my, rc_empty_rescan) ||
+        in_rect(mx, my, ui_px0 - 10, dy + 12, ui_px1 - ui_px0 + 20, 50) ||
+        (ui_cover_sz > 0 && in_rect(mx, my, ui_cover_x, ui_cover_y, ui_cover_sz, ui_cover_sz)) ||
+        (!desktop_full && my >= L_TOP && my < list_bottom_y() && mx >= L_X0 && mx < L_X1)) {
+        hand = 1;
+    } else {
+        for (int k = 0; k < ndesk_lyr_hits; k++) {
+            if (in_rc(mx, my, desk_lyr_hits[k].rc)) { hand = 1; break; }
+        }
+    }
+    be_set_cursor(hand);
+}
+
+static void desktop_seek_scrollbar(int y) {
+    float ms = max_scroll_px();
+    if (ms <= 0.0f) return;
+    int track_h = list_area_h() - 12;
+    if (track_h < 20) return;
+    int thumb_h = (int)((float)list_area_h() / (float)(nvisible * L_ROW) * (float)track_h);
+    if (thumb_h < 32) thumb_h = 32;
+    if (thumb_h > track_h) thumb_h = track_h;
+    int usable = track_h - thumb_h;
+    if (usable <= 0) return;
+    float frac = (float)(y - (L_TOP + 6 + thumb_h / 2)) / (float)usable;
+    if (frac < 0.0f) frac = 0.0f;
+    if (frac > 1.0f) frac = 1.0f;
+    scroll_px = frac * ms;
+    scroll_target = scroll_px;
+}
+
+static void desktop_set_vol_from_x(int x) {
+    if (vol_sx1 <= vol_sx0) return;
+    float v = clampf((float)(x - vol_sx0) / (float)(vol_sx1 - vol_sx0), 0.0f, 1.0f);
+    audio_set_volume(v);
+    if (v > 0.02f) saved_mute_vol = v;
+    save_settings();
+}
+
+static void handle_desktop_input(TouchInfo* t, uint64_t down, uint64_t rep, int wh) {
+    int mx = -1, my = -1;
+    be_mouse_pos(&mx, &my);
+
+    // 滚轮分区控制：音量栏调音量 / 进度条快进退 / 曲库平滑翻页
+    if (wh != 0) {
+        if (in_rc(mx, my, rc_desk_vol_track) || in_rc(mx, my, rc_desk_mute)) {
+            audio_set_volume(audio_volume() + (float)wh * 0.05f);
+            save_settings();
+        } else if (in_rect(mx, my, ui_px0 - 12, 628, ui_px1 - ui_px0 + 24, 74) && audio_duration() > 0.0) {
+            double p = audio_position() + (double)wh * 5.0;
+            if (p < 0.0) p = 0.0;
+            if (p > audio_duration()) p = audio_duration();
+            audio_seek(p);
+        } else if (!desktop_full && max_scroll_px() > 0.0f) {
+            scroll_target -= (float)wh * (float)L_ROW * 1.35f;
+            float ms = max_scroll_px();
+            if (scroll_target < 0.0f) scroll_target = 0.0f;
+            if (scroll_target > ms) scroll_target = ms;
+        }
+    }
+
+    // 键盘快捷键
+    if (down & BTN_X) toggle_desktop_fullscreen();
+    if ((down & BTN_B) && desktop_full) toggle_desktop_fullscreen();
+    if (down & BTN_ZR) cycle_theme();
+    if (down & BTN_MINUS) open_search_keyboard();
+    if (down & (BTN_LEFT | BTN_L)) step_track_dir(-1);
+    if (down & (BTN_RIGHT | BTN_R)) step_track_dir(+1);
+    if (down & BTN_ZL) {
+        int tgt = (playing_idx >= 0) ? playing_idx : sel;
+        if (tgt >= 0) toggle_fav(tgt);
+    }
+    if (down & BTN_A) {
+        if (playing_idx >= 0) {
+            if (audio_paused()) audio_resume();
+            else audio_pause();
+        } else if (nvisible > 0 && !loading) {
+            int idx = (sel >= 0) ? sel : vis_at(0);
+            if (idx >= 0) load_track(idx);
+        }
+    }
+    if (rep & BTN_UP) {
+        if (desktop_full) {
+            audio_set_volume(audio_volume() + 0.05f);
+            save_settings();
+        } else if (nvisible > 0) {
+            int p = sel_pos();
+            p = (p <= 0) ? 0 : p - 1;
+            sel = vis_at(p);
+            ensure_pos_visible(p);
+        }
+    }
+    if (rep & BTN_DOWN) {
+        if (desktop_full) {
+            audio_set_volume(audio_volume() - 0.05f);
+            save_settings();
+        } else if (nvisible > 0) {
+            int p = sel_pos();
+            p = (p < 0) ? 0 : (p + 1 < nvisible ? p + 1 : nvisible - 1);
+            sel = vis_at(p);
+            ensure_pos_visible(p);
+        }
+    }
+    if (rep & BTN_STICK_R_UP)   { audio_set_volume(audio_volume() + 0.05f); save_settings(); }
+    if (rep & BTN_STICK_R_DOWN) { audio_set_volume(audio_volume() - 0.05f); save_settings(); }
+
+    // 连续鼠标拖拽（进度条 / 音量条 / 滚动条 / 列表滑动）
+    if (touch_scrub) {
+        if (t->held) { seek_from_touch(t->x, ui_px0, ui_px1); return; }
+        if (t->up) { touch_scrub = 0; return; }
+    }
+    if (touch_vol_inline) {
+        if (t->held) { desktop_set_vol_from_x(t->x); return; }
+        if (t->up) { touch_vol_inline = 0; return; }
+    }
+    if (touch_sb_drag) {
+        if (t->held) { desktop_seek_scrollbar(t->y); return; }
+        if (t->up) { touch_sb_drag = 0; return; }
+    }
+    if (touch_drag && t->held && max_scroll_px() > 0.0f) {
+        int dy = touch_last_y - t->y;
+        if (abs(t->y - touch_drag_start_y) > 8) touch_moved = 1;
+        if (dy != 0 && touch_moved) {
+            scroll_px += (float)dy;
+            float ms = max_scroll_px();
+            if (scroll_px < 0.0f) scroll_px = 0.0f;
+            if (scroll_px > ms) scroll_px = ms;
+            scroll_target = scroll_px;
+        }
+        touch_last_y = t->y;
+    }
+
+    if (!t->down) {
+        if (t->up && touch_drag) {
+            if (!touch_moved && touch_press_idx >= 0 && touch_press_idx < nvisible) {
+                int idx = vis_at(touch_press_idx);
+                if (idx >= 0) {
+                    if (t->x >= L_X1 - 60 && t->x <= L_X1) toggle_fav(idx);
+                    else play_or_toggle_in_list(idx);
+                }
+            }
+            touch_drag = 0;
+            touch_moved = 0;
+            touch_press_idx = -1;
+        }
+        return;
+    }
+
+    int x = t->x, y = t->y;
+    if (in_rc(x, y, rc_desk_sr_clear)) { search_q[0] = 0; set_view(VIEW_HOME); return; }
+    if (in_rc(x, y, rc_tab_all)) { search_q[0] = 0; set_view(VIEW_HOME); return; }
+    if (in_rc(x, y, rc_tab_fav)) { set_view(view == VIEW_FAVORITE ? VIEW_HOME : VIEW_FAVORITE); return; }
+    if (in_rc(x, y, rc_btn_ori)) { open_desktop_folder(); return; }
+    if (in_rc(x, y, rc_btn_rescan) || in_rc(x, y, rc_empty_rescan)) {
+        if (in_rc(x, y, rc_empty_rescan)) open_desktop_folder();
+        else scan_library(1);
+        return;
+    }
+    if (in_rc(x, y, rc_btn_mode) || in_rc(x, y, rc_desk_full_mode)) { cycle_play_mode(); return; }
+    if (in_rc(x, y, rc_btn_search)) { open_search_keyboard(); return; }
+    if (in_rc(x, y, rc_btn_theme)) { cycle_theme(); return; }
+    if (in_rc(x, y, rc_btn_diag)) { show_diag = 1; trigger_modal_fade(); return; }
+
+    if (in_rc(x, y, rc_desk_prev)) { step_track_dir(-1); return; }
+    if (in_rc(x, y, rc_desk_next)) { step_track_dir(+1); return; }
+    if (in_rc(x, y, rc_desk_play)) {
+        if (playing_idx >= 0) {
+            if (audio_paused()) audio_resume();
+            else audio_pause();
+        } else if (nvisible > 0 && !loading) {
+            int idx = (sel >= 0) ? sel : vis_at(0);
+            if (idx >= 0) load_track(idx);
+        }
+        return;
+    }
+    if (in_rc(x, y, rc_desk_mute)) {
+        if (audio_volume() > 0.01f) {
+            saved_mute_vol = audio_volume();
+            audio_set_volume(0.0f);
+        } else {
+            audio_set_volume(saved_mute_vol > 0.05f ? saved_mute_vol : 0.85f);
+        }
+        save_settings();
+        return;
+    }
+    if (in_rc(x, y, rc_desk_vol_track)) {
+        touch_vol_inline = 1;
+        desktop_set_vol_from_x(x);
+        return;
+    }
+    if (in_rect(x, y, ui_px0 - 12, 628, ui_px1 - ui_px0 + 24, 74)) {
+        touch_scrub = 1;
+        seek_from_touch(x, ui_px0, ui_px1);
+        return;
+    }
+    if (in_rc(x, y, rc_btn_fav_p)) {
+        if (playing_idx >= 0) toggle_fav(playing_idx);
+        return;
+    }
+    if (in_rc(x, y, rc_btn_full) || in_rc(x, y, rc_p_back) || in_rc(x, y, rc_mini_bar)) {
+        toggle_desktop_fullscreen();
+        return;
+    }
+    if (ui_cover_sz > 0 && in_rect(x, y, ui_cover_x, ui_cover_y, ui_cover_sz, ui_cover_sz)) {
+        if (playing_idx >= 0) {
+            if (audio_paused()) audio_resume();
+            else audio_pause();
+        }
+        return;
+    }
+    for (int k = 0; k < ndesk_lyr_hits; k++) {
+        if (in_rc(x, y, desk_lyr_hits[k].rc) && lyr && !lyr->unsynced) {
+            int li = desk_lyr_hits[k].idx;
+            if (li >= 0 && li < lyr->n) audio_seek(lyr->lines[li].t);
+            return;
+        }
+    }
+    if (!desktop_full && in_rc(x, y, rc_desk_sb)) {
+        touch_sb_drag = 1;
+        desktop_seek_scrollbar(y);
+        return;
+    }
+    int list_bot = list_bottom_y();
+    if (!desktop_full && nvisible > 0 && y >= L_TOP && y < list_bot && x >= L_X0 && x < L_X1) {
+        int pos = (int)floorf(((float)(y - L_TOP) + scroll_px) / (float)L_ROW);
+        if (pos >= 0 && pos < nvisible) {
+            touch_press_idx = pos;
+            sel = vis_at(pos);
+            touch_drag = 1;
+            touch_moved = 0;
+            touch_drag_start_y = y;
+            touch_last_y = y;
+        }
+    }
+}
+
 // ---------- 弹窗绘制（由全局 capture_fade 统一驱动平滑 60FPS 淡入/淡出） ----------
 static void draw_volume_overlay(void) {
     if (vol_overlay_timer <= 0) return;
@@ -2360,7 +3144,7 @@ static void draw_diag(void) {
     fill_round_rect_aa(screen, cx, cy, cw, ch, 28, C_SURFACE);
     stroke_round_rect_aa(screen, cx, cy, cw, ch, 28, 1, C_WHEEL_RING, 160);
 
-    draw_text(screen, font, 22, cx + 32, cy + 28, C_TONAL_TXT, "Sirène v1.2.4 系统与歌词诊断");
+    draw_text(screen, font, 22, cx + 32, cy + 28, C_TONAL_TXT, "Sirène v1.2.5 系统与歌词诊断");
     rc_diag_close = draw_m3_pill_fixed(cx + cw - 104, cy + 22, 76, 36, 14.0f, "关闭", 1, 0);
 
     char buf[1024];
@@ -2550,7 +3334,7 @@ int main(int argc, char** argv) {
     sixaxis_init();
 
     update_layout();
-    apply_orientation(be_is_desktop() ? ORI_PORT : ORI_LAND);
+    apply_orientation(ORI_LAND);
     if (be_is_desktop()) ori_locked = 1;
     size_t font_len = (size_t)(font_ttf_end - font_ttf_start);
     font = font_load(font_ttf_start, font_len);
@@ -2602,9 +3386,23 @@ int main(int argc, char** argv) {
 #endif
 
         if (show_search_box) {
+            if (be_is_desktop()) {
+                int mx = -1, my = -1;
+                be_mouse_pos(&mx, &my);
+                be_set_cursor(in_rc(mx, my, rc_sr_ok) || in_rc(mx, my, rc_sr_clear) ||
+                              in_rc(mx, my, rc_sr_cancel) ? 1 : 0);
+            }
             handle_search_box_events(&touch_now);
         } else if (show_diag) {
-            if (touch_now.down || (down & (BTN_B | BTN_A))) { capture_fade(); show_diag = 0; }
+            if (be_is_desktop()) {
+                int mx = -1, my = -1;
+                be_mouse_pos(&mx, &my);
+                be_set_cursor(in_rc(mx, my, rc_diag_close) ? 1 : 0);
+            }
+            if ((touch_now.down && (!be_is_desktop() || in_rc(touch_now.x, touch_now.y, rc_diag_close) || !in_rc(touch_now.x, touch_now.y, rc_diag_box))) ||
+                (down & (BTN_B | BTN_A))) {
+                capture_fade(); show_diag = 0;
+            }
         } else if (show_exit_confirm) {
             if (down & BTN_A) g_want_exit = 1;
             if (down & BTN_B) { capture_fade(); show_exit_confirm = 0; }
@@ -2618,41 +3416,45 @@ int main(int argc, char** argv) {
             else if (hk == 'f' && be_is_desktop()) open_desktop_folder();
             else if (hk == 'm') cycle_play_mode();
             else if (hk == 'c') { show_diag = 1; trigger_modal_fade(); }
-            else if (hk == 'v') { show_vol_panel = 1; trigger_modal_fade(); }
+            else if (hk == 'v' && !be_is_desktop()) { show_vol_panel = 1; trigger_modal_fade(); }
 
             int wh = be_wheel_delta();
-            if (wh != 0) {
-                if (ui_state == UI_LIST && max_scroll_px() > 0.0f) {
-                    scroll_target -= (float)wh * (float)L_ROW * 1.4f;
-                    float ms = max_scroll_px();
-                    if (scroll_target < 0.0f) scroll_target = 0.0f;
-                    if (scroll_target > ms) scroll_target = ms;
-                } else if (ui_state == UI_PLAYER) {
-                    audio_set_volume(audio_volume() + (float)wh * 0.05f);
-                    save_settings();
-                    vol_overlay_timer = 70;
-                }
-            }
-
-            if ((down & BTN_Y) && !be_is_desktop()) toggle_orientation();
-            if (down & BTN_X) toggle_fullscreen_player();
-            if (down & BTN_ZR) cycle_theme();
-            if (down & BTN_MINUS) open_search_keyboard();
-
-            if (down & (BTN_LEFT | BTN_L))  step_track_dir(-1);
-            if (down & (BTN_RIGHT | BTN_R)) step_track_dir(+1);
-
-            if (ui_state == UI_LIST) {
-                if (down & BTN_B) {
-                    show_exit_confirm = 1;
-                    trigger_modal_fade();
-                } else {
-                    ui_list_input(down, rep);
-                    handle_touch_list(&touch_now);
-                }
+            if (be_is_desktop()) {
+                handle_desktop_input(&touch_now, down, rep, wh);
             } else {
-                ui_player_input(down, rep);
-                handle_touch_player(&touch_now);
+                if (wh != 0) {
+                    if (ui_state == UI_LIST && max_scroll_px() > 0.0f) {
+                        scroll_target -= (float)wh * (float)L_ROW * 1.4f;
+                        float ms = max_scroll_px();
+                        if (scroll_target < 0.0f) scroll_target = 0.0f;
+                        if (scroll_target > ms) scroll_target = ms;
+                    } else if (ui_state == UI_PLAYER) {
+                        audio_set_volume(audio_volume() + (float)wh * 0.05f);
+                        save_settings();
+                        vol_overlay_timer = 70;
+                    }
+                }
+
+                if (down & BTN_Y) toggle_orientation();
+                if (down & BTN_X) toggle_fullscreen_player();
+                if (down & BTN_ZR) cycle_theme();
+                if (down & BTN_MINUS) open_search_keyboard();
+
+                if (down & (BTN_LEFT | BTN_L))  step_track_dir(-1);
+                if (down & (BTN_RIGHT | BTN_R)) step_track_dir(+1);
+
+                if (ui_state == UI_LIST) {
+                    if (down & BTN_B) {
+                        show_exit_confirm = 1;
+                        trigger_modal_fade();
+                    } else {
+                        ui_list_input(down, rep);
+                        handle_touch_list(&touch_now);
+                    }
+                } else {
+                    ui_player_input(down, rep);
+                    handle_touch_player(&touch_now);
+                }
             }
         }
         if (g_want_exit) break;
@@ -2684,7 +3486,8 @@ int main(int argc, char** argv) {
         }
 
         uint32_t* fb = be_begin(&stride);
-        if (ui_state == UI_LIST) draw_list();
+        if (be_is_desktop()) draw_desktop_ui();
+        else if (ui_state == UI_LIST) draw_list();
         else draw_player();
 
         draw_volume_overlay();

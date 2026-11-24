@@ -16,8 +16,14 @@ static int           g_running = 1;
 
 static int g_m_held = 0, g_m_down = 0, g_m_up = 0, g_was_down = 0;
 static int g_m_x = 0, g_m_y = 0, g_prev_x = 0, g_prev_y = 0;
+static int g_hover_x = -1, g_hover_y = -1;
+static int g_cursor_hand = 0;
+static SDL_Cursor* g_cur_arrow = NULL;
+static SDL_Cursor* g_cur_hand = NULL;
 static int g_touch_reset = 0;
 static int g_wheel_frame = 0;
+extern const unsigned char poster_start[];
+extern const unsigned char poster_end[];
 
 static uint64_t g_key_held = 0, g_key_prev = 0, g_key_down = 0, g_key_down_pending = 0;
 static int      g_hotkey = 0;
@@ -71,11 +77,20 @@ int be_init(void) {
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) return -1;
 
-    int init_w = 468, init_h = 832;
-    SDL_DisplayMode dm;
-    if (SDL_GetCurrentDisplayMode(0, &dm) == 0 && dm.h > 0 && dm.h < 920) {
-        init_h = dm.h - 110;
-        init_w = init_h * BE_W / BE_H;
+    int init_w = BE_W, init_h = BE_H;
+    SDL_Rect usable;
+    if (SDL_GetDisplayUsableBounds(0, &usable) == 0 && usable.w > 0 && usable.h > 0) {
+        if (usable.w < BE_W + 40 || usable.h < BE_H + 60) {
+            int max_w = (int)(usable.w * 0.92);
+            int max_h = (int)(usable.h * 0.88);
+            if (max_w * BE_H <= max_h * BE_W) {
+                init_w = max_w;
+                init_h = init_w * BE_H / BE_W;
+            } else {
+                init_h = max_h;
+                init_w = init_h * BE_W / BE_H;
+            }
+        }
     }
 
     g_win = SDL_CreateWindow(
@@ -84,6 +99,17 @@ int be_init(void) {
         init_w, init_h,
         SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!g_win) return -1;
+
+    if ((size_t)(poster_end - poster_start) >= 320 * 320 * 4) {
+        SDL_Surface* ico = SDL_CreateRGBSurfaceWithFormatFrom(
+            (void*)poster_start, 320, 320, 32, 320 * 4, SDL_PIXELFORMAT_RGBA32);
+        if (ico) {
+            SDL_SetWindowIcon(g_win, ico);
+            SDL_FreeSurface(ico);
+        }
+    }
+    g_cur_arrow = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
+    g_cur_hand  = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
 
     g_ren = SDL_CreateRenderer(g_win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!g_ren) g_ren = SDL_CreateRenderer(g_win, -1, SDL_RENDERER_SOFTWARE);
@@ -100,6 +126,8 @@ int be_init(void) {
 
 void be_exit(void) {
     free(g_backbuf); g_backbuf = NULL;
+    if (g_cur_arrow) { SDL_FreeCursor(g_cur_arrow); g_cur_arrow = NULL; }
+    if (g_cur_hand)  { SDL_FreeCursor(g_cur_hand);  g_cur_hand = NULL; }
     if (g_tex) { SDL_DestroyTexture(g_tex); g_tex = NULL; }
     if (g_ren) { SDL_DestroyRenderer(g_ren); g_ren = NULL; }
     if (g_win) { SDL_DestroyWindow(g_win); g_win = NULL; }
@@ -135,17 +163,25 @@ void be_input_update(void) {
         case SDL_QUIT:
             g_running = 0;
             break;
+        case SDL_WINDOWEVENT:
+            if (ev.window.event == SDL_WINDOWEVENT_LEAVE) {
+                g_hover_x = -1;
+                g_hover_y = -1;
+            }
+            break;
         case SDL_MOUSEBUTTONDOWN:
             if (ev.button.button == SDL_BUTTON_LEFT) {
                 g_m_x = ev.button.x; g_m_y = ev.button.y;
                 clamp_xy(&g_m_x, &g_m_y);
+                g_hover_x = g_m_x; g_hover_y = g_m_y;
                 g_m_held = 1; g_m_down = 1;
             }
             break;
         case SDL_MOUSEMOTION:
+            g_hover_x = ev.motion.x; g_hover_y = ev.motion.y;
+            clamp_xy(&g_hover_x, &g_hover_y);
             if (g_m_held) {
-                g_m_x = ev.motion.x; g_m_y = ev.motion.y;
-                clamp_xy(&g_m_x, &g_m_y);
+                g_m_x = g_hover_x; g_m_y = g_hover_y;
             }
             break;
         case SDL_MOUSEBUTTONUP:
@@ -323,5 +359,19 @@ int be_default_music_dirs(char dirs[][600], int max_dirs) {
     }
     if (n < max_dirs) snprintf(dirs[n++], 600, "./music");
     return n;
+}
+
+void be_mouse_pos(int* x, int* y) {
+    if (x) *x = g_hover_x;
+    if (y) *y = g_hover_y;
+}
+
+void be_set_cursor(int hand) {
+    int h = hand ? 1 : 0;
+    if (h != g_cursor_hand) {
+        g_cursor_hand = h;
+        SDL_Cursor* c = h ? g_cur_hand : g_cur_arrow;
+        if (c) SDL_SetCursor(c);
+    }
 }
 #endif

@@ -16,11 +16,13 @@ UNAME_S := $(shell uname -s 2>/dev/null || echo Windows)
 
 ifeq ($(OS),Windows_NT)
 	TARGET := Sirene.exe
-	PLAT_SRCS := desktop_src/desktop_win.c
+	WINDRES ?= windres
+	PLAT_SRCS := desktop_src/desktop_win.c desktop_src/sirene_res.o
 	LDFLAGS := -mwindows -lgdi32 -luser32 -lshell32 -lole32 -lcomdlg32 -lwinmm -luuid -lm
 else ifeq ($(findstring MINGW,$(UNAME_S)),MINGW)
 	TARGET := Sirene.exe
-	PLAT_SRCS := desktop_src/desktop_win.c
+	WINDRES ?= windres
+	PLAT_SRCS := desktop_src/desktop_win.c desktop_src/sirene_res.o
 	LDFLAGS := -mwindows -lgdi32 -luser32 -lshell32 -lole32 -lcomdlg32 -lwinmm -luuid -lm
 else ifeq ($(UNAME_S),Darwin)
 	TARGET := Sirene
@@ -42,14 +44,29 @@ endif
 
 all: $(TARGET)
 
+desktop_src/sirene_res.o: desktop_src/sirene.rc deps/sirene.ico
+	$(WINDRES) $< -O coff -o $@
+
 $(TARGET): $(COMMON_SRCS) $(PLAT_SRCS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 macos-app: $(TARGET)
-	rm -rf Sirène.app
-	mkdir -p Sirène.app/Contents/MacOS Sirène.app/Contents/Resources
+	rm -rf Sirène.app Sirène.iconset
+	mkdir -p Sirène.app/Contents/MacOS Sirène.app/Contents/Resources Sirène.iconset
 	cp $(TARGET) Sirène.app/Contents/MacOS/Sirene
 	cp icon.jpg Sirène.app/Contents/Resources/icon.jpg
+	if command -v sips >/dev/null 2>&1 && command -v iconutil >/dev/null 2>&1; then \
+		sips -s format png -z 16 16     icon.jpg --out Sirène.iconset/icon_16x16.png >/dev/null; \
+		sips -s format png -z 32 32     icon.jpg --out Sirène.iconset/icon_16x16@2x.png >/dev/null; \
+		sips -s format png -z 32 32     icon.jpg --out Sirène.iconset/icon_32x32.png >/dev/null; \
+		sips -s format png -z 64 64     icon.jpg --out Sirène.iconset/icon_32x32@2x.png >/dev/null; \
+		sips -s format png -z 128 128   icon.jpg --out Sirène.iconset/icon_128x128.png >/dev/null; \
+		sips -s format png -z 256 256   icon.jpg --out Sirène.iconset/icon_128x128@2x.png >/dev/null; \
+		sips -s format png -z 256 256   icon.jpg --out Sirène.iconset/icon_256x256.png >/dev/null; \
+		sips -s format png -z 512 512   icon.jpg --out Sirène.iconset/icon_256x256@2x.png >/dev/null; \
+		iconutil -c icns Sirène.iconset -o Sirène.app/Contents/Resources/Sirene.icns && \
+		rm -rf Sirène.iconset; \
+	fi
 	printf '%s\n' \
 	'<?xml version="1.0" encoding="UTF-8"?>' \
 	'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
@@ -57,11 +74,12 @@ macos-app: $(TARGET)
 	'  <key>CFBundleName</key><string>Sirène</string>' \
 	'  <key>CFBundleDisplayName</key><string>Sirène</string>' \
 	'  <key>CFBundleIdentifier</key><string>app.sirene.player</string>' \
-	'  <key>CFBundleVersion</key><string>1.2.4</string>' \
-	'  <key>CFBundleShortVersionString</key><string>1.2.4</string>' \
+	'  <key>CFBundleIconFile</key><string>Sirene</string>' \
+	'  <key>CFBundleVersion</key><string>1.2.5</string>' \
+	'  <key>CFBundleShortVersionString</key><string>1.2.5</string>' \
 	'  <key>CFBundleExecutable</key><string>Sirene</string>' \
 	'  <key>NSHighResolutionCapable</key><true/>' \
 	'</dict></plist>' > Sirène.app/Contents/Info.plist
 
 clean:
-	rm -rf Sirene Sirene.exe Sirène.app
+	rm -rf Sirene Sirene.exe Sirène.app Sirène.iconset desktop_src/sirene_res.o

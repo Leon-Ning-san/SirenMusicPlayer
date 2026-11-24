@@ -1,4 +1,4 @@
-name: Multi-Platform Release Build (v1.2.4)
+name: Multi-Platform Release Build (v1.2.5)
 
 on:
   push:
@@ -26,16 +26,17 @@ jobs:
       - name: Build Sirene Windows x64
         shell: msys2 {0}
         run: |
+          windres desktop_src/sirene.rc -O coff -o desktop_src/sirene_res.o
           gcc -O3 -fno-math-errno -Wall -Wextra -Isrc -Ideps \
             src/audio.c src/decode.c src/draw.c src/draw_text.c \
             src/lrc.c src/main.c src/meta.c src/util.c \
-            desktop_src/desktop_win.c desktop_src/desktop_blobs.S \
-            -o Sirene-v1.2.4-Windows-x64.exe \
+            desktop_src/desktop_win.c desktop_src/desktop_blobs.S desktop_src/sirene_res.o \
+            -o Sirene-v1.2.5-Windows-x64.exe \
             -mwindows -lgdi32 -luser32 -lshell32 -lole32 -lcomdlg32 -lwinmm -luuid -lm
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x64
-          path: Sirene-v1.2.4-Windows-x64.exe
+          path: Sirene-v1.2.5-Windows-x64.exe
 
   build-linux:
     runs-on: ubuntu-latest
@@ -57,11 +58,11 @@ jobs:
           wait "$SPID" || true
           mkdir -p dist-linux
           cp Sirene icon.jpg README.md dist-linux/
-          tar -czvf Sirene-v1.2.4-Linux-x86_64.tar.gz -C dist-linux .
+          tar -czvf Sirene-v1.2.5-Linux-x86_64.tar.gz -C dist-linux .
       - uses: actions/upload-artifact@v4
         with:
           name: linux-x86_64
-          path: Sirene-v1.2.4-Linux-x86_64.tar.gz
+          path: Sirene-v1.2.5-Linux-x86_64.tar.gz
 
   build-macos:
     runs-on: macos-latest
@@ -89,11 +90,11 @@ jobs:
           kill -0 "$SPID"
           kill -TERM "$SPID"
           wait "$SPID" || true
-          zip -ry Sirene-v1.2.4-macOS-arm64.zip Sirène.app
+          zip -ry Sirene-v1.2.5-macOS-arm64.zip Sirène.app
       - uses: actions/upload-artifact@v4
         with:
           name: macos-arm64
-          path: Sirene-v1.2.4-macOS-arm64.zip
+          path: Sirene-v1.2.5-macOS-arm64.zip
 
   publish-to-release:
     needs: [ build-windows, build-linux, build-macos ]
@@ -102,16 +103,16 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-      - name: Upload desktop packages to Release v1.2.4
+      - name: Upload desktop packages to Release v1.2.5
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! gh release view v1.2.4 --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            gh release create v1.2.4 --repo "${{ github.repository }}" --title "Sirène v1.2.4 (Multi-Platform · Material You)" --notes "Sirène v1.2.4 Multi-Platform Release"
+          if ! gh release view v1.2.5 --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create v1.2.5 --repo "${{ github.repository }}" --title "Sirène v1.2.5 (Desktop Material You · Multi-Platform)" --notes "Sirène v1.2.5 Multi-Platform Release"
           fi
-          gh release upload v1.2.4 \
-            artifacts/windows-x64/Sirene-v1.2.4-Windows-x64.exe \
-            artifacts/linux-x86_64/Sirene-v1.2.4-Linux-x86_64.tar.gz \
-            artifacts/macos-arm64/Sirene-v1.2.4-macOS-arm64.zip \
+          gh release upload v1.2.5 \
+            artifacts/windows-x64/Sirene-v1.2.5-Windows-x64.exe \
+            artifacts/linux-x86_64/Sirene-v1.2.5-Linux-x86_64.tar.gz \
+            artifacts/macos-arm64/Sirene-v1.2.5-macOS-arm64.zip \
             --repo "${{ github.repository }}" \
             --clobber
