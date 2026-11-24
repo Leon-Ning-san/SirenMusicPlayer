@@ -62,10 +62,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install SDL2 via Homebrew
         run: |
-          brew install sdl2 pkg-config
+          brew install sdl2 pkg-config dylibbundler
       - name: Build Sirene macOS App
         run: |
           make -f Makefile.desktop macos-app
+          dylibbundler -od -b -x Sirène.app/Contents/MacOS/Sirene -d Sirène.app/Contents/Frameworks/ -p @executable_path/../Frameworks/
+          codesign --force --deep --sign - Sirène.app
           otool -L Sirène.app/Contents/MacOS/Sirene
           zip -ry Sirene-v1.2.3-macOS-arm64.zip Sirène.app
       - uses: actions/upload-artifact@v4
