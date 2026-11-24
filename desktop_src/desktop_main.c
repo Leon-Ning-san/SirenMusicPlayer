@@ -109,6 +109,8 @@ static char search_q[160] = {0};
 static int playing_idx = -1;
 static int play_mode = MODE_LOOP_ALL;
 static int g_is_light = 0;
+static float g_theme_pos = 0.0f;
+static float g_light_t = 0.0f;
 static float g_saved_vol = 0.85f;
 
 static TrackMeta meta;
@@ -141,7 +143,7 @@ static double g_dt = 1.0 / 60.0;
 static uint64_t g_last_ns = 0;
 static float fade_time = 0.0f;
 static int   fade_armed = 0;
-#define FADE_DUR 0.22f
+#define FADE_DUR 0.28f
 
 static float scroll_px = 0.0f, scroll_target = 0.0f;
 static float lyr_cam_y = 0.0f, lyr_cam_valid = 0;
@@ -349,6 +351,20 @@ static void update_target_cover_colors(void) {
 
 static inline uint8_t col_a(uint32_t col) { return (uint8_t)((col >> 24) & 0xFFu); }
 static inline uint32_t with_alpha(uint32_t col, uint8_t a) { return (col & 0x00FFFFFFu) | ((uint32_t)a << 24); }
+static uint32_t mix_col_a(uint32_t a, uint32_t b, float t) {
+    t = clampf(t, 0.0f, 1.0f);
+    uint32_t ar = a & 0xFFu, ag = (a >> 8) & 0xFFu, ab = (a >> 16) & 0xFFu, aa = (a >> 24) & 0xFFu;
+    uint32_t br = b & 0xFFu, bg = (b >> 8) & 0xFFu, bb = (b >> 16) & 0xFFu, ba = (b >> 24) & 0xFFu;
+    return COL(
+        (uint8_t)(ar + ((float)br - (float)ar) * t + 0.5f),
+        (uint8_t)(ag + ((float)bg - (float)ag) * t + 0.5f),
+        (uint8_t)(ab + ((float)bb - (float)ab) * t + 0.5f),
+        (uint8_t)(aa + ((float)ba - (float)aa) * t + 0.5f));
+}
+static inline float smooth_u(float t) {
+    t = clampf(t, 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
 
 static uint32_t clamp_mesh_lum(uint32_t col, int is_light) {
     float r = (float)(col & 0xFF), g = (float)((col >> 8) & 0xFF), b = (float)((col >> 16) & 0xFF);
@@ -357,8 +373,8 @@ static uint32_t clamp_mesh_lum(uint32_t col, int is_light) {
         float sc = 132.0f / lum;
         return COL((uint8_t)(r * sc), (uint8_t)(g * sc), (uint8_t)(b * sc), 255);
     }
-    if (is_light && lum < 175.0f && lum > 1.0f) {
-        return mix_col(col, COL(236, 244, 255, 255), 0.55f);
+    if (is_light && lum < 178.0f && lum > 1.0f) {
+        return mix_col(col, COL(230, 236, 246, 255), 0.52f);
     }
     return col;
 }
@@ -367,8 +383,7 @@ static uint32_t boost_pastel_accent(float r, float g, float b, int is_light) {
     float mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
     float mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
     if (mx - mn < 18.0f) {
-        // Fallback pastel periwinkle-aqua for monochrome/neutral artwork
-        return is_light ? COL(62, 110, 210, 255) : COL(132, 186, 255, 255);
+        return is_light ? COL(56, 102, 198, 255) : COL(132, 186, 255, 255);
     }
     float avg = (r + g + b) / 3.0f;
     r = clampf(avg + (r - avg) * 1.68f, 0, 255);
@@ -386,8 +401,8 @@ static uint32_t boost_pastel_accent(float r, float g, float b, int is_light) {
         uint32_t col = COL((uint8_t)r, (uint8_t)g, (uint8_t)b, 255);
         return mix_col(col, COL(245, 248, 255, 255), 0.16f);
     } else {
-        if (peak > 165.0f) {
-            float sc = 155.0f / peak;
+        if (peak > 160.0f) {
+            float sc = 152.0f / peak;
             r *= sc; g *= sc; b *= sc;
         }
         return COL((uint8_t)r, (uint8_t)g, (uint8_t)b, 255);
@@ -400,7 +415,20 @@ static void step_palette_and_water_ripples(void) {
         for (int c = 0; c < 3; c++) cur_qf[q][c] += (tgt_qf[q][c] - cur_qf[q][c]) * k;
     }
 
-    uint32_t qcol[4];
+    // Smooth continuous Day/Night transition (~0.85s liquid morph, prevents eye flash!)
+    float tgt_theme = g_is_light ? 1.0f : 0.0f;
+    float theme_step = (float)g_dt / 0.85f;
+    if (g_theme_pos < tgt_theme) {
+        g_theme_pos += theme_step;
+        if (g_theme_pos > tgt_theme) g_theme_pos = tgt_theme;
+    } else if (g_theme_pos > tgt_theme) {
+        g_theme_pos -= theme_step;
+        if (g_theme_pos < tgt_theme) g_theme_pos = tgt_theme;
+    }
+    float t_ui = smooth_u(g_theme_pos);
+    g_light_t = t_ui;
+
+    uint32_t q_raw[4], q_dark[4], q_light[4], q_cur[4];
     int best_q = 0;
     float best_chroma = -1.0f;
     for (int q = 0; q < 4; q++) {
@@ -410,7 +438,10 @@ static void step_palette_and_water_ripples(void) {
         float lum = (r + g + b) / 3.0f;
         float score = (mx - mn) * (lum > 38.0f && lum < 228.0f ? 1.0f : 0.45f);
         if (score > best_chroma) { best_chroma = score; best_q = q; }
-        qcol[q] = clamp_mesh_lum(COL((uint8_t)r, (uint8_t)g, (uint8_t)b, 255), g_is_light);
+        q_raw[q]   = COL((uint8_t)r, (uint8_t)g, (uint8_t)b, 255);
+        q_dark[q]  = clamp_mesh_lum(q_raw[q], 0);
+        q_light[q] = clamp_mesh_lum(q_raw[q], 1);
+        q_cur[q]   = mix_col(q_dark[q], q_light[q], t_ui);
     }
 
     float acc_r = cur_qf[best_q][0], acc_g = cur_qf[best_q][1], acc_b = cur_qf[best_q][2];
@@ -420,50 +451,81 @@ static void step_palette_and_water_ripples(void) {
         acc_b = (cur_qf[0][2] + cur_qf[1][2] + cur_qf[2][2] + cur_qf[3][2]) * 0.25f;
     }
 
-    C_ACCENT = boost_pastel_accent(acc_r, acc_g, acc_b, g_is_light);
-    if (!g_is_light) {
-        C_BASE       = COL(12, 14, 18, 255);
-        C_RAIL       = with_alpha(mix_col(COL(14, 17, 23, 255), qcol[2], 0.18f), 168);
-        C_SURFACE    = with_alpha(mix_col(COL(22, 26, 34, 255), qcol[1], 0.16f), 152);
-        C_GLASS      = COL(255, 255, 255, 22);
-        C_GLASS_HOV  = COL(255, 255, 255, 38);
-        C_GLASS_ACT  = COL(255, 255, 255, 56);
-        C_ON_ACCENT  = COL(14, 18, 24, 255);
-        C_HERO_L     = mix_col(COL(18, 22, 28, 255), qcol[0], 0.32f);
-        C_HERO_R     = mix_col(COL(22, 28, 36, 255), C_ACCENT, 0.36f);
-        C_TXT        = COL(250, 252, 255, 255);
-        C_TXT2       = COL(204, 210, 224, 255);
-        C_TXT3       = COL(148, 156, 174, 255);
-        C_DIV        = COL(255, 255, 255, 28);
-        C_TRACK_BG   = COL(255, 255, 255, 42);
-        C_HEART      = COL(248, 82, 104, 255);
-        C_PLAY_BTN   = COL(248, 250, 252, 255);
-        C_PLAY_ICO   = COL(14, 18, 22, 255);
-    } else {
-        C_BASE       = COL(242, 246, 250, 255);
-        C_RAIL       = with_alpha(mix_col(COL(248, 250, 254, 255), qcol[2], 0.10f), 200);
-        C_SURFACE    = with_alpha(mix_col(COL(255, 255, 255, 255), qcol[1], 0.08f), 184);
-        C_GLASS      = COL(0, 0, 0, 14);
-        C_GLASS_HOV  = COL(0, 0, 0, 26);
-        C_GLASS_ACT  = COL(0, 0, 0, 38);
-        C_ON_ACCENT  = COL(255, 255, 255, 255);
-        C_HERO_L     = mix_col(COL(255, 255, 255, 255), C_ACCENT, 0.16f);
-        C_HERO_R     = mix_col(COL(244, 248, 254, 255), C_ACCENT, 0.32f);
-        C_TXT        = COL(16, 20, 30, 255);
-        C_TXT2       = COL(68, 76, 94, 255);
-        C_TXT3       = COL(116, 126, 146, 255);
-        C_DIV        = COL(0, 0, 0, 24);
-        C_TRACK_BG   = COL(0, 0, 0, 32);
-        C_HEART      = COL(228, 60, 82, 255);
-        C_PLAY_BTN   = C_ACCENT;
-        C_PLAY_ICO   = COL(255, 255, 255, 255);
+    uint32_t d_accent = boost_pastel_accent(acc_r, acc_g, acc_b, 0);
+    uint32_t l_accent = boost_pastel_accent(acc_r, acc_g, acc_b, 1);
+    C_ACCENT = mix_col(d_accent, l_accent, t_ui);
+
+    // Dark theme endpoints
+    uint32_t d_base    = COL(12, 14, 18, 255);
+    uint32_t d_rail    = with_alpha(mix_col(COL(14, 17, 23, 255), q_dark[2], 0.18f), 168);
+    uint32_t d_surf    = with_alpha(mix_col(COL(22, 26, 34, 255), q_dark[1], 0.16f), 152);
+    uint32_t d_glass   = COL(255, 255, 255, 22);
+    uint32_t d_ghov    = COL(255, 255, 255, 38);
+    uint32_t d_gact    = COL(255, 255, 255, 56);
+    uint32_t d_onacc   = COL(14, 18, 24, 255);
+    uint32_t d_herol   = mix_col(COL(18, 22, 28, 255), q_dark[0], 0.32f);
+    uint32_t d_heror   = mix_col(COL(22, 28, 36, 255), d_accent, 0.36f);
+    uint32_t d_txt     = COL(250, 252, 255, 255);
+    uint32_t d_txt2    = COL(204, 210, 224, 255);
+    uint32_t d_txt3    = COL(148, 156, 174, 255);
+    uint32_t d_div     = COL(255, 255, 255, 28);
+    uint32_t d_trk     = COL(255, 255, 255, 42);
+    uint32_t d_heart   = COL(248, 82, 104, 255);
+    uint32_t d_playb   = COL(248, 250, 252, 255);
+    uint32_t d_playi   = COL(14, 18, 22, 255);
+
+    // Eye-friendly frosted warm alabaster Day endpoints (avoids harsh pure #FFFFFF glare)
+    uint32_t l_base    = mix_col(COL(234, 238, 244, 255), q_light[1], 0.12f);
+    uint32_t l_rail    = with_alpha(mix_col(COL(238, 242, 248, 255), q_light[2], 0.12f), 192);
+    uint32_t l_surf    = with_alpha(mix_col(COL(244, 247, 251, 255), q_light[1], 0.08f), 184);
+    uint32_t l_glass   = COL(18, 24, 38, 16);
+    uint32_t l_ghov    = COL(18, 24, 38, 28);
+    uint32_t l_gact    = COL(18, 24, 38, 42);
+    uint32_t l_onacc   = COL(252, 253, 255, 255);
+    uint32_t l_herol   = mix_col(COL(242, 246, 250, 255), l_accent, 0.16f);
+    uint32_t l_heror   = mix_col(COL(232, 238, 246, 255), l_accent, 0.30f);
+    uint32_t l_txt     = COL(18, 22, 32, 255);
+    uint32_t l_txt2    = COL(64, 72, 92, 255);
+    uint32_t l_txt3    = COL(110, 120, 140, 255);
+    uint32_t l_div     = COL(18, 24, 38, 24);
+    uint32_t l_trk     = COL(18, 24, 38, 32);
+    uint32_t l_heart   = COL(228, 60, 82, 255);
+    uint32_t l_playb   = l_accent;
+    uint32_t l_playi   = COL(252, 253, 255, 255);
+
+    C_BASE      = mix_col(d_base, l_base, t_ui);
+    C_RAIL      = mix_col_a(d_rail, l_rail, t_ui);
+    C_SURFACE   = mix_col_a(d_surf, l_surf, t_ui);
+    C_GLASS     = mix_col_a(d_glass, l_glass, t_ui);
+    C_GLASS_HOV = mix_col_a(d_ghov, l_ghov, t_ui);
+    C_GLASS_ACT = mix_col_a(d_gact, l_gact, t_ui);
+    C_ON_ACCENT = mix_col(d_onacc, l_onacc, t_ui);
+    C_HERO_L    = mix_col(d_herol, l_herol, t_ui);
+    C_HERO_R    = mix_col(d_heror, l_heror, t_ui);
+    C_DIV       = mix_col_a(d_div, l_div, t_ui);
+    C_TRACK_BG  = mix_col_a(d_trk, l_trk, t_ui);
+    C_HEART     = mix_col(d_heart, l_heart, t_ui);
+    C_PLAY_BTN  = mix_col(d_playb, l_playb, t_ui);
+    C_PLAY_ICO  = mix_col(d_playi, l_playi, t_ui);
+
+    // Keep text ink legibly separated around the 50% surface midpoint cross
+    float t_txt = smooth_u((t_ui - 0.44f) / 0.12f);
+    C_TXT       = mix_col(d_txt, l_txt, t_txt);
+    C_TXT2      = mix_col(d_txt2, l_txt2, t_txt);
+    C_TXT3      = mix_col(d_txt3, l_txt3, t_txt);
+    (void)q_cur;
+
+    static int prev_dark_bar = -1;
+    int want_dark_bar = (t_ui < 0.5f) ? 1 : 0;
+    if (want_dark_bar != prev_dark_bar) {
+        be_set_dark_titlebar(want_dark_bar);
+        prev_dark_bar = want_dark_bar;
     }
-    be_set_dark_titlebar(!g_is_light);
 
     for (int i = 0; i < MAX_RIPPLES; i++) {
         if (!click_ripples[i].active) continue;
-        click_ripples[i].r += (float)g_dt * 340.0f;
-        click_ripples[i].alpha -= (float)g_dt * 125.0f;
+        click_ripples[i].r += (float)g_dt * 360.0f;
+        click_ripples[i].alpha -= (float)g_dt * 120.0f;
         if (click_ripples[i].alpha <= 1.0f || click_ripples[i].r >= click_ripples[i].max_r) {
             click_ripples[i].active = 0;
         }
@@ -475,17 +537,23 @@ static void draw_water_ripple_bg(int is_immersive) {
     if (!bg_mesh) bg_mesh = canvas_new(240, 135);
     if (!bg_mesh) return;
 
-    uint32_t q0 = clamp_mesh_lum(COL((uint8_t)cur_qf[0][0], (uint8_t)cur_qf[0][1], (uint8_t)cur_qf[0][2], 255), g_is_light);
-    uint32_t q1 = clamp_mesh_lum(COL((uint8_t)cur_qf[1][0], (uint8_t)cur_qf[1][1], (uint8_t)cur_qf[1][2], 255), g_is_light);
-    uint32_t q2 = clamp_mesh_lum(COL((uint8_t)cur_qf[2][0], (uint8_t)cur_qf[2][1], (uint8_t)cur_qf[2][2], 255), g_is_light);
-    uint32_t q3 = clamp_mesh_lum(COL((uint8_t)cur_qf[3][0], (uint8_t)cur_qf[3][1], (uint8_t)cur_qf[3][2], 255), g_is_light);
+    float lt = g_light_t;
+    uint32_t q0 = mix_col(clamp_mesh_lum(COL((uint8_t)cur_qf[0][0], (uint8_t)cur_qf[0][1], (uint8_t)cur_qf[0][2], 255), 0),
+                          clamp_mesh_lum(COL((uint8_t)cur_qf[0][0], (uint8_t)cur_qf[0][1], (uint8_t)cur_qf[0][2], 255), 1), lt);
+    uint32_t q1 = mix_col(clamp_mesh_lum(COL((uint8_t)cur_qf[1][0], (uint8_t)cur_qf[1][1], (uint8_t)cur_qf[1][2], 255), 0),
+                          clamp_mesh_lum(COL((uint8_t)cur_qf[1][0], (uint8_t)cur_qf[1][1], (uint8_t)cur_qf[1][2], 255), 1), lt);
+    uint32_t q2 = mix_col(clamp_mesh_lum(COL((uint8_t)cur_qf[2][0], (uint8_t)cur_qf[2][1], (uint8_t)cur_qf[2][2], 255), 0),
+                          clamp_mesh_lum(COL((uint8_t)cur_qf[2][0], (uint8_t)cur_qf[2][1], (uint8_t)cur_qf[2][2], 255), 1), lt);
+    uint32_t q3 = mix_col(clamp_mesh_lum(COL((uint8_t)cur_qf[3][0], (uint8_t)cur_qf[3][1], (uint8_t)cur_qf[3][2], 255), 0),
+                          clamp_mesh_lum(COL((uint8_t)cur_qf[3][0], (uint8_t)cur_qf[3][1], (uint8_t)cur_qf[3][2], 255), 1), lt);
 
-    q1 = clamp_mesh_lum(mix_col(q1, C_ACCENT, 0.40f), g_is_light);
+    q1 = mix_col(clamp_mesh_lum(mix_col(q1, C_ACCENT, 0.40f), 0),
+                 clamp_mesh_lum(mix_col(q1, C_ACCENT, 0.34f), 1), lt);
     q2 = mix_col(q2, C_HERO_L, 0.25f);
 
     float bass = (bars[0] + bars[1] + bars[2] + bars[3]) * 0.25f;
-    float base_tint = is_immersive ? (g_is_light ? 0.36f : 0.60f) : (g_is_light ? 0.18f : 0.40f);
-    uint32_t bg_floor = g_is_light ? COL(244, 246, 251, 255) : COL(10, 12, 17, 255);
+    float base_tint = is_immersive ? (0.60f - 0.22f * lt) : (0.40f - 0.20f * lt);
+    uint32_t bg_floor = mix_col(COL(10, 12, 17, 255), COL(232, 236, 244, 255), lt);
 
     float e1x = 0.27f + 0.05f * cosf(ripple_time * 0.48f);
     float e1y = 0.34f + 0.05f * sinf(ripple_time * 0.41f);
@@ -570,6 +638,8 @@ static void load_settings(void) {
             if (m >= 0 && m <= 2) play_mode = m;
         } else if (strncmp(line, "light=", 6) == 0) {
             g_is_light = atoi(line + 6) ? 1 : 0;
+            g_theme_pos = g_is_light ? 1.0f : 0.0f;
+            g_light_t = g_theme_pos;
         } else if (strncmp(line, "view_grid=", 10) == 0) {
             view_grid = atoi(line + 10) ? 1 : 0;
         } else if (strncmp(line, "sort=", 5) == 0) {
@@ -1311,7 +1381,7 @@ static void draw_nav_rail(int mx, int my) {
 
     // Animated gliding M3 pill backdrop
     fill_round_rect_aa_a(screen, 12, (int)(rail_pill_y + 0.5f), RAIL_W - 24, 34, 17,
-                         mix_col(C_SURFACE, C_ACCENT, 0.34f), g_is_light ? 225 : 210);
+                         mix_col(C_SURFACE, C_ACCENT, 0.34f), (uint8_t)(210 + 15 * g_light_t));
     stroke_round_rect_aa(screen, 12, (int)(rail_pill_y + 0.5f), RAIL_W - 24, 34, 17, 1, C_ACCENT, 130);
 
     const char* labels[4] = { "曲库", "喜欢", "歌词", "刷新" };
@@ -1346,7 +1416,7 @@ static void draw_nav_rail(int mx, int my) {
     else           icon_library_grid(screen, RAIL_W / 2 - 8, rc_nav_view.y + 10, 16, C_TXT2);
 
     if (in_rc(mx, my, rc_nav_theme)) fill_round_rect_aa(screen, rc_nav_theme.x, rc_nav_theme.y, rc_nav_theme.w, rc_nav_theme.h, 14, C_GLASS_HOV);
-    icon_theme_orb(screen, RAIL_W / 2, rc_nav_theme.y + 18, 8, g_is_light ? C_ACCENT : C_TXT2);
+    icon_theme_orb(screen, RAIL_W / 2, rc_nav_theme.y + 18, 8, mix_col(C_TXT2, C_ACCENT, g_light_t));
 
     if (in_rc(mx, my, rc_nav_diag)) fill_round_rect_aa(screen, rc_nav_diag.x, rc_nav_diag.y, rc_nav_diag.w, rc_nav_diag.h, 14, C_GLASS_HOV);
     icon_info_dot(screen, RAIL_W / 2, rc_nav_diag.y + 18, 8, show_diag ? C_ACCENT : C_TXT2);
@@ -1481,14 +1551,14 @@ static void draw_hero_card(Rect hero, int mx, int my) {
     rc_hero_card = hero;
     int r = 24;
     fill_round_rect_shadow(screen, hero.x, hero.y + 4, hero.w, hero.h, r, 78);
-    fill_round_rect_aa_a(screen, hero.x, hero.y, hero.w, hero.h, r, C_HERO_L, g_is_light ? 210 : 186);
+    fill_round_rect_aa_a(screen, hero.x, hero.y, hero.w, hero.h, r, C_HERO_L, (uint8_t)(186 + 24 * g_light_t));
 
     // Material You animated wavy divider into right zone
     int split_x = hero.x + (int)(hero.w * 0.65f);
     float wave_amp = clampf((float)hero.h * 0.032f, 6.0f, 10.0f);
     fill_m3_wave_panel_right(screen, hero.x, hero.y, hero.w, hero.h, r,
                              split_x, wave_amp, 56.0f, wave_phase * 0.55f,
-                             C_HERO_R, g_is_light ? 205 : 200);
+                             C_HERO_R, (uint8_t)(200 + 8 * g_light_t));
     stroke_round_rect_aa(screen, hero.x, hero.y, hero.w, hero.h, r, 1, C_ACCENT, 88);
 
     int show_idx = playing_idx;
@@ -1629,7 +1699,7 @@ static void draw_grid_view(int mx, int my) {
 
         fill_round_rect_shadow(screen, x, cy + 4, cw, ch, 18, is_play ? 110 : 62);
         fill_round_rect_aa_a(screen, x, cy, cw, ch, 18, C_SURFACE,
-                             is_play ? 196 : (is_hov ? 184 : (g_is_light ? 184 : 148)));
+                             is_play ? 196 : (is_hov ? 184 : (uint8_t)(148 + 36 * g_light_t)));
 
         // Large Square Album Cover occupying full card width
         int cov_pad = 6;
@@ -1820,8 +1890,8 @@ static void draw_dynamic_island(int mx, int my) {
     rc_island = (Rect){ ix, iy, iw, ih };
 
     fill_round_rect_shadow(screen, ix, iy + 5, iw, ih, ir, 130);
-    uint32_t isl_bg = mix_col(g_is_light ? COL(252, 254, 255, 255) : COL(14, 18, 24, 255), C_HERO_L, 0.34f);
-    fill_round_rect_aa_a(screen, ix, iy, iw, ih, ir, isl_bg, g_is_light ? 222 : 200);
+    uint32_t isl_bg = mix_col(mix_col(COL(14, 18, 24, 255), COL(244, 247, 252, 255), g_light_t), C_HERO_L, 0.34f);
+    fill_round_rect_aa_a(screen, ix, iy, iw, ih, ir, isl_bg, (uint8_t)(200 + 22 * g_light_t));
     stroke_round_rect_aa(screen, ix, iy, iw, ih, ir, 1, C_ACCENT, 105);
 
     // Left mini cover inside capsule
@@ -1936,7 +2006,7 @@ static void draw_immersive_view(int mx, int my) {
     fill_round_rect_aa_a(screen, rc_lyr_theme.x, rc_lyr_theme.y, 38, 38, 19,
                          C_SURFACE, in_rc(mx, my, rc_lyr_theme) ? 205 : 155);
     stroke_round_rect_aa(screen, rc_lyr_theme.x, rc_lyr_theme.y, 38, 38, 19, 1, C_DIV, col_a(C_DIV) + 12);
-    icon_theme_orb(screen, rc_lyr_theme.x + 19, rc_lyr_theme.y + 19, 8, g_is_light ? C_ACCENT : C_TXT);
+    icon_theme_orb(screen, rc_lyr_theme.x + 19, rc_lyr_theme.y + 19, 8, mix_col(C_TXT, C_ACCENT, g_light_t));
 
     // Left Giant Album Art Column + Compact Transport Controls
     int left_col_w = (int)(W * 0.40f);
@@ -2075,7 +2145,7 @@ static void draw_immersive_view(int mx, int my) {
 
             if (is_cur) {
                 fill_round_rect_aa_a(screen, lyr_x - 14, y - 8, lyr_w + 16, line_hs[i] - 14, 18,
-                                     mix_col(C_SURFACE, C_ACCENT, 0.16f), g_is_light ? 160 : 88);
+                                     mix_col(C_SURFACE, C_ACCENT, 0.16f), (uint8_t)(88 + 72 * g_light_t));
                 fill_round_rect_aa(screen, lyr_x - 14, y + 6, 4, line_hs[i] - 42, 2, C_ACCENT);
             } else if (hov_l) {
                 fill_round_rect_aa(screen, lyr_x - 14, y - 8, lyr_w + 16, line_hs[i] - 14, 18, C_GLASS);
@@ -2201,6 +2271,13 @@ static void update_hover_cursor(int mx, int my) {
     }
 }
 
+static void toggle_theme_smooth(int ox, int oy) {
+    g_is_light = !g_is_light;
+    save_settings();
+    spawn_ripple(ox, oy, C_ACCENT);
+    show_toast(g_is_light ? "已切换 · 柔和日间主题" : "已切换 · 深邃夜间主题");
+}
+
 static void handle_input(void) {
     const char* dp = NULL;
     while ((dp = be_poll_dropped_path()) != NULL) handle_dropped(dp);
@@ -2231,9 +2308,7 @@ static void handle_input(void) {
         save_settings();
         show_toast(play_mode == MODE_LOOP_ONE ? "单曲循环" : (play_mode == MODE_SHUFFLE ? "随机播放" : "顺序循环"));
     } else if (hk == 'c') {
-        capture_fade();
-        g_is_light = !g_is_light;
-        save_settings();
+        toggle_theme_smooth(W / 2, H / 2);
     } else if (hk == 'v') {
         if (page == PAGE_LIBRARY) {
             capture_fade();
@@ -2332,7 +2407,7 @@ static void handle_input(void) {
 
         if (page == PAGE_LYRICS) {
             if (in_rc(ti.x, ti.y, rc_back_lib)) { capture_fade(); page = PAGE_LIBRARY; return; }
-            if (in_rc(ti.x, ti.y, rc_lyr_theme)) { capture_fade(); g_is_light = !g_is_light; save_settings(); return; }
+            if (in_rc(ti.x, ti.y, rc_lyr_theme)) { toggle_theme_smooth(ti.x, ti.y); return; }
             if (in_rc(ti.x, ti.y, rc_lyr_fs)) { be_toggle_fullscreen(); return; }
             for (int i = 0; i < nlyr_hits; i++) {
                 if (in_rc(ti.x, ti.y, lyr_hits[i].rc)) {
@@ -2363,7 +2438,7 @@ static void handle_input(void) {
             capture_fade(); view_grid = !view_grid; scroll_px = scroll_target = 0.0f; save_settings(); return;
         }
         if (in_rc(ti.x, ti.y, rc_nav_theme)) {
-            capture_fade(); g_is_light = !g_is_light; save_settings(); return;
+            toggle_theme_smooth(ti.x, ti.y); return;
         }
         if (in_rc(ti.x, ti.y, rc_nav_diag)) {
             show_diag = !show_diag; return;
@@ -2536,7 +2611,8 @@ static void render_frame(int mx, int my) {
         int tw = text_width(font, 13.0f, toast_text) + 32;
         int tx = (W - tw) / 2, ty = (page == PAGE_LYRICS) ? 20 : 66;
         uint8_t a = toast_timer < 20 ? (uint8_t)(toast_timer * 11) : 230;
-        fill_round_rect_shadow(screen, tx, ty + 3, tw, 34, 17, (uint8_t)(a / 2));
+        uint8_t sha = (uint8_t)((float)a * (0.42f - 0.24f * g_light_t));
+        fill_round_rect_shadow(screen, tx, ty + 3, tw, 34, 17, sha);
         fill_round_rect_aa_a(screen, tx, ty, tw, 34, 17, C_SURFACE, a);
         stroke_round_rect_aa(screen, tx, ty, tw, 34, 17, 1, C_ACCENT, a);
         draw_text_centered(screen, font, 13.0f, tx, tx + tw, ty + 9, C_TXT, toast_text);
@@ -2545,7 +2621,7 @@ static void render_frame(int mx, int my) {
 
     if (fade_armed && trans_shot && fade_time > 0.0f &&
         trans_shot->w == screen->w && trans_shot->h == screen->h) {
-        float t = clampf(fade_time / FADE_DUR, 0.0f, 1.0f);
+        float t = smooth_u(fade_time / FADE_DUR);
         blend_over_opaque(screen->px, trans_shot->px, (size_t)screen->w * screen->h, (uint8_t)(t * 255.0f));
         fade_time -= (float)g_dt;
         if (fade_time <= 0.0f) fade_armed = 0;
@@ -2648,10 +2724,24 @@ int main(int argc, char** argv) {
                 int mx = 0, my = 0;
                 render_frame(mx, my);
                 dump_rgba_shot(dump_dir, "shot_lib.rgba");
+                g_is_light = 1;
+                spawn_ripple(42, H - 100, C_ACCENT);
+            }
+            if (dump_frame == 35) {
+                int mx = 0, my = 0;
+                render_frame(mx, my);
+                dump_rgba_shot(dump_dir, "shot_mid.rgba");
+            }
+            if (dump_frame == 88) {
+                int mx = 0, my = 0;
+                render_frame(mx, my);
+                dump_rgba_shot(dump_dir, "shot_day.rgba");
+                g_is_light = 0; g_theme_pos = 0.0f; g_light_t = 0.0f;
+                step_palette_and_water_ripples();
                 page = PAGE_LYRICS;
                 fade_armed = 0;
             }
-            if (dump_frame == 50) {
+            if (dump_frame == 106) {
                 int mx = 0, my = 0;
                 render_frame(mx, my);
                 dump_rgba_shot(dump_dir, "shot_lyr.rgba");
