@@ -2,6 +2,10 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
     int w, h;
     int lw, lh;
@@ -96,3 +100,7 @@ int  draw_text_max(Canvas* c, Font* f, float px, int x, int y, uint32_t col, con
 int  text_width_max(Font* f, float px, const char* utf8, int max_w);
 void draw_text_bold(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8);
 int  draw_text_max_bold(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8, int max_w);
+
+#ifdef __cplusplus
+}
+#endif

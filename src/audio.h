@@ -2,6 +2,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 int  audio_init(void);
 void audio_exit(void);
 
@@ -35,3 +39,7 @@ void audio_pump(void);
 
 // 自检诊断：把音频链路状态写入 buf，供界面显示
 void audio_get_diag(char* buf, size_t cap);
+
+#ifdef __cplusplus
+}
+#endif

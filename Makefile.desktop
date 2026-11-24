@@ -1,34 +1,38 @@
 CC ?= gcc
-CFLAGS ?= -O3 -fno-math-errno -Wall -Wextra -Isrc -Ideps
+CXX ?= g++
+COMMON_FLAGS := -O3 -fno-math-errno -Wall -Wextra -Isrc -Ideps
 
-COMMON_SRCS := \
+C_SRCS := \
 	src/audio.c \
 	src/decode.c \
 	src/draw.c \
 	src/draw_text.c \
 	src/lrc.c \
-	desktop_src/desktop_main.c \
 	src/meta.c \
-	src/util.c \
-	desktop_src/desktop_blobs.S
+	src/util.c
+
+S_SRCS := desktop_src/desktop_blobs.S
 
 UNAME_S := $(shell uname -s 2>/dev/null || echo Windows)
 
 ifeq ($(OS),Windows_NT)
 	TARGET := Sirene.exe
 	WINDRES ?= windres
-	PLAT_SRCS := desktop_src/desktop_win.c desktop_src/sirene_res.o
-	LDFLAGS := -mwindows -lgdi32 -luser32 -lshell32 -lole32 -lcomdlg32 -lwinmm -luuid -lm
+	CXX_SRCS := desktop_src/desktop_main.cpp desktop_src/desktop_win.cpp
+	RES_OBJ := desktop_src/sirene_res.o
+	LDFLAGS := -static -static-libgcc -static-libstdc++ -mwindows -lgdi32 -luser32 -lshell32 -lole32 -lcomdlg32 -lwinmm -luuid -lm
 else ifeq ($(findstring MINGW,$(UNAME_S)),MINGW)
 	TARGET := Sirene.exe
 	WINDRES ?= windres
-	PLAT_SRCS := desktop_src/desktop_win.c desktop_src/sirene_res.o
-	LDFLAGS := -mwindows -lgdi32 -luser32 -lshell32 -lole32 -lcomdlg32 -lwinmm -luuid -lm
+	CXX_SRCS := desktop_src/desktop_main.cpp desktop_src/desktop_win.cpp
+	RES_OBJ := desktop_src/sirene_res.o
+	LDFLAGS := -static -static-libgcc -static-libstdc++ -mwindows -lgdi32 -luser32 -lshell32 -lole32 -lcomdlg32 -lwinmm -luuid -lm
 else ifeq ($(UNAME_S),Darwin)
 	TARGET := Sirene
-	PLAT_SRCS := desktop_src/desktop_sdl.c
+	CXX_SRCS := desktop_src/desktop_main.cpp desktop_src/desktop_sdl.cpp
+	RES_OBJ :=
 	SDL_PREFIX := $(shell brew --prefix sdl2 2>/dev/null || echo /opt/homebrew/opt/sdl2)
-	CFLAGS += -I$(SDL_PREFIX)/include -I$(SDL_PREFIX)/include/SDL2 -D_THREAD_SAFE
+	COMMON_FLAGS += -I$(SDL_PREFIX)/include -I$(SDL_PREFIX)/include/SDL2 -D_THREAD_SAFE
 	SDL_STATIC := $(wildcard $(SDL_PREFIX)/lib/libSDL2.a)
 	ifneq ($(SDL_STATIC),)
 		LDFLAGS := $(shell pkg-config --libs --static sdl2 2>/dev/null | sed 's|-lSDL2|$(SDL_STATIC)|g') -lm -liconv -framework AudioToolbox -framework CoreFoundation
@@ -37,18 +41,33 @@ else ifeq ($(UNAME_S),Darwin)
 	endif
 else
 	TARGET := Sirene
-	PLAT_SRCS := desktop_src/desktop_sdl.c
-	CFLAGS += $(shell pkg-config --cflags sdl2 2>/dev/null || echo -I/usr/include/SDL2) -D_REENTRANT
+	CXX_SRCS := desktop_src/desktop_main.cpp desktop_src/desktop_sdl.cpp
+	RES_OBJ :=
+	COMMON_FLAGS += $(shell pkg-config --cflags sdl2 2>/dev/null || echo -I/usr/include/SDL2) -D_REENTRANT
 	LDFLAGS := $(shell pkg-config --libs sdl2 2>/dev/null || echo -lSDL2) -lpthread -lm -ldl
 endif
 
+CFLAGS   ?= $(COMMON_FLAGS)
+CXXFLAGS ?= -std=c++17 $(COMMON_FLAGS)
+
+OBJS := $(C_SRCS:.c=.o) $(CXX_SRCS:.cpp=.o) $(S_SRCS:.S=.o) $(RES_OBJ)
+
 all: $(TARGET)
+
+src/%.o: src/%.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+desktop_src/%.o: desktop_src/%.cpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+desktop_src/desktop_blobs.o: desktop_src/desktop_blobs.S
+	$(CC) -c $< -o $@
 
 desktop_src/sirene_res.o: desktop_src/sirene.rc deps/sirene.ico
 	$(WINDRES) $< -O coff -o $@
 
-$(TARGET): $(COMMON_SRCS) $(PLAT_SRCS)
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+$(TARGET): $(OBJS)
+	$(CXX) $^ -o $@ $(LDFLAGS)
 
 macos-app: $(TARGET)
 	rm -rf Sirène.app Sirène.iconset
@@ -82,4 +101,4 @@ macos-app: $(TARGET)
 	'</dict></plist>' > Sirène.app/Contents/Info.plist
 
 clean:
-	rm -rf Sirene Sirene.exe Sirène.app Sirène.iconset desktop_src/sirene_res.o
+	rm -rf Sirene Sirene.exe Sirène.app Sirène.iconset $(OBJS) desktop_src/sirene_res.o

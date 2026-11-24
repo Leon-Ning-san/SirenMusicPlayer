@@ -7,6 +7,10 @@
 #define STB_VORBIS_HEADER_ONLY
 #include "stb_vorbis.c"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef enum {
     FMT_NONE = 0, FMT_WAV, FMT_MP3, FMT_FLAC, FMT_OGG, FMT_AIFF,
     FMT_MF, FMT_AT, FMT_FFPIPE
@@ -37,3 +41,7 @@ int  dec_seek(Decoder* d, uint64_t frame);
 void dec_close(Decoder* d);
 int  dec_is_audio(const char* path);              // supported extension?
 int  dec_probe_info(const char* path, double* dur_out, uint32_t* rate_out, uint32_t* ch_out);
+
+#ifdef __cplusplus
+}
+#endif

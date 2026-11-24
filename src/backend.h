@@ -2,6 +2,10 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define BE_W 1280
 #define BE_H 720
 
@@ -54,3 +58,7 @@ int  be_is_minimized(void);
 // 媒体控制命令队列（任务栏缩略图按钮 / 系统媒体键）：0=无, 1=播放/暂停, 2=上一首, 3=下一首, 4=暂停/停止
 int  be_poll_media_cmd(void);
 void be_set_media_state(int has_track, int playing, float frac, const char* title, const char* artist);
+
+#ifdef __cplusplus
+}
+#endif

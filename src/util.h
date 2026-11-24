@@ -2,6 +2,10 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // UTF-16 (LE or BE, with or without BOM) -> UTF-8. Returns bytes written (excl. NUL).
 size_t my_utf16_to_utf8(const uint16_t* in, size_t in_units, char* out, size_t out_cap);
 // Latin-1 (ISO-8859-1) -> UTF-8
@@ -22,3 +26,7 @@ const char* path_basename(const char* p);
 void basename_no_ext(const char* path, char* out, size_t cap);
 // format "m:ss" or "mm:ss"
 void fmt_time(double sec, char* out, size_t cap);
+
+#ifdef __cplusplus
+}
+#endif

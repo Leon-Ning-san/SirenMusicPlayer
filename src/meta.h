@@ -1,4 +1,9 @@
 #pragma once
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct TrackMeta {
     char title[256];
     char artist[256];
@@ -14,3 +19,7 @@ int meta_load_quick(const char* path, TrackMeta* m);
 // 只释放解码后的封面像素，保留 title/artist/album 文本
 void meta_release_art(TrackMeta* m);
 void meta_clear(TrackMeta* m);
+
+#ifdef __cplusplus
+}
+#endif

@@ -176,11 +176,16 @@ static inline void plat_thread_join(PlatThread* t) {
 static inline void plat_sleep_ms(int ms) { Sleep((DWORD)ms); }
 
 static inline uint64_t plat_ticks_ns(void) {
-    static LARGE_INTEGER freq = {0};
-    if (freq.QuadPart == 0) QueryPerformanceFrequency(&freq);
+    static LARGE_INTEGER freq;
+    static int freq_init = 0;
+    if (!freq_init) {
+        freq.QuadPart = 0;
+        QueryPerformanceFrequency(&freq);
+        freq_init = 1;
+    }
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
-    return (uint64_t)((double)now.QuadPart * 1000000000.0 / (double)freq.QuadPart);
+    return freq.QuadPart ? (uint64_t)((double)now.QuadPart * 1000000000.0 / (double)freq.QuadPart) : 0ULL;
 }
 
 static inline int plat_utf8_to_wide(const char* s, wchar_t* w, int cap) {

@@ -1,5 +1,9 @@
 #pragma once
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
     double t;          // seconds
     char text[256];    // utf-8 (orig or merged "orig · sub")
@@ -32,3 +36,7 @@ void lyrics_set_cache_dir(const char* dir);
 int  lyrics_start_online(const char* media_path, const char* title, const char* artist, double duration_sec);
 int  lyrics_poll_online(int req_id, Lyrics** out);
 int  lyrics_online_busy(int req_id);
+
+#ifdef __cplusplus
+}
+#endif

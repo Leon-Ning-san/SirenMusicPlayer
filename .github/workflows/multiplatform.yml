@@ -23,16 +23,20 @@ jobs:
           msysystem: mingw64
           update: false
           install: mingw-w64-x86_64-gcc
-      - name: Build Sirene Windows x64
+      - name: Build Sirene Windows x64 (C++17)
         shell: msys2 {0}
         run: |
           windres desktop_src/sirene.rc -O coff -o desktop_src/sirene_res.o
-          gcc -O3 -fno-math-errno -Wall -Wextra -Isrc -Ideps \
-            src/audio.c src/decode.c src/draw.c src/draw_text.c \
-            src/lrc.c desktop_src/desktop_main.c src/meta.c src/util.c \
-            desktop_src/desktop_win.c desktop_src/desktop_blobs.S desktop_src/sirene_res.o \
+          for f in src/audio.c src/decode.c src/draw.c src/draw_text.c src/lrc.c src/meta.c src/util.c; do
+            gcc -O3 -fno-math-errno -Wall -Wextra -Isrc -Ideps -c "$f" -o "${f%.c}.o"
+          done
+          gcc -c desktop_src/desktop_blobs.S -o desktop_src/desktop_blobs.o
+          g++ -std=c++17 -O3 -fno-math-errno -Wall -Wextra -Isrc -Ideps -c desktop_src/desktop_main.cpp -o desktop_src/desktop_main.o
+          g++ -std=c++17 -O3 -fno-math-errno -Wall -Wextra -Isrc -Ideps -c desktop_src/desktop_win.cpp -o desktop_src/desktop_win.o
+          g++ src/audio.o src/decode.o src/draw.o src/draw_text.o src/lrc.o src/meta.o src/util.o \
+            desktop_src/desktop_main.o desktop_src/desktop_win.o desktop_src/desktop_blobs.o desktop_src/sirene_res.o \
             -o Sirene-v1.2.6-Windows-x64.exe \
-            -mwindows -lgdi32 -luser32 -lshell32 -lole32 -lcomdlg32 -lwinmm -luuid -lm
+            -static -static-libgcc -static-libstdc++ -mwindows -lgdi32 -luser32 -lshell32 -lole32 -lcomdlg32 -lwinmm -luuid -lm
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x64
