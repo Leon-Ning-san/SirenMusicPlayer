@@ -31,6 +31,9 @@ void blit_canvas_opaque(Canvas* dst, int dx, int dy, const Canvas* src);
 void blit_rgba_round(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, int sh, int corner);
 // fast path for opaque RGBA images with rounded-corner mask (memcpy middle rows)
 void blit_rgb_round(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, int sh, int corner);
+// scale opaque RGBA image explicitly to logical (dw, dh) with rounded-corner mask
+void blit_rgb_round_fit(Canvas* dst, int dx, int dy, int dw, int dh,
+                        const uint32_t* src, int sw, int sh, int corner);
 // fast full-screen opaque cross-fade: dst = src * a/255 + dst * (255-a)/255
 void blend_over_opaque(uint32_t* dst, const uint32_t* src, size_t n, uint8_t a);
 // 带整体透明度的 blit（a=0 完全透明，255 完全不透明），用于交叉淡化
@@ -83,3 +86,5 @@ void draw_text_right(Canvas* c, Font* f, float px, int x1, int y, uint32_t col, 
 // truncate with ellipsis if wider than max_w; returns 1 if truncated
 int  draw_text_max(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8, int max_w);
 int  text_width_max(Font* f, float px, const char* utf8, int max_w);
+void draw_text_bold(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8);
+int  draw_text_max_bold(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8, int max_w);

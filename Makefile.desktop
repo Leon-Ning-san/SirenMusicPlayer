@@ -7,7 +7,7 @@ COMMON_SRCS := \
 	src/draw.c \
 	src/draw_text.c \
 	src/lrc.c \
-	src/main.c \
+	desktop_src/desktop_main.c \
 	src/meta.c \
 	src/util.c \
 	desktop_src/desktop_blobs.S

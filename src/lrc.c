@@ -302,9 +302,11 @@ static Lyrics* parse_lyrics_utf8(const char* raw_text, const char* source_name) 
                     for (int i = 0; i < ntimes; i++) {
                         if (l->n >= MAX_LINES) break;
                         LrcLine* ln = &l->lines[l->n++];
+                        memset(ln, 0, sizeof(*ln));
                         ln->t = times[i] - offset_sec + synced_count * 1e-6;
                         if (ln->t < 0) ln->t = 0;
                         snprintf(ln->text, sizeof(ln->text), "%s", cp);
+                        snprintf(ln->orig, sizeof(ln->orig), "%s", cp);
                         synced_count++;
                     }
                 }
@@ -322,8 +324,12 @@ static Lyrics* parse_lyrics_utf8(const char* raw_text, const char* source_name) 
         for (int i = 0; i < l->n; i++) {
             if (w > 0 && fabs(l->lines[w - 1].t - l->lines[i].t) < 0.015) {
                 if (strcmp(l->lines[w - 1].text, l->lines[i].text) != 0) {
+                    if (!l->lines[w - 1].orig[0])
+                        snprintf(l->lines[w - 1].orig, sizeof(l->lines[w - 1].orig), "%s", l->lines[w - 1].text);
+                    if (!l->lines[w - 1].sub[0])
+                        snprintf(l->lines[w - 1].sub, sizeof(l->lines[w - 1].sub), "%s", l->lines[i].text);
                     char merged[256];
-                    snprintf(merged, sizeof(merged), "%.120s · %.120s", l->lines[w - 1].text, l->lines[i].text);
+                    snprintf(merged, sizeof(merged), "%.120s · %.120s", l->lines[w - 1].orig, l->lines[w - 1].sub);
                     memcpy(l->lines[w - 1].text, merged, sizeof(l->lines[w - 1].text));
                 }
                 continue;
@@ -1592,15 +1598,24 @@ static char* fetch_netease_by_id(const char* music_id) {
     snprintf(pq, sizeof(pq), "/api/song/lyric?id=%s&lv=1&tv=-1", music_id);
     if (!http_get_utf8("music.163.com", pq, &json, &jlen)) return NULL;
     const char* lrc_sec = strstr(json, "\"lrc\":");
-    char* raw = json_extract_str_after(lrc_sec ? lrc_sec : json, "\"lyric\"");
-    if (!raw || !raw[0]) {
-        free(raw);
-        const char* tsec = strstr(json, "\"tlyric\":");
-        raw = json_extract_str_after(tsec ? tsec : json, "\"lyric\"");
-    }
+    char* raw_lrc = json_extract_str_after(lrc_sec ? lrc_sec : json, "\"lyric\"");
+    const char* tl_sec = strstr(json, "\"tlyric\":");
+    char* raw_tl = tl_sec ? json_extract_str_after(tl_sec, "\"lyric\"") : NULL;
     free(json);
-    if (raw && !raw[0]) { free(raw); return NULL; }
-    return raw;
+    if (raw_lrc && raw_lrc[0] && raw_tl && raw_tl[0]) {
+        size_t n1 = strlen(raw_lrc), n2 = strlen(raw_tl);
+        char* both = (char*)malloc(n1 + n2 + 4);
+        if (both) {
+            snprintf(both, n1 + n2 + 4, "%s\n%s", raw_lrc, raw_tl);
+            free(raw_lrc); free(raw_tl);
+            return both;
+        }
+    }
+    if (raw_lrc && raw_lrc[0]) { free(raw_tl); return raw_lrc; }
+    free(raw_lrc);
+    if (raw_tl && raw_tl[0]) return raw_tl;
+    free(raw_tl);
+    return NULL;
 }
 
 static void clean_search_term(const char* in, char* out, size_t cap) {

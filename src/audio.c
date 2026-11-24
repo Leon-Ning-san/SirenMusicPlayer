@@ -41,6 +41,7 @@ static volatile float a_volume = 0.85f;
 static volatile int a_status = 0;        // 0 idle, 1 opening, 2 ready, 3 failed
 static volatile double a_duration = 0;
 static volatile uint32_t a_rate = OUT_RATE;
+static volatile uint32_t a_channels = 2;
 static volatile int dec_eof = 0;
 
 static Decoder dec;
@@ -192,6 +193,7 @@ static void decoder_thread(void* arg) {
                 a_status = 1;
                 if (dec_open(&dec, cmd_path) == 0 && dec.channels >= 1 && dec.channels <= 8 && dec.rate > 0) {
                     a_rate = dec.rate;
+                    a_channels = dec.channels;
                     a_duration = dec.total_frames > 0 ? (double)dec.total_frames / (double)dec.rate : 0;
                     a_status = 2;
                 } else {
@@ -423,6 +425,8 @@ void audio_set_volume(float v) {
 float audio_volume(void) { return a_volume; }
 
 double audio_duration(void) { return a_duration; }
+uint32_t audio_sample_rate(void) { return a_rate; }
+uint32_t audio_channels(void) { return a_channels; }
 
 double audio_position(void) {
     if (a_status != 2) return 0;

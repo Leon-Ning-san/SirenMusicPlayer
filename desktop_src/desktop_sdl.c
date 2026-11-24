@@ -13,9 +13,11 @@ static SDL_Renderer* g_ren = NULL;
 static SDL_Texture*  g_tex = NULL;
 static uint32_t*     g_backbuf = NULL;
 static int           g_running = 1;
-static int           g_vp_x = 0, g_vp_y = 0, g_vp_w = BE_W, g_vp_h = BE_H;
-static int           g_win_vp_x = 0, g_win_vp_y = 0, g_win_vp_w = BE_W, g_win_vp_h = BE_H;
+static int           g_vp_x = 0, g_vp_y = 0, g_vp_w = 1360, g_vp_h = 840;
+static int           g_win_w = 1360, g_win_h = 840;
 static int           g_buf_w = 0, g_buf_h = 0;
+static float         g_ui_scale = 1.0f;
+static int           g_is_fs = 0;
 
 static int g_m_held = 0, g_m_down = 0, g_m_up = 0, g_was_down = 0;
 static int g_m_x = 0, g_m_y = 0, g_prev_x = 0, g_prev_y = 0;
@@ -76,40 +78,28 @@ static uint64_t sym_to_btn(SDL_Keycode k) {
     }
 }
 
-static void calc_fit_vp(int cw, int ch, int* vx, int* vy, int* vw, int* vh) {
-    if (cw < 1) cw = 1;
-    if (ch < 1) ch = 1;
-    double target_r = (double)BE_W / (double)BE_H;
-    double win_r = (double)cw / (double)ch;
-    if (win_r > target_r) {
-        *vh = ch;
-        *vw = (int)(ch * target_r + 0.5);
-        *vx = (cw - *vw) / 2;
-        *vy = 0;
-    } else {
-        *vw = cw;
-        *vh = (int)(cw / target_r + 0.5);
-        *vx = 0;
-        *vy = (ch - *vh) / 2;
-    }
-    if (*vw < 160) *vw = 160;
-    if (*vh < 90)  *vh = 90;
-}
-
 static void update_sdl_viewport(void) {
     if (!g_win || !g_ren) return;
-    int ww = BE_W, wh = BE_H, rw = BE_W, rh = BE_H;
+    int ww = 1360, wh = 840, rw = 1360, rh = 840;
     SDL_GetWindowSize(g_win, &ww, &wh);
     if (SDL_GetRendererOutputSize(g_ren, &rw, &rh) != 0 || rw <= 0 || rh <= 0) {
         rw = ww; rh = wh;
     }
-    calc_fit_vp(ww, wh, &g_win_vp_x, &g_win_vp_y, &g_win_vp_w, &g_win_vp_h);
-    calc_fit_vp(rw, rh, &g_vp_x, &g_vp_y, &g_vp_w, &g_vp_h);
+    if (ww < 320) ww = 320;
+    if (wh < 240) wh = 240;
+    if (rw < 320) rw = 320;
+    if (rh < 240) rh = 240;
+    g_win_w = ww; g_win_h = wh;
+    g_vp_x = 0; g_vp_y = 0; g_vp_w = rw; g_vp_h = rh;
+    float s = (float)rw / (float)ww;
+    if (s < 1.0f) s = 1.0f;
+    if (s > 3.0f) s = 3.0f;
+    g_ui_scale = s;
 }
 
 static void ensure_sdl_buffers(int w, int h) {
-    if (w < 160) w = 160;
-    if (h < 90) h = 90;
+    if (w < 320) w = 320;
+    if (h < 240) h = 240;
     if (w == g_buf_w && h == g_buf_h && g_tex && g_backbuf) return;
     free(g_backbuf);
     if (g_tex) SDL_DestroyTexture(g_tex);
@@ -123,20 +113,15 @@ int be_init(void) {
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) return -1;
 
-    int init_w = BE_W, init_h = BE_H;
+    int init_w = 1360, init_h = 840;
     SDL_Rect usable;
     if (SDL_GetDisplayUsableBounds(0, &usable) == 0 && usable.w > 0 && usable.h > 0) {
-        if (usable.w < BE_W + 40 || usable.h < BE_H + 60) {
-            int max_w = (int)(usable.w * 0.92);
-            int max_h = (int)(usable.h * 0.88);
-            if (max_w * BE_H <= max_h * BE_W) {
-                init_w = max_w;
-                init_h = init_w * BE_H / BE_W;
-            } else {
-                init_h = max_h;
-                init_w = init_h * BE_W / BE_H;
-            }
-        }
+        int max_w = (int)(usable.w * 0.86);
+        int max_h = (int)(usable.h * 0.88);
+        if (init_w > max_w) init_w = max_w;
+        if (init_h > max_h) init_h = max_h;
+        if (init_w < 860 && usable.w >= 860) init_w = 860;
+        if (init_h < 540 && usable.h >= 540) init_h = 540;
     }
 
     g_win = SDL_CreateWindow(
@@ -145,6 +130,7 @@ int be_init(void) {
         init_w, init_h,
         SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!g_win) return -1;
+    SDL_SetWindowMinimumSize(g_win, 840, 520);
 
     if ((size_t)(poster_end - poster_start) >= 320 * 320 * 4) {
         SDL_Surface* ico = SDL_CreateRGBSurfaceWithFormatFrom(
@@ -186,6 +172,23 @@ void be_viewport_size(int* out_w, int* out_h) {
     if (out_h) *out_h = g_vp_h;
 }
 
+void be_screen_metrics(int* out_phys_w, int* out_phys_h, float* out_scale) {
+    update_sdl_viewport();
+    if (out_phys_w) *out_phys_w = g_vp_w;
+    if (out_phys_h) *out_phys_h = g_vp_h;
+    if (out_scale)  *out_scale  = g_ui_scale;
+}
+
+void be_set_dark_titlebar(int dark) { (void)dark; }
+
+void be_toggle_fullscreen(void) {
+    if (!g_win) return;
+    g_is_fs = !g_is_fs;
+    SDL_SetWindowFullscreen(g_win, g_is_fs ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+}
+
+int be_is_fullscreen(void) { return g_is_fs; }
+
 uint32_t* be_begin(int* stride) {
     update_sdl_viewport();
     ensure_sdl_buffers(g_vp_w, g_vp_h);
@@ -196,22 +199,19 @@ uint32_t* be_begin(int* stride) {
 void be_end(void) {
     if (!g_ren || !g_tex || !g_backbuf || g_buf_w <= 0 || g_buf_h <= 0) return;
     SDL_UpdateTexture(g_tex, NULL, g_backbuf, g_buf_w * 4);
-    SDL_SetRenderDrawColor(g_ren, 22, 26, 34, 255);
+    SDL_SetRenderDrawColor(g_ren, 16, 18, 24, 255);
     SDL_RenderClear(g_ren);
-    SDL_Rect dst = { g_vp_x, g_vp_y, g_vp_w, g_vp_h };
-    SDL_RenderCopy(g_ren, g_tex, NULL, &dst);
+    SDL_RenderCopy(g_ren, g_tex, NULL, NULL);
     SDL_RenderPresent(g_ren);
 }
 
 static void map_mouse_xy(int wx, int wy, int* x, int* y) {
-    int lx = (int)((double)(wx - g_win_vp_x) * (double)BE_W / (double)(g_win_vp_w > 0 ? g_win_vp_w : BE_W));
-    int ly = (int)((double)(wy - g_win_vp_y) * (double)BE_H / (double)(g_win_vp_h > 0 ? g_win_vp_h : BE_H));
-    if (lx < 0) lx = 0;
-    if (lx >= BE_W) lx = BE_W - 1;
-    if (ly < 0) ly = 0;
-    if (ly >= BE_H) ly = BE_H - 1;
-    *x = lx;
-    *y = ly;
+    if (wx < 0) wx = 0;
+    if (wx >= g_win_w) wx = g_win_w - 1;
+    if (wy < 0) wy = 0;
+    if (wy >= g_win_h) wy = g_win_h - 1;
+    *x = wx;
+    *y = wy;
 }
 
 void be_input_update(void) {
@@ -265,7 +265,8 @@ void be_input_update(void) {
                 break;
             }
             if (!ev.key.repeat) {
-                if ((ctrl && k == SDLK_f) || k == SDLK_SLASH || k == SDLK_s) { g_hotkey = 's'; break; }
+                if (k == SDLK_F11) { be_toggle_fullscreen(); break; }
+                if ((ctrl && k == SDLK_f) || k == SDLK_SLASH) { g_hotkey = 's'; break; }
                 if ((ctrl && k == SDLK_o) || k == SDLK_o) { g_hotkey = 'f'; break; }
                 if (k == SDLK_m) { g_hotkey = 'm'; break; }
                 if (k == SDLK_d) { g_hotkey = 'c'; break; }

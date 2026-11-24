@@ -20,8 +20,11 @@ static uint32_t* g_backbuf = NULL;   // g_buf_w x g_buf_h RGBA
 static uint32_t* g_bgra = NULL;      // g_buf_w x g_buf_h BGRA for GDI SetDIBitsToDevice
 static BITMAPINFO g_bmi;
 static int       g_running = 1;
-static int       g_vp_x = 0, g_vp_y = 0, g_vp_w = BE_W, g_vp_h = BE_H;
+static int       g_vp_x = 0, g_vp_y = 0, g_vp_w = 1360, g_vp_h = 840;
 static int       g_buf_w = 0, g_buf_h = 0;
+static float     g_dpi_scale = 1.0f;
+static int       g_is_fullscreen = 0;
+static WINDOWPLACEMENT g_prev_wp = {0};
 
 // Mouse / Touch emulation state
 static int g_m_held = 0, g_m_down = 0, g_m_up = 0, g_was_down = 0;
@@ -56,33 +59,43 @@ static void push_text_ev(int act, const char* u8) {
     g_tev_w = nxt;
 }
 
-static void update_viewport(int cw, int ch) {
-    if (cw < 1) cw = 1;
-    if (ch < 1) ch = 1;
-    double target_r = (double)BE_W / (double)BE_H;
-    double win_r = (double)cw / (double)ch;
-    if (win_r > target_r) {
-        g_vp_h = ch;
-        g_vp_w = (int)(ch * target_r + 0.5);
-        g_vp_x = (cw - g_vp_w) / 2;
-        g_vp_y = 0;
-    } else {
-        g_vp_w = cw;
-        g_vp_h = (int)(cw / target_r + 0.5);
-        g_vp_x = 0;
-        g_vp_y = (ch - g_vp_h) / 2;
+static void refresh_dpi_scale(HWND hwnd) {
+    typedef UINT (WINAPI *GetDpiFn)(HWND);
+    UINT dpi = 96;
+    HMODULE u32 = GetModuleHandleW(L"user32.dll");
+    if (u32 && hwnd) {
+        GetDpiFn fn = (GetDpiFn)(void*)GetProcAddress(u32, "GetDpiForWindow");
+        if (fn) {
+            UINT d = fn(hwnd);
+            if (d >= 72 && d <= 384) dpi = d;
+        }
     }
-    if (g_vp_w < 1) g_vp_w = 1;
-    if (g_vp_h < 1) g_vp_h = 1;
+    g_dpi_scale = (float)dpi / 96.0f;
+    if (g_dpi_scale < 1.0f) g_dpi_scale = 1.0f;
+    if (g_dpi_scale > 2.5f) g_dpi_scale = 2.5f;
+}
+
+static void update_viewport(int cw, int ch) {
+    if (cw < 320) cw = 320;
+    if (ch < 240) ch = 240;
+    g_vp_x = 0;
+    g_vp_y = 0;
+    g_vp_w = cw;
+    g_vp_h = ch;
 }
 
 static void map_mouse_xy(int wx, int wy, int* ox, int* oy) {
-    int lx = (int)((double)(wx - g_vp_x) * (double)BE_W / (double)g_vp_w);
-    int ly = (int)((double)(wy - g_vp_y) * (double)BE_H / (double)g_vp_h);
+    float s = g_dpi_scale > 0.0f ? g_dpi_scale : 1.0f;
+    int lw = (int)((float)g_vp_w / s + 0.5f);
+    int lh = (int)((float)g_vp_h / s + 0.5f);
+    if (lw < 1) lw = 1;
+    if (lh < 1) lh = 1;
+    int lx = (int)((float)wx / s);
+    int ly = (int)((float)wy / s);
     if (lx < 0) lx = 0;
-    if (lx >= BE_W) lx = BE_W - 1;
+    if (lx >= lw) lx = lw - 1;
     if (ly < 0) ly = 0;
-    if (ly >= BE_H) ly = BE_H - 1;
+    if (ly >= lh) ly = lh - 1;
     *ox = lx;
     *oy = ly;
 }
@@ -199,7 +212,14 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return TRUE;
         }
         break;
+    case WM_GETMINMAXINFO: {
+        MINMAXINFO* mm = (MINMAXINFO*)lp;
+        mm->ptMinTrackSize.x = (LONG)(840 * g_dpi_scale);
+        mm->ptMinTrackSize.y = (LONG)(520 * g_dpi_scale);
+        return 0;
+    }
     case WM_SIZE:
+        refresh_dpi_scale(hwnd);
         update_viewport(LOWORD(lp), HIWORD(lp));
         return 0;
     case WM_LBUTTONDOWN:
@@ -247,9 +267,34 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (wp == VK_BACK)   { push_text_ev(1, NULL); return 0; }
             if (wp == VK_RETURN) { push_text_ev(2, NULL); return 0; }
             if (wp == VK_ESCAPE) { push_text_ev(3, NULL); return 0; }
-            if (wp == 'V' && ctrl) return 0;
+            if (wp == 'V' && ctrl) {
+                if (OpenClipboard(hwnd)) {
+                    HANDLE hd = GetClipboardData(CF_UNICODETEXT);
+                    if (hd) {
+                        const wchar_t* ws = (const wchar_t*)GlobalLock(hd);
+                        if (ws) {
+                            char u8[256];
+                            plat_wide_to_utf8(ws, u8, sizeof(u8));
+                            for (size_t i = 0; u8[i]; ) {
+                                unsigned char c = (unsigned char)u8[i];
+                                int len = (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 1;
+                                if (u8[i] != '\r' && u8[i] != '\n') {
+                                    char ch[8] = {0};
+                                    for (int k = 0; k < len && u8[i + k]; k++) ch[k] = u8[i + k];
+                                    push_text_ev(0, ch);
+                                }
+                                i += (size_t)len;
+                            }
+                            GlobalUnlock(hd);
+                        }
+                    }
+                    CloseClipboard();
+                }
+                return 0;
+            }
             return 0;
         }
+        if (wp == VK_F11) { be_toggle_fullscreen(); return 0; }
         if (ctrl && wp == 'F') { g_hotkey = 's'; return 0; }
         if (ctrl && wp == 'O') { g_hotkey = 'f'; return 0; }
         if (wp == VK_OEM_2 || wp == 'S') { g_hotkey = 's'; return 0; }
@@ -330,17 +375,14 @@ int be_init(void) {
     int work_w = wa.right - wa.left;
     int work_h = wa.bottom - wa.top;
 
-    int init_w = BE_W, init_h = BE_H;
-    if (work_w > 0 && work_h > 0 && (work_w < BE_W + 48 || work_h < BE_H + 64)) {
-        int max_w = (int)(work_w * 0.92);
+    int init_w = 1360, init_h = 840;
+    if (work_w > 0 && work_h > 0) {
+        int max_w = (int)(work_w * 0.86);
         int max_h = (int)(work_h * 0.88);
-        if (max_w * BE_H <= max_h * BE_W) {
-            init_w = max_w;
-            init_h = init_w * BE_H / BE_W;
-        } else {
-            init_h = max_h;
-            init_w = init_h * BE_W / BE_H;
-        }
+        if (init_w > max_w) init_w = max_w;
+        if (init_h > max_h) init_h = max_h;
+        if (init_w < 960 && work_w >= 960) init_w = 960;
+        if (init_h < 600 && work_h >= 600) init_h = 600;
     }
     RECT rc = { 0, 0, init_w, init_h };
     DWORD style = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
@@ -364,7 +406,9 @@ int be_init(void) {
     if (ico_big) SendMessageW(g_hwnd, WM_SETICON, ICON_BIG, (LPARAM)ico_big);
     if (ico_sm || ico_big) SendMessageW(g_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)(ico_sm ? ico_sm : ico_big));
 
-    update_viewport(init_w, init_h);
+    refresh_dpi_scale(g_hwnd);
+    RECT cr0; GetClientRect(g_hwnd, &cr0);
+    update_viewport(cr0.right - cr0.left, cr0.bottom - cr0.top);
     ensure_win_buffers(g_vp_w, g_vp_h);
     if (!g_backbuf || !g_bgra) return -1;
     return 0;
@@ -380,11 +424,58 @@ void be_exit(void) {
 }
 
 void be_viewport_size(int* out_w, int* out_h) {
-    int w = g_vp_w < 160 ? 160 : g_vp_w;
-    int h = g_vp_h < 90  ? 90  : g_vp_h;
+    int w = g_vp_w < 320 ? 320 : g_vp_w;
+    int h = g_vp_h < 240 ? 240 : g_vp_h;
     if (out_w) *out_w = w;
     if (out_h) *out_h = h;
 }
+
+void be_screen_metrics(int* out_phys_w, int* out_phys_h, float* out_scale) {
+    if (out_phys_w) *out_phys_w = g_vp_w < 320 ? 320 : g_vp_w;
+    if (out_phys_h) *out_phys_h = g_vp_h < 240 ? 240 : g_vp_h;
+    if (out_scale)  *out_scale  = g_dpi_scale;
+}
+
+void be_set_dark_titlebar(int dark) {
+    if (!g_hwnd) return;
+    typedef HRESULT (WINAPI *DwmSetAttrFn)(HWND, DWORD, LPCVOID, DWORD);
+    HMODULE d = LoadLibraryW(L"dwmapi.dll");
+    if (!d) return;
+    DwmSetAttrFn fn = (DwmSetAttrFn)(void*)GetProcAddress(d, "DwmSetWindowAttribute");
+    if (fn) {
+        BOOL v = dark ? TRUE : FALSE;
+        if (FAILED(fn(g_hwnd, 20, &v, sizeof(v)))) fn(g_hwnd, 19, &v, sizeof(v));
+    }
+}
+
+void be_toggle_fullscreen(void) {
+    if (!g_hwnd) return;
+    DWORD st = (DWORD)GetWindowLongW(g_hwnd, GWL_STYLE);
+    if (!g_is_fullscreen) {
+        MONITORINFO mi;
+        memset(&mi, 0, sizeof(mi));
+        mi.cbSize = sizeof(mi);
+        g_prev_wp.length = sizeof(g_prev_wp);
+        if (GetWindowPlacement(g_hwnd, &g_prev_wp) &&
+            GetMonitorInfoW(MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTOPRIMARY), &mi)) {
+            SetWindowLongW(g_hwnd, GWL_STYLE, (LONG)(st & ~WS_OVERLAPPEDWINDOW));
+            SetWindowPos(g_hwnd, HWND_TOP,
+                         mi.rcMonitor.left, mi.rcMonitor.top,
+                         mi.rcMonitor.right - mi.rcMonitor.left,
+                         mi.rcMonitor.bottom - mi.rcMonitor.top,
+                         SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+            g_is_fullscreen = 1;
+        }
+    } else {
+        SetWindowLongW(g_hwnd, GWL_STYLE, (LONG)(st | WS_OVERLAPPEDWINDOW));
+        SetWindowPlacement(g_hwnd, &g_prev_wp);
+        SetWindowPos(g_hwnd, NULL, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        g_is_fullscreen = 0;
+    }
+}
+
+int be_is_fullscreen(void) { return g_is_fullscreen; }
 
 uint32_t* be_begin(int* stride) {
     ensure_win_buffers(g_vp_w, g_vp_h);

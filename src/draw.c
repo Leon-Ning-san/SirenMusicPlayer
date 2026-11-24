@@ -471,7 +471,8 @@ static inline void px_blend(Canvas* c, int x, int y, uint32_t col, uint8_t a) {
 
 void fill_round_rect_aa_a_px(Canvas* c, int x, int y, int w, int h, int r, uint32_t col, uint8_t alpha);
 void fill_round_rect_aa_px(Canvas* c, int x, int y, int w, int h, int r, uint32_t col) {
-    fill_round_rect_aa_a_px(c, x, y, w, h, r, col, 255);
+    uint8_t ca = (uint8_t)(col >> 24);
+    fill_round_rect_aa_a_px(c, x, y, w, h, r, col, ca ? ca : 255);
 }
 
 void fill_round_rect_aa_a_px(Canvas* c, int x, int y, int w, int h, int r, uint32_t col, uint8_t alpha) {
@@ -1051,6 +1052,17 @@ void blit_rgb_round(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, in
     if (!dst) return;
     if (fabsf(dst->s - 1.0f) < 0.001f) blit_rgb_round_px(dst, dx, dy, src, sw, sh, corner);
     else blit_scaled_round_px(dst, sc_i(dst->s, dx), sc_i(dst->s, dy), sc_sz(dst->s, sw), sc_sz(dst->s, sh), src, sw, sh, sc_i(dst->s, corner), 255, 1);
+}
+void blit_rgb_round_fit(Canvas* dst, int dx, int dy, int dw, int dh,
+                        const uint32_t* src, int sw, int sh, int corner) {
+    if (!dst || !src || dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) return;
+    if (fabsf(dst->s - 1.0f) < 0.001f && dw == sw && dh == sh) {
+        blit_rgb_round_px(dst, dx, dy, src, sw, sh, corner);
+    } else {
+        blit_scaled_round_px(dst, sc_i(dst->s, dx), sc_i(dst->s, dy),
+                             sc_sz(dst->s, dw), sc_sz(dst->s, dh),
+                             src, sw, sh, sc_i(dst->s, corner), 255, 1);
+    }
 }
 void blit_rgba_round_a(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, int sh, int corner, uint8_t a) {
     if (!dst) return;

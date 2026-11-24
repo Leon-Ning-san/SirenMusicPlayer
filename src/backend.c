@@ -127,3 +127,11 @@ void be_set_cli_path(const char* p) { (void)p; }
 void be_mouse_pos(int* x, int* y) { if (x) *x = -1; if (y) *y = -1; }
 void be_set_cursor(int hand) { (void)hand; }
 void be_viewport_size(int* out_w, int* out_h) { if (out_w) *out_w = BE_W; if (out_h) *out_h = BE_H; }
+void be_screen_metrics(int* out_phys_w, int* out_phys_h, float* out_scale) {
+    if (out_phys_w) *out_phys_w = BE_W;
+    if (out_phys_h) *out_phys_h = BE_H;
+    if (out_scale) *out_scale = 1.0f;
+}
+void be_set_dark_titlebar(int dark) { (void)dark; }
+void be_toggle_fullscreen(void) {}
+int  be_is_fullscreen(void) { return 0; }

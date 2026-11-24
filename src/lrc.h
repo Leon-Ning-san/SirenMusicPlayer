@@ -2,7 +2,9 @@
 
 typedef struct {
     double t;          // seconds
-    char text[256];    // utf-8
+    char text[256];    // utf-8 (orig or merged "orig · sub")
+    char orig[256];    // original lyric line
+    char sub[256];     // translation line (if bilingual)
 } LrcLine;
 
 typedef struct {

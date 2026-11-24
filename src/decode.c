@@ -633,7 +633,7 @@ int dec_is_audio(const char* path) {
     return 0;
 }
 
-int dec_open(Decoder* d, const char* path) {
+static int dec_open_ex(Decoder* d, const char* path, int build_seek_tbl) {
     memset(d, 0, sizeof(*d));
 #ifdef _WIN32
     wchar_t wpath[1024];
@@ -667,7 +667,7 @@ int dec_open(Decoder* d, const char* path) {
             d->channels = d->mp3->channels;
             d->rate = d->mp3->sampleRate;
             d->total_frames = drmp3_get_pcm_frame_count(d->mp3);
-            if (d->total_frames > 0) {
+            if (build_seek_tbl && d->total_frames > 0) {
                 drmp3_uint32 cnt = 128;
                 drmp3_seek_point* pts = (drmp3_seek_point*)malloc(sizeof(drmp3_seek_point) * cnt);
                 if (pts) {
@@ -722,6 +722,20 @@ int dec_open(Decoder* d, const char* path) {
     if (native_open(d, path) == 0) return 0;
     memset(d, 0, sizeof(*d));
     return -1;
+}
+
+int dec_open(Decoder* d, const char* path) {
+    return dec_open_ex(d, path, 1);
+}
+
+int dec_probe_info(const char* path, double* dur_out, uint32_t* rate_out, uint32_t* ch_out) {
+    Decoder d;
+    if (dec_open_ex(&d, path, 0) != 0) return -1;
+    if (dur_out)  *dur_out  = (d.rate > 0 && d.total_frames > 0) ? ((double)d.total_frames / (double)d.rate) : 0.0;
+    if (rate_out) *rate_out = d.rate;
+    if (ch_out)   *ch_out   = d.channels;
+    dec_close(&d);
+    return 0;
 }
 
 int dec_read(Decoder* d, int16_t* out, int want) {

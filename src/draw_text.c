@@ -315,3 +315,56 @@ int draw_text_max(Canvas* c, Font* f, float px, int x, int y, uint32_t col, cons
     draw_text_px(c, f, spx, sx, sy, col, utf8);
     return 0;
 }
+
+void draw_text_bold(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8) {
+    if (!c || !f || !utf8 || !*utf8) return;
+    float s = c->s > 0.0f ? c->s : 1.0f;
+    int px_x = (int)floorf((float)x * s + 0.5f);
+    int px_y = (int)floorf((float)y * s + 0.5f);
+    uint32_t ca = (col >> 24) & 0xFFu;
+    if (ca == 0) ca = 255;
+    uint32_t col_b = (col & 0x00FFFFFFu) | (((ca * 145u) >> 8) << 24);
+    draw_text_px(c, f, px * s, px_x + 1, px_y, col_b, utf8);
+    draw_text_px(c, f, px * s, px_x, px_y, col, utf8);
+}
+
+int draw_text_max_bold(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8, int max_w) {
+    if (!c || !f || !utf8 || !*utf8) return 0;
+    uint32_t ca = (col >> 24) & 0xFFu;
+    if (ca == 0) ca = 255;
+    uint32_t col_b = (col & 0x00FFFFFFu) | (((ca * 145u) >> 8) << 24);
+    float s = c->s > 0.0f ? c->s : 1.0f;
+    float spx = px * s;
+    int sx = (int)floorf((float)x * s + 0.5f);
+    int sy = (int)floorf((float)y * s + 0.5f);
+    int smax = (int)floorf((float)max_w * s + 0.5f);
+    int ipx = (int)(spx + 0.5f);
+    if (ipx < 1) ipx = 1;
+    Bucket* b = get_bucket(f, ipx);
+    const char* ell = "\xE2\x80\xA6";
+    int ellw = text_width(f, spx, ell);
+    char buf[256];
+    const char* p = utf8;
+    float w = 0.0f;
+    while (*p) {
+        const char* save = p;
+        uint32_t cp = next_cp(&p);
+        Glyph* g = glyph_get_in_bucket(f, b, cp);
+        if (!g) continue;
+        if (w + g->adv > (float)(smax - ellw)) {
+            size_t n = (size_t)(save - utf8);
+            if (n >= sizeof(buf)) n = sizeof(buf) - 1;
+            memcpy(buf, utf8, n);
+            buf[n] = 0;
+            char cat[264];
+            snprintf(cat, sizeof(cat), "%s%s", buf, ell);
+            draw_text_px(c, f, spx, sx + 1, sy, col_b, cat);
+            draw_text_px(c, f, spx, sx, sy, col, cat);
+            return 1;
+        }
+        w += g->adv;
+    }
+    draw_text_px(c, f, spx, sx + 1, sy, col_b, utf8);
+    draw_text_px(c, f, spx, sx, sy, col, utf8);
+    return 0;
+}

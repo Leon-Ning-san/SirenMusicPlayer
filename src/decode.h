@@ -36,3 +36,4 @@ int  dec_read(Decoder* d, int16_t* out, int want);
 int  dec_seek(Decoder* d, uint64_t frame);
 void dec_close(Decoder* d);
 int  dec_is_audio(const char* path);              // supported extension?
+int  dec_probe_info(const char* path, double* dur_out, uint32_t* rate_out, uint32_t* ch_out);

@@ -1,5 +1,6 @@
 #pragma once
 #include <stddef.h>
+#include <stdint.h>
 
 int  audio_init(void);
 void audio_exit(void);
@@ -17,6 +18,8 @@ float audio_volume(void);
 double audio_duration(void);   // seconds (0 while opening)
 double audio_position(void);   // seconds
 int    audio_seek(double sec); // 0 ok
+uint32_t audio_sample_rate(void);
+uint32_t audio_channels(void);
 
 // 0 = idle, 1 = opening, 2 = ready, 3 = failed
 int  audio_status(void);

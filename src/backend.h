@@ -44,3 +44,7 @@ void be_set_cli_path(const char* p);
 void be_mouse_pos(int* x, int* y);
 void be_set_cursor(int hand);
 void be_viewport_size(int* out_w, int* out_h);
+void be_screen_metrics(int* out_phys_w, int* out_phys_h, float* out_scale);
+void be_set_dark_titlebar(int dark);
+void be_toggle_fullscreen(void);
+int  be_is_fullscreen(void);
