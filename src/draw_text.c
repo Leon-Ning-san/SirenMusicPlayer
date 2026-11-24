@@ -150,17 +150,19 @@ void draw_text(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const c
     uint8_t ca = (col >> 24) & 0xFF;
     if (ca == 0) ca = 255;
 
-    // 暗色 Material You 界面下对字形覆盖率做轻量伽马提亮，让中英文细笔画清晰饱满
-    static uint8_t text_gamma_lut[256];
-    static int text_lut_ready = 0;
-    if (!text_lut_ready) {
+    // 浅色字在深底提亮(0.64)防发虚；深色字在亮底适度加深(0.78)让细笔画同样扎实清晰
+    static uint8_t lut_light[256], lut_dark[256];
+    static int lut_ready = 0;
+    if (!lut_ready) {
         for (int i = 0; i < 256; i++) {
-            float v = powf((float)i / 255.0f, 0.62f) * 255.0f + 0.5f;
-            if (v > 255.0f) v = 255.0f;
-            text_gamma_lut[i] = (uint8_t)v;
+            float vl = powf((float)i / 255.0f, 0.64f) * 255.0f + 0.5f;
+            float vd = powf((float)i / 255.0f, 0.78f) * 255.0f + 0.5f;
+            lut_light[i] = vl > 255.0f ? 255 : (uint8_t)vl;
+            lut_dark[i]  = vd > 255.0f ? 255 : (uint8_t)vd;
         }
-        text_lut_ready = 1;
+        lut_ready = 1;
     }
+    int is_light_fg = ((cr * 299 + cg * 587 + cb * 114) / 1000) >= 128;
 
     float fcx = (float)x;
     const char* p = utf8;
@@ -178,8 +180,9 @@ void draw_text(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const c
                 for (int i = 0; i < g->bw; i++) {
                     int tx = gx + i;
                     if (tx < 0 || tx >= c->w) continue;
-                    uint8_t a8 = text_gamma_lut[g->bmp[(size_t)j * g->bw + i]];
-                    if (!a8) continue;
+                    uint8_t raw = g->bmp[(size_t)j * g->bw + i];
+                    if (!raw) continue;
+                    uint8_t a8 = is_light_fg ? lut_light[raw] : lut_dark[raw];
                     uint32_t alpha = ((uint32_t)a8 * ca + 127) / 255;
                     uint32_t* d = &c->px[(size_t)ty * c->w + tx];
                     uint32_t dst = *d;
