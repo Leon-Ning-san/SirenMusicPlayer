@@ -4,12 +4,19 @@
 #include <stdio.h>
 #include <math.h>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
 #define GLYPH_CACHE_PER_SIZE 768
 #define GLYPH_HASH_CAP       1024  // 2 的幂，用于 O(1) 查找
-#define MAX_BUCKETS          48
+#define MAX_BUCKETS          96
 
 typedef struct {
     uint32_t cp;
@@ -21,11 +28,18 @@ typedef struct {
 
 typedef struct {
     int px;
+    int bold;
     float scale;
+    int ascent;
+    int has_native_bold;
     int used;
     int evict;
     int16_t hash_slot[GLYPH_HASH_CAP];
     Glyph g[GLYPH_CACHE_PER_SIZE];
+#ifdef _WIN32
+    HFONT hfont;
+    HFONT hfont_jp;
+#endif
 } Bucket;
 
 struct Font {
@@ -34,6 +48,14 @@ struct Font {
     Bucket* buckets[MAX_BUCKETS];
     int nbuckets;
 };
+
+#ifdef _WIN32
+static HDC g_win_font_dc = NULL;
+static HDC win_font_dc(void) {
+    if (!g_win_font_dc) g_win_font_dc = CreateCompatibleDC(NULL);
+    return g_win_font_dc;
+}
+#endif
 
 static inline uint32_t cp_hash(uint32_t cp) {
     cp ^= cp >> 16;
@@ -51,33 +73,136 @@ static void bucket_rehash(Bucket* b) {
     }
 }
 
-static void raster_glyph(Font* f, Bucket* b, Glyph* g, uint32_t cp) {
+static void raster_glyph_stb(Font* f, Bucket* b, Glyph* g, uint32_t cp) {
     g->cp = cp;
     int advw, lsb;
     stbtt_GetCodepointHMetrics(&f->info, (int)cp, &advw, &lsb);
     g->adv = advw * b->scale;
     int ix0, iy0, ix1, iy1;
     stbtt_GetCodepointBitmapBox(&f->info, (int)cp, b->scale, b->scale, &ix0, &iy0, &ix1, &iy1);
-    g->x0 = ix0; g->y0 = iy0;
-    g->bw = ix1 - ix0; g->bh = iy1 - iy0;
+    int stb_asc = (int)(f->ascent * b->scale + 0.5f);
+    g->x0 = ix0;
+    g->y0 = iy0 + (b->ascent - stb_asc);
+    g->bw = ix1 - ix0;
+    g->bh = iy1 - iy0;
     if (g->bw > 0 && g->bh > 0) {
         g->bmp = (uint8_t*)malloc((size_t)g->bw * g->bh);
-        stbtt_MakeCodepointBitmap(&f->info, g->bmp, g->bw, g->bh, g->bw, b->scale, b->scale, (int)cp);
+        if (g->bmp) {
+            stbtt_MakeCodepointBitmap(&f->info, g->bmp, g->bw, g->bh, g->bw, b->scale, b->scale, (int)cp);
+        }
     } else {
         g->bmp = NULL;
     }
 }
 
-static Bucket* get_bucket(Font* f, int px) {
+#ifdef _WIN32
+static int raster_glyph_win(Bucket* b, Glyph* g, uint32_t cp) {
+    if (cp == 0 || cp > 0xFFFFu || !b->hfont) return 0;
+    HDC hdc = win_font_dc();
+    if (!hdc) return 0;
+
+    WCHAR wch = (WCHAR)cp;
+    HFONT use_font = b->hfont;
+    HGDIOBJ old = SelectObject(hdc, use_font);
+
+    WORD gi = 0xFFFF;
+    if (GetGlyphIndicesW(hdc, &wch, 1, &gi, GGI_MARK_NONEXISTING_GLYPHS) == GDI_ERROR || gi == 0xFFFF) {
+        if (b->hfont_jp) {
+            SelectObject(hdc, b->hfont_jp);
+            if (GetGlyphIndicesW(hdc, &wch, 1, &gi, GGI_MARK_NONEXISTING_GLYPHS) == GDI_ERROR || gi == 0xFFFF) {
+                SelectObject(hdc, old);
+                return 0;
+            }
+        } else {
+            SelectObject(hdc, old);
+            return 0;
+        }
+    }
+
+    GLYPHMETRICS gm;
+    MAT2 mat = { {0, 1}, {0, 0}, {0, 0}, {0, 1} };
+    memset(&gm, 0, sizeof(gm));
+    DWORD sz = GetGlyphOutlineW(hdc, (UINT)cp, GGO_GRAY8_BITMAP, &gm, 0, NULL, &mat);
+    if (sz == GDI_ERROR) {
+        SelectObject(hdc, old);
+        return 0;
+    }
+
+    g->cp = cp;
+    g->adv = (float)gm.gmCellIncX;
+    g->x0 = gm.gmptGlyphOrigin.x;
+    g->y0 = -gm.gmptGlyphOrigin.y;
+    g->bw = (int)gm.gmBlackBoxX;
+    g->bh = (int)gm.gmBlackBoxY;
+    g->bmp = NULL;
+
+    if (sz > 0 && g->bw > 0 && g->bh > 0) {
+        uint8_t* tmp = (uint8_t*)malloc(sz);
+        if (tmp) {
+            DWORD r = GetGlyphOutlineW(hdc, (UINT)cp, GGO_GRAY8_BITMAP, &gm, sz, tmp, &mat);
+            int stride = (g->bw + 3) & ~3;
+            if (r != GDI_ERROR && (size_t)stride * (size_t)g->bh <= r) {
+                g->bmp = (uint8_t*)malloc((size_t)g->bw * g->bh);
+                if (g->bmp) {
+                    for (int y = 0; y < g->bh; y++) {
+                        const uint8_t* sr = tmp + (size_t)y * stride;
+                        uint8_t* dr = g->bmp + (size_t)y * g->bw;
+                        for (int x = 0; x < g->bw; x++) {
+                            uint8_t v = sr[x];
+                            dr[x] = (v >= 64u) ? 255u : (uint8_t)((v * 255u + 32u) / 64u);
+                        }
+                    }
+                }
+            }
+            free(tmp);
+        }
+    }
+    SelectObject(hdc, old);
+    return 1;
+}
+#endif
+
+static void raster_glyph(Font* f, Bucket* b, Glyph* g, uint32_t cp) {
+#ifdef _WIN32
+    if (raster_glyph_win(b, g, cp)) return;
+#endif
+    raster_glyph_stb(f, b, g, cp);
+}
+
+static Bucket* get_bucket_ex(Font* f, int px, int bold) {
+    bold = bold ? 1 : 0;
     for (int i = 0; i < f->nbuckets; i++) {
-        if (f->buckets[i]->px == px) return f->buckets[i];
+        if (f->buckets[i]->px == px && f->buckets[i]->bold == bold) return f->buckets[i];
     }
     if (f->nbuckets >= MAX_BUCKETS) return NULL;
     Bucket* b = (Bucket*)calloc(1, sizeof(Bucket));
     if (!b) return NULL;
     b->px = px;
+    b->bold = bold;
     b->scale = stbtt_ScaleForPixelHeight(&f->info, (float)px);
+    b->ascent = (int)(f->ascent * b->scale + 0.5f);
     memset(b->hash_slot, 0xFF, sizeof(b->hash_slot));
+
+#ifdef _WIN32
+    HDC hdc = win_font_dc();
+    if (hdc) {
+        int weight = bold ? FW_BOLD : FW_NORMAL;
+        b->hfont = CreateFontW(-px, 0, 0, 0, weight, FALSE, FALSE, FALSE,
+                               DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
+                               ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Microsoft YaHei UI");
+        b->hfont_jp = CreateFontW(-px, 0, 0, 0, weight, FALSE, FALSE, FALSE,
+                                  DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                  ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Yu Gothic UI");
+        if (b->hfont) {
+            HGDIOBJ old = SelectObject(hdc, b->hfont);
+            TEXTMETRICW tm;
+            if (GetTextMetricsW(hdc, &tm)) b->ascent = tm.tmAscent;
+            SelectObject(hdc, old);
+            b->has_native_bold = 1;
+        }
+    }
+#endif
+
     f->buckets[f->nbuckets++] = b;
     return b;
 }
@@ -124,6 +249,10 @@ void font_free(Font* f) {
     for (int i = 0; i < f->nbuckets; i++) {
         Bucket* b = f->buckets[i];
         for (int j = 0; j < b->used; j++) free(b->g[j].bmp);
+#ifdef _WIN32
+        if (b->hfont) DeleteObject(b->hfont);
+        if (b->hfont_jp) DeleteObject(b->hfont_jp);
+#endif
         free(b);
     }
     free(f);
@@ -143,11 +272,11 @@ static inline uint32_t next_cp(const char** p) {
     return c;
 }
 
-int text_width(Font* f, float px, const char* utf8) {
+static int text_width_ex(Font* f, float px, const char* utf8, int bold) {
     if (!f || !utf8 || !*utf8) return 0;
     int ipx = (int)(px + 0.5f);
     if (ipx < 1) ipx = 1;
-    Bucket* b = get_bucket(f, ipx);
+    Bucket* b = get_bucket_ex(f, ipx, bold);
     float w = 0.0f;
     const char* p = utf8;
     while (*p) {
@@ -158,28 +287,29 @@ int text_width(Font* f, float px, const char* utf8) {
     return (int)(w + 0.5f);
 }
 
+int text_width(Font* f, float px, const char* utf8) {
+    return text_width_ex(f, px, utf8, 0);
+}
+
 static uint8_t lut_light[256], lut_dark[256];
 static int lut_ready = 0;
 static void ensure_luts(void) {
     if (lut_ready) return;
     for (int i = 0; i < 256; i++) {
-        float vl = powf((float)i / 255.0f, 0.64f) * 255.0f + 0.5f;
-        float vd = powf((float)i / 255.0f, 0.78f) * 255.0f + 0.5f;
+        // Crisp anti-aliased edge mapping (avoid low-alpha halo bloat)
+        float n = (float)i / 255.0f;
+        float vl = (i < 8) ? 0.0f : powf(n, 0.90f) * 255.0f + 0.5f;
+        float vd = (i < 6) ? 0.0f : powf(n, 0.86f) * 255.0f + 0.5f;
         lut_light[i] = vl > 255.0f ? 255 : (uint8_t)vl;
         lut_dark[i]  = vd > 255.0f ? 255 : (uint8_t)vd;
     }
     lut_ready = 1;
 }
 
-static void draw_text_px(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8) {
-    if (!c || !f || !utf8 || !*utf8) return;
-    int ipx = (int)(px + 0.5f);
-    if (ipx < 1) ipx = 1;
-    Bucket* b = get_bucket(f, ipx);
-    if (!b) return;
-
+static void draw_text_px_bucket(Canvas* c, Font* f, Bucket* b, int x, int y, uint32_t col, const char* utf8) {
+    if (!c || !f || !b || !utf8 || !*utf8) return;
     ensure_luts();
-    int base_y = y + (int)(f->ascent * b->scale + 0.5f);
+    int base_y = y + b->ascent;
     uint32_t cr = col & 0xFFu, cg = (col >> 8) & 0xFFu, cb = (col >> 16) & 0xFFu;
     uint32_t ca = (col >> 24) & 0xFFu;
     if (ca == 0) ca = 255;
@@ -234,10 +364,25 @@ static void draw_text_px(Canvas* c, Font* f, float px, int x, int y, uint32_t co
     }
 }
 
+static void draw_text_px_ex(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8, int bold) {
+    if (!c || !f || !utf8 || !*utf8) return;
+    int ipx = (int)(px + 0.5f);
+    if (ipx < 1) ipx = 1;
+    Bucket* b = get_bucket_ex(f, ipx, bold);
+    if (!b) return;
+    if (bold && !b->has_native_bold) {
+        uint32_t ca = (col >> 24) & 0xFFu;
+        if (ca == 0) ca = 255;
+        uint32_t col_b = (col & 0x00FFFFFFu) | (((ca * 100u) >> 8) << 24);
+        draw_text_px_bucket(c, f, b, x + 1, y, col_b, utf8);
+    }
+    draw_text_px_bucket(c, f, b, x, y, col, utf8);
+}
+
 void draw_text(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8) {
     if (!c) return;
     float s = c->s > 0.0f ? c->s : 1.0f;
-    draw_text_px(c, f, px * s, (int)floorf((float)x * s + 0.5f), (int)floorf((float)y * s + 0.5f), col, utf8);
+    draw_text_px_ex(c, f, px * s, (int)floorf((float)x * s + 0.5f), (int)floorf((float)y * s + 0.5f), col, utf8, 0);
 }
 
 void draw_text_centered(Canvas* c, Font* f, float px, int x0, int x1, int y, uint32_t col, const char* utf8) {
@@ -247,7 +392,7 @@ void draw_text_centered(Canvas* c, Font* f, float px, int x0, int x1, int y, uin
     int px1 = (int)floorf((float)x1 * s + 0.5f);
     int py  = (int)floorf((float)y * s + 0.5f);
     int w = text_width(f, px * s, utf8);
-    draw_text_px(c, f, px * s, px0 + (px1 - px0 - w) / 2, py, col, utf8);
+    draw_text_px_ex(c, f, px * s, px0 + (px1 - px0 - w) / 2, py, col, utf8, 0);
 }
 
 void draw_text_right(Canvas* c, Font* f, float px, int x1, int y, uint32_t col, const char* utf8) {
@@ -256,14 +401,14 @@ void draw_text_right(Canvas* c, Font* f, float px, int x1, int y, uint32_t col, 
     int px1 = (int)floorf((float)x1 * s + 0.5f);
     int py  = (int)floorf((float)y * s + 0.5f);
     int w = text_width(f, px * s, utf8);
-    draw_text_px(c, f, px * s, px1 - w, py, col, utf8);
+    draw_text_px_ex(c, f, px * s, px1 - w, py, col, utf8, 0);
 }
 
 int text_width_max(Font* f, float px, const char* utf8, int max_w) {
     if (!f || !utf8 || !*utf8) return 0;
     int ipx = (int)(px + 0.5f);
     if (ipx < 1) ipx = 1;
-    Bucket* b = get_bucket(f, ipx);
+    Bucket* b = get_bucket_ex(f, ipx, 0);
     float w = 0.0f;
     const char* p = utf8;
     const char* ell = "\xE2\x80\xA6";
@@ -280,7 +425,7 @@ int text_width_max(Font* f, float px, const char* utf8, int max_w) {
     return (int)(w + 0.5f);
 }
 
-int draw_text_max(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8, int max_w) {
+static int draw_text_max_impl(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8, int max_w, int bold) {
     if (!c || !f || !utf8 || !*utf8) return 0;
     float s = c->s > 0.0f ? c->s : 1.0f;
     float spx = px * s;
@@ -289,9 +434,9 @@ int draw_text_max(Canvas* c, Font* f, float px, int x, int y, uint32_t col, cons
     int smax = (int)floorf((float)max_w * s + 0.5f);
     int ipx = (int)(spx + 0.5f);
     if (ipx < 1) ipx = 1;
-    Bucket* b = get_bucket(f, ipx);
+    Bucket* b = get_bucket_ex(f, ipx, bold);
     const char* ell = "\xE2\x80\xA6";
-    int ellw = text_width(f, spx, ell);
+    int ellw = text_width_ex(f, spx, ell, bold);
     char buf[256];
     const char* p = utf8;
     float w = 0.0f;
@@ -307,64 +452,25 @@ int draw_text_max(Canvas* c, Font* f, float px, int x, int y, uint32_t col, cons
             buf[n] = 0;
             char cat[264];
             snprintf(cat, sizeof(cat), "%s%s", buf, ell);
-            draw_text_px(c, f, spx, sx, sy, col, cat);
+            draw_text_px_ex(c, f, spx, sx, sy, col, cat, bold);
             return 1;
         }
         w += g->adv;
     }
-    draw_text_px(c, f, spx, sx, sy, col, utf8);
+    draw_text_px_ex(c, f, spx, sx, sy, col, utf8, bold);
     return 0;
+}
+
+int draw_text_max(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8, int max_w) {
+    return draw_text_max_impl(c, f, px, x, y, col, utf8, max_w, 0);
 }
 
 void draw_text_bold(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8) {
-    if (!c || !f || !utf8 || !*utf8) return;
+    if (!c) return;
     float s = c->s > 0.0f ? c->s : 1.0f;
-    int px_x = (int)floorf((float)x * s + 0.5f);
-    int px_y = (int)floorf((float)y * s + 0.5f);
-    uint32_t ca = (col >> 24) & 0xFFu;
-    if (ca == 0) ca = 255;
-    uint32_t col_b = (col & 0x00FFFFFFu) | (((ca * 145u) >> 8) << 24);
-    draw_text_px(c, f, px * s, px_x + 1, px_y, col_b, utf8);
-    draw_text_px(c, f, px * s, px_x, px_y, col, utf8);
+    draw_text_px_ex(c, f, px * s, (int)floorf((float)x * s + 0.5f), (int)floorf((float)y * s + 0.5f), col, utf8, 1);
 }
 
 int draw_text_max_bold(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8, int max_w) {
-    if (!c || !f || !utf8 || !*utf8) return 0;
-    uint32_t ca = (col >> 24) & 0xFFu;
-    if (ca == 0) ca = 255;
-    uint32_t col_b = (col & 0x00FFFFFFu) | (((ca * 145u) >> 8) << 24);
-    float s = c->s > 0.0f ? c->s : 1.0f;
-    float spx = px * s;
-    int sx = (int)floorf((float)x * s + 0.5f);
-    int sy = (int)floorf((float)y * s + 0.5f);
-    int smax = (int)floorf((float)max_w * s + 0.5f);
-    int ipx = (int)(spx + 0.5f);
-    if (ipx < 1) ipx = 1;
-    Bucket* b = get_bucket(f, ipx);
-    const char* ell = "\xE2\x80\xA6";
-    int ellw = text_width(f, spx, ell);
-    char buf[256];
-    const char* p = utf8;
-    float w = 0.0f;
-    while (*p) {
-        const char* save = p;
-        uint32_t cp = next_cp(&p);
-        Glyph* g = glyph_get_in_bucket(f, b, cp);
-        if (!g) continue;
-        if (w + g->adv > (float)(smax - ellw)) {
-            size_t n = (size_t)(save - utf8);
-            if (n >= sizeof(buf)) n = sizeof(buf) - 1;
-            memcpy(buf, utf8, n);
-            buf[n] = 0;
-            char cat[264];
-            snprintf(cat, sizeof(cat), "%s%s", buf, ell);
-            draw_text_px(c, f, spx, sx + 1, sy, col_b, cat);
-            draw_text_px(c, f, spx, sx, sy, col, cat);
-            return 1;
-        }
-        w += g->adv;
-    }
-    draw_text_px(c, f, spx, sx + 1, sy, col_b, utf8);
-    draw_text_px(c, f, spx, sx, sy, col, utf8);
-    return 0;
+    return draw_text_max_impl(c, f, px, x, y, col, utf8, max_w, 1);
 }

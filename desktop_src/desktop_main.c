@@ -431,9 +431,9 @@ static void step_palette_and_water_ripples(void) {
         C_ON_ACCENT  = COL(14, 18, 24, 255);
         C_HERO_L     = mix_col(COL(18, 22, 28, 255), qcol[0], 0.32f);
         C_HERO_R     = mix_col(COL(22, 28, 36, 255), C_ACCENT, 0.36f);
-        C_TXT        = COL(246, 248, 252, 255);
-        C_TXT2       = COL(184, 190, 204, 255);
-        C_TXT3       = COL(128, 136, 154, 255);
+        C_TXT        = COL(250, 252, 255, 255);
+        C_TXT2       = COL(204, 210, 224, 255);
+        C_TXT3       = COL(148, 156, 174, 255);
         C_DIV        = COL(255, 255, 255, 28);
         C_TRACK_BG   = COL(255, 255, 255, 42);
         C_HEART      = COL(248, 82, 104, 255);
@@ -449,9 +449,9 @@ static void step_palette_and_water_ripples(void) {
         C_ON_ACCENT  = COL(255, 255, 255, 255);
         C_HERO_L     = mix_col(COL(255, 255, 255, 255), C_ACCENT, 0.16f);
         C_HERO_R     = mix_col(COL(244, 248, 254, 255), C_ACCENT, 0.32f);
-        C_TXT        = COL(18, 22, 32, 255);
-        C_TXT2       = COL(88, 96, 114, 255);
-        C_TXT3       = COL(138, 146, 164, 255);
+        C_TXT        = COL(16, 20, 30, 255);
+        C_TXT2       = COL(68, 76, 94, 255);
+        C_TXT3       = COL(116, 126, 146, 255);
         C_DIV        = COL(0, 0, 0, 24);
         C_TRACK_BG   = COL(0, 0, 0, 32);
         C_HEART      = COL(228, 60, 82, 255);
@@ -472,7 +472,7 @@ static void step_palette_and_water_ripples(void) {
 
 static void draw_water_ripple_bg(int is_immersive) {
     if (!screen) return;
-    if (!bg_mesh) bg_mesh = canvas_new(144, 81);
+    if (!bg_mesh) bg_mesh = canvas_new(240, 135);
     if (!bg_mesh) return;
 
     uint32_t q0 = clamp_mesh_lum(COL((uint8_t)cur_qf[0][0], (uint8_t)cur_qf[0][1], (uint8_t)cur_qf[0][2], 255), g_is_light);
@@ -480,53 +480,66 @@ static void draw_water_ripple_bg(int is_immersive) {
     uint32_t q2 = clamp_mesh_lum(COL((uint8_t)cur_qf[2][0], (uint8_t)cur_qf[2][1], (uint8_t)cur_qf[2][2], 255), g_is_light);
     uint32_t q3 = clamp_mesh_lum(COL((uint8_t)cur_qf[3][0], (uint8_t)cur_qf[3][1], (uint8_t)cur_qf[3][2], 255), g_is_light);
 
-    q1 = clamp_mesh_lum(mix_col(q1, C_ACCENT, 0.38f), g_is_light);
+    q1 = clamp_mesh_lum(mix_col(q1, C_ACCENT, 0.40f), g_is_light);
     q2 = mix_col(q2, C_HERO_L, 0.25f);
 
     float bass = (bars[0] + bars[1] + bars[2] + bars[3]) * 0.25f;
-    float base_tint = is_immersive ? (g_is_light ? 0.36f : 0.62f) : (g_is_light ? 0.18f : 0.42f);
-    uint32_t bg_floor = g_is_light ? COL(244, 246, 251, 255) : COL(11, 13, 18, 255);
+    float base_tint = is_immersive ? (g_is_light ? 0.36f : 0.60f) : (g_is_light ? 0.18f : 0.40f);
+    uint32_t bg_floor = g_is_light ? COL(244, 246, 251, 255) : COL(10, 12, 17, 255);
 
-    float e1x = 0.26f + 0.05f * cosf(ripple_time * 0.48f);
+    float e1x = 0.27f + 0.05f * cosf(ripple_time * 0.48f);
     float e1y = 0.34f + 0.05f * sinf(ripple_time * 0.41f);
-    float e2x = 0.74f + 0.06f * sinf(ripple_time * 0.35f);
-    float e2y = 0.66f + 0.05f * cosf(ripple_time * 0.43f);
-    float e3x = 0.52f + 0.08f * sinf(ripple_time * 0.27f);
+    float e2x = 0.75f + 0.06f * sinf(ripple_time * 0.35f);
+    float e2y = 0.67f + 0.05f * cosf(ripple_time * 0.43f);
+    float e3x = 0.54f + 0.07f * sinf(ripple_time * 0.27f);
     float e3y = 0.22f + 0.04f * cosf(ripple_time * 0.33f);
 
-    for (int y = 0; y < 81; y++) {
-        float fy = (float)y / 80.0f;
-        for (int x = 0; x < 144; x++) {
-            float fx = (float)x / 143.0f;
+    for (int y = 0; y < 135; y++) {
+        float fy = (float)y / 134.0f;
+        for (int x = 0; x < 240; x++) {
+            float fx = (float)x / 239.0f;
             float d1 = sqrtf((fx - e1x) * (fx - e1x) * 1.45f + (fy - e1y) * (fy - e1y) * 0.55f);
             float d2 = sqrtf((fx - e2x) * (fx - e2x) * 1.45f + (fy - e2y) * (fy - e2y) * 0.55f);
             float d3 = sqrtf((fx - e3x) * (fx - e3x) * 1.25f + (fy - e3y) * (fy - e3y) * 0.65f);
-            float w1 = sinf(d1 * 24.0f - ripple_time * 2.4f) * expf(-d1 * 1.30f);
-            float w2 = sinf(d2 * 19.0f - ripple_time * 1.9f) * expf(-d2 * 1.20f);
-            float w3 = sinf(d3 * 28.0f - ripple_time * 2.1f) * expf(-d3 * 1.55f);
-            float wave = (w1 + w2 + w3 * 0.7f) * 0.44f;
+            float w1 = sinf(d1 * 32.0f - ripple_time * 2.5f) * expf(-d1 * 1.18f);
+            float w2 = sinf(d2 * 26.0f - ripple_time * 2.0f) * expf(-d2 * 1.12f);
+            float w3 = sinf(d3 * 36.0f - ripple_time * 2.2f) * expf(-d3 * 1.45f);
+            float wave = (w1 + w2 + w3 * 0.72f) * 0.46f;
 
-            float sx = clampf(fx + wave * 0.14f, 0.0f, 1.0f);
-            float sy = clampf(fy - wave * 0.14f, 0.0f, 1.0f);
+            // Crisp concentrated caustic crests (power-shaped highlight peaks)
+            float crest = 0.0f;
+            if (wave > 0.12f) {
+                float u = (wave - 0.12f) / 0.88f;
+                crest = u * u * (is_immersive ? 0.42f : 0.34f);
+            }
+
+            float sx = clampf(fx + wave * 0.15f, 0.0f, 1.0f);
+            float sy = clampf(fy - wave * 0.15f, 0.0f, 1.0f);
             uint32_t top = mix_col(q0, q1, sx);
             uint32_t bot = mix_col(q2, q3, sx);
             uint32_t c_mesh = mix_col(top, bot, sy);
 
-            float caustic = wave * (0.24f + bass * 0.16f);
-            float t_mix = clampf(base_tint + caustic, 0.10f, 0.86f);
+            float caustic = wave * (0.28f + bass * 0.16f);
+            float t_mix = clampf(base_tint + caustic, 0.08f, 0.88f);
             uint32_t px = mix_col(bg_floor, c_mesh, t_mix);
-            if (wave > 0.08f) {
-                float shimmer = clampf((wave - 0.08f) * (is_immersive ? 0.30f : 0.24f), 0.0f, 0.38f);
-                px = mix_col(px, C_ACCENT, shimmer);
+            if (crest > 0.005f) {
+                px = mix_col(px, C_ACCENT, crest);
             }
-            bg_mesh->px[(size_t)y * 144 + x] = px;
+            bg_mesh->px[(size_t)y * 240 + x] = px;
         }
     }
 
-    resample_bilinear(bg_mesh->px, 144, 81, screen->px, screen->w, screen->h);
+    resample_bilinear(bg_mesh->px, 240, 135, screen->px, screen->w, screen->h);
 
-    stroke_circle_aa(screen, (int)(e1x * W), (int)(e1y * H), 140 + (int)(20.0f * sinf(ripple_time)), 2, C_ACCENT, is_immersive ? 24 : 16);
-    stroke_circle_aa(screen, (int)(e2x * W), (int)(e2y * H), 190 + (int)(26.0f * cosf(ripple_time * 0.8f)), 2, q1, is_immersive ? 24 : 18);
+    // Crisp glass concentric ripple arcs over fluid background
+    for (int k = 0; k < 3; k++) {
+        float phase_r = fmodf(ripple_time * 0.38f + (float)k * 0.33f, 1.0f);
+        int rr1 = 48 + (int)(phase_r * 340.0f);
+        int rr2 = 64 + (int)(fmodf(phase_r + 0.5f, 1.0f) * 380.0f);
+        uint8_t aa = (uint8_t)((1.0f - phase_r) * (is_immersive ? 38.0f : 28.0f));
+        stroke_circle_aa(screen, (int)(e1x * W), (int)(e1y * H), rr1, 2, C_ACCENT, aa);
+        stroke_circle_aa(screen, (int)(e2x * W), (int)(e2y * H), rr2, 2, q1, (uint8_t)(aa * 0.85f));
+    }
 
     for (int i = 0; i < MAX_RIPPLES; i++) {
         if (!click_ripples[i].active) continue;
@@ -1318,7 +1331,7 @@ static void draw_nav_rail(int mx, int my) {
         else if (i == 1) icon_heart_ex(screen, cx - 9, cy - 8, 18, is_act ? C_HEART : icol, is_act);
         else if (i == 2) icon_lyrics_waves(screen, cx - 9, cy - 9, 18, icol);
         else icon_refresh(screen, cx, cy, 8, icol);
-        draw_text_centered(screen, font, 11.5f, 4, RAIL_W - 4, iy + 38,
+        draw_text_centered(screen, font, 12.5f, 4, RAIL_W - 4, iy + 37,
                            is_act ? C_ACCENT : C_TXT2, labels[i]);
     }
 
@@ -1352,18 +1365,18 @@ static void draw_library_header(int mx, int my) {
         title = dname;
     }
 
-    draw_text_max_bold(screen, font, 24.0f, lx, 18, C_TXT, title, 180);
-    int tw = text_width(font, 24.0f, title);
+    draw_text_max_bold(screen, font, 25.0f, lx, 17, C_TXT, title, 180);
+    int tw = text_width(font, 25.0f, title);
     if (tw > 180) tw = 180;
 
     // Song count pastel badge pill next to title
     char badge[48];
     snprintf(badge, sizeof(badge), "%d 首歌曲", nvisible);
-    int bw = text_width(font, 12.0f, badge) + 22;
+    int bw = text_width(font, 13.0f, badge) + 24;
     int bx = lx + tw + 12;
-    fill_round_rect_aa_a(screen, bx, 21, bw, 26, 13, mix_col(C_SURFACE, C_ACCENT, 0.28f), 196);
-    stroke_round_rect_aa(screen, bx, 21, bw, 26, 13, 1, C_ACCENT, 95);
-    draw_text_centered(screen, font, 12.0f, bx, bx + bw, 27, C_ACCENT, badge);
+    fill_round_rect_aa_a(screen, bx, 21, bw, 27, 13, mix_col(C_SURFACE, C_ACCENT, 0.28f), 196);
+    stroke_round_rect_aa(screen, bx, 21, bw, 27, 13, 1, C_ACCENT, 95);
+    draw_text_centered(screen, font, 13.0f, bx, bx + bw, 26, C_ACCENT, badge);
 
     // Right controls (Sort pill, View toggle pill, Fullscreen button)
     int fs_sz = 38;
@@ -1374,21 +1387,21 @@ static void draw_library_header(int mx, int my) {
     icon_expand(screen, rc_fs_btn.x + 11, rc_fs_btn.y + 11, 16, C_TXT2);
 
     const char* view_lbl = view_grid ? "网格视图" : "列表视图";
-    int vw = text_width(font, 12.5f, view_lbl) + 28;
+    int vw = text_width(font, 13.5f, view_lbl) + 28;
     rc_view_pill = (Rect){ rc_fs_btn.x - 10 - vw, 17, vw, 36 };
     fill_round_rect_aa(screen, rc_view_pill.x, rc_view_pill.y, vw, 36, 18,
                        in_rc(mx, my, rc_view_pill) ? C_GLASS_HOV : C_GLASS);
     stroke_round_rect_aa(screen, rc_view_pill.x, rc_view_pill.y, vw, 36, 18, 1, C_DIV, col_a(C_DIV) + 12);
-    draw_text_centered(screen, font, 12.5f, rc_view_pill.x, rc_view_pill.x + vw, 28, C_TXT2, view_lbl);
+    draw_text_centered(screen, font, 13.5f, rc_view_pill.x, rc_view_pill.x + vw, 26, C_TXT2, view_lbl);
 
     const char* sort_lbls[4] = { "排序: 默认", "排序: 歌名", "排序: 歌手", "排序: 专辑" };
     const char* slbl = sort_lbls[sort_mode & 3];
-    int sw = text_width(font, 12.5f, slbl) + 26;
+    int sw = text_width(font, 13.5f, slbl) + 28;
     rc_sort_btn = (Rect){ rc_view_pill.x - 10 - sw, 17, sw, 36 };
     fill_round_rect_aa(screen, rc_sort_btn.x, rc_sort_btn.y, sw, 36, 18,
                        in_rc(mx, my, rc_sort_btn) ? C_GLASS_HOV : C_GLASS);
     stroke_round_rect_aa(screen, rc_sort_btn.x, rc_sort_btn.y, sw, 36, 18, 1, C_DIV, col_a(C_DIV) + 12);
-    draw_text_centered(screen, font, 12.5f, rc_sort_btn.x, rc_sort_btn.x + sw, 28, C_TXT2, slbl);
+    draw_text_centered(screen, font, 13.5f, rc_sort_btn.x, rc_sort_btn.x + sw, 26, C_TXT2, slbl);
 
     // Centered Floating Apple Search Capsule
     int s_left = bx + bw + 16;
@@ -1407,7 +1420,7 @@ static void draw_library_header(int mx, int my) {
                     search_focused ? C_ACCENT : C_TXT3);
         int text_max = rc_search_box.w - 70;
         if (search_q[0]) {
-            draw_text_max(screen, font, 13.5f, rc_search_box.x + 38, rc_search_box.y + 12,
+            draw_text_max(screen, font, 14.0f, rc_search_box.x + 38, rc_search_box.y + 11,
                           C_TXT, search_q, text_max);
             rc_search_clear = (Rect){ rc_search_box.x + rc_search_box.w - 34, rc_search_box.y + 6, 28, 28 };
             fill_round_rect_aa(screen, rc_search_clear.x, rc_search_clear.y, 28, 28, 14,
@@ -1415,7 +1428,7 @@ static void draw_library_header(int mx, int my) {
             draw_text_centered(screen, font, 14.0f, rc_search_clear.x, rc_search_clear.x + 28,
                                rc_search_clear.y + 6, C_TXT2, "x");
         } else {
-            draw_text_max(screen, font, 13.0f, rc_search_box.x + 38, rc_search_box.y + 12,
+            draw_text_max(screen, font, 13.5f, rc_search_box.x + 38, rc_search_box.y + 11,
                           C_TXT3, "搜索歌曲、歌手、专辑...", text_max);
         }
     }
@@ -1425,7 +1438,7 @@ static void draw_library_header(int mx, int my) {
     int cx = lx;
     const char* chips[5] = { "全部", "已喜欢", "FLAC 无损", "MP3", "其他格式" };
     for (int i = 0; i < 5; i++) {
-        int cw = text_width(font, 13.0f, chips[i]) + (fmt_filter == i ? 36 : 26);
+        int cw = text_width(font, 13.5f, chips[i]) + (fmt_filter == i ? 38 : 28);
         rc_filt_chips[i] = (Rect){ cx, cy, cw, 32 };
         int act = (fmt_filter == i);
         int hov = in_rc(mx, my, rc_filt_chips[i]);
@@ -1433,11 +1446,11 @@ static void draw_library_header(int mx, int my) {
             fill_round_rect_aa_a(screen, cx, cy, cw, 32, 16, mix_col(C_SURFACE, C_ACCENT, 0.30f), 205);
             stroke_round_rect_aa(screen, cx, cy, cw, 32, 16, 1, C_ACCENT, 140);
             fill_ellipse_aa(screen, cx + 14, cy + 16, 4, 4, C_ACCENT);
-            draw_text(screen, font, 13.0f, cx + 24, cy + 8, C_ACCENT, chips[i]);
+            draw_text(screen, font, 13.5f, cx + 24, cy + 7, C_ACCENT, chips[i]);
         } else {
             fill_round_rect_aa(screen, cx, cy, cw, 32, 16, hov ? C_GLASS_HOV : C_GLASS);
             stroke_round_rect_aa(screen, cx, cy, cw, 32, 16, 1, C_DIV, col_a(C_DIV) + 10);
-            draw_text_centered(screen, font, 13.0f, cx, cx + cw, cy + 8, hov ? C_TXT : C_TXT2, chips[i]);
+            draw_text_centered(screen, font, 13.5f, cx, cx + cw, cy + 7, hov ? C_TXT : C_TXT2, chips[i]);
         }
         cx += cw + 10;
     }
@@ -1449,14 +1462,14 @@ static void draw_library_header(int mx, int my) {
             basename_str(scan_dirs[active_dir], bn, sizeof(bn));
             snprintf(dlabel, sizeof(dlabel), "目录: %s", bn);
         }
-        int dw = text_width(font, 12.5f, dlabel) + 26;
+        int dw = text_width(font, 13.0f, dlabel) + 28;
         if (rx - dw > cx + 10) {
             rc_dir_chip = (Rect){ rx - dw, cy, dw, 32 };
             int act = (lib_tab == TAB_DIR);
             if (act) fill_round_rect_aa_a(screen, rc_dir_chip.x, rc_dir_chip.y, dw, 32, 16, mix_col(C_SURFACE, C_ACCENT, 0.26f), 205);
             else     fill_round_rect_aa(screen, rc_dir_chip.x, rc_dir_chip.y, dw, 32, 16, in_rc(mx, my, rc_dir_chip) ? C_GLASS_HOV : C_GLASS);
             stroke_round_rect_aa(screen, rc_dir_chip.x, rc_dir_chip.y, dw, 32, 16, 1, act ? C_ACCENT : C_DIV, act ? 140 : (col_a(C_DIV) + 12));
-            draw_text_centered(screen, font, 12.5f, rc_dir_chip.x, rc_dir_chip.x + dw, cy + 8,
+            draw_text_centered(screen, font, 13.0f, rc_dir_chip.x, rc_dir_chip.x + dw, cy + 7,
                                act ? C_ACCENT : C_TXT2, dlabel);
         }
     }
@@ -1501,17 +1514,17 @@ static void draw_hero_card(Rect hero, int mx, int my) {
     else                             icon_play(screen, right_mid_x + 2, star_cy, (int)(draw_r * 0.36f), C_ON_ACCENT);
 
     const char* action_lbl = (playing_idx >= 0 && !paused) ? "点击暂停" : (playing_idx >= 0 ? "继续播放" : "开始聆听");
-    draw_text_centered(screen, font, 12.5f, split_x + 6, hero.x + hero.w - 6,
+    draw_text_centered(screen, font, 13.5f, split_x + 6, hero.x + hero.w - 6,
                        star_cy + star_r + 12, C_ACCENT, action_lbl);
 
     // Left hero info zone
     int lx = hero.x + 20;
     int rx_lim = split_x - (int)wave_amp - 14;
     const char* pill_txt = (playing_idx >= 0 && !paused) ? "正在播放" : (playing_idx >= 0 ? "已暂停" : "精选曲目");
-    int pill_w = text_width(font, 11.5f, pill_txt) + 26;
-    fill_round_rect_aa_a(screen, lx, hero.y + 16, pill_w, 22, 11, mix_col(C_SURFACE, C_ACCENT, 0.26f), 196);
-    fill_ellipse_aa(screen, lx + 11, hero.y + 27, 3, 3, C_ACCENT);
-    draw_text(screen, font, 11.5f, lx + 19, hero.y + 20, C_ACCENT, pill_txt);
+    int pill_w = text_width(font, 12.5f, pill_txt) + 28;
+    fill_round_rect_aa_a(screen, lx, hero.y + 15, pill_w, 24, 12, mix_col(C_SURFACE, C_ACCENT, 0.26f), 196);
+    fill_ellipse_aa(screen, lx + 12, hero.y + 27, 3, 3, C_ACCENT);
+    draw_text(screen, font, 12.5f, lx + 20, hero.y + 19, C_ACCENT, pill_txt);
 
     // Hero cover square
     int cov_sz = (int)(hero.h * 0.36f);
@@ -1535,32 +1548,31 @@ static void draw_hero_card(Rect hero, int mx, int my) {
     const char* art = playing_idx >= 0 ? (p_artist[0] ? p_artist : "本地音乐") : (show_idx >= 0 && tracks[show_idx].artist[0] ? tracks[show_idx].artist : "Sirène");
     const char* fmt = playing_idx >= 0 ? p_fmt : (show_idx >= 0 ? tracks[show_idx].fmt : "HI-RES");
 
-    draw_text_max_bold(screen, font, 19.0f, tx, cov_y + 4, C_TXT, ttl, tmax);
-    int fw = text_width(font, 11.0f, fmt) + 16;
-    fill_round_rect_aa(screen, tx, cov_y + 34, fw, 20, 6, C_GLASS_ACT);
-    draw_text_centered(screen, font, 11.0f, tx, tx + fw, cov_y + 38, C_TXT2, fmt);
-    if (tmax > fw + 16) draw_text_max(screen, font, 13.0f, tx + fw + 8, cov_y + 36, C_TXT2, art, tmax - fw - 8);
+    draw_text_max_bold(screen, font, 20.0f, tx, cov_y + 3, C_TXT, ttl, tmax);
+    int fw = text_width(font, 12.0f, fmt) + 18;
+    fill_round_rect_aa(screen, tx, cov_y + 35, fw, 22, 7, C_GLASS_ACT);
+    draw_text_centered(screen, font, 12.0f, tx, tx + fw, cov_y + 39, C_TXT2, fmt);
+    if (tmax > fw + 16) draw_text_max(screen, font, 14.0f, tx + fw + 8, cov_y + 37, C_TXT2, art, tmax - fw - 8);
 
-    // Large % indicator + time readout + bottom M3 wavy progress scrubber
-    int bot_area_y = hero.y + hero.h - 68;
+    // Large % indicator + time readout + thick straight water-ripple progress bar
+    int bot_area_y = hero.y + hero.h - 70;
     char pct[16], tm[48], b_pos[20], b_dur[20];
     snprintf(pct, sizeof(pct), "%d%%", (int)(frac * 100.0f + 0.5f));
     fmt_time(pos, b_pos, sizeof(b_pos));
     fmt_time(dur, b_dur, sizeof(b_dur));
     snprintf(tm, sizeof(tm), "%s / %s", b_pos, b_dur);
 
-    draw_text_bold(screen, font, 28.0f, lx, bot_area_y, C_TXT, pct);
-    int pw = text_width(font, 28.0f, pct);
-    draw_text(screen, font, 12.0f, lx + pw + 12, bot_area_y + 11, C_TXT2, tm);
+    draw_text_bold(screen, font, 30.0f, lx, bot_area_y - 2, C_TXT, pct);
+    int pw = text_width(font, 30.0f, pct);
+    draw_text(screen, font, 13.0f, lx + pw + 14, bot_area_y + 11, C_TXT2, tm);
 
-    int hprog_y = hero.y + hero.h - 24;
+    int hprog_y = hero.y + hero.h - 22;
     ui_hpx0 = lx + 4;
     ui_hpx1 = rx_lim - 4;
     if (ui_hpx1 > ui_hpx0 + 40) {
         rc_hero_prog = (Rect){ ui_hpx0 - 6, hprog_y - 12, (ui_hpx1 - ui_hpx0) + 12, 24 };
-        draw_m3_wavy_progress(screen, ui_hpx0, ui_hpx1, hprog_y, frac,
-                              wave_phase, (!paused && playing_idx >= 0) ? 3.8f : 1.5f, 18.0f,
-                              4, 4, 1, C_ACCENT, C_TRACK_BG);
+        draw_m3_water_progress(screen, ui_hpx0, ui_hpx1, hprog_y, frac,
+                               wave_phase, 9, 1, C_ACCENT, C_TRACK_BG);
     }
 }
 
@@ -1630,10 +1642,10 @@ static void draw_grid_view(int mx, int my) {
         else     fill_round_rect_aa(screen, cx0, cy0, cov_sz, cov_sz, 14, C_GLASS_ACT);
 
         // Top-left format pill on cover (translucent dark capsule)
-        int fpw = text_width(font, 11.0f, tr->fmt) + 14;
-        fill_round_rect_aa_a(screen, cx0 + 8, cy0 + 8, fpw, 21, 8, COL(12, 16, 22, 255), 182);
-        draw_text_centered(screen, font, 11.0f, cx0 + 8, cx0 + 8 + fpw, cy0 + 12,
-                           is_play ? C_ACCENT : COL(242, 246, 252, 255), tr->fmt);
+        int fpw = text_width(font, 11.5f, tr->fmt) + 16;
+        fill_round_rect_aa_a(screen, cx0 + 8, cy0 + 8, fpw, 22, 8, COL(12, 16, 22, 255), 186);
+        draw_text_centered(screen, font, 11.5f, cx0 + 8, cx0 + 8 + fpw, cy0 + 11,
+                           is_play ? C_ACCENT : COL(244, 248, 255, 255), tr->fmt);
 
         // Top-right Favorite Heart pill on cover
         Rect fav_rc = { cx0 + cov_sz - 34, cy0 + 6, 28, 28 };
@@ -1665,14 +1677,14 @@ static void draw_grid_view(int mx, int my) {
         else         stroke_round_rect_aa(screen, x, cy, cw, ch, 18, 1, C_DIV, is_hov ? 68 : col_a(C_DIV));
 
         // Clean 2-line footer text
-        int info_y = cy0 + cov_sz + 8;
-        draw_text_max_bold(screen, font, 14.0f, x + 10, info_y, is_play ? C_ACCENT : C_TXT, tr->title, cw - 20);
+        int info_y = cy0 + cov_sz + 7;
+        draw_text_max_bold(screen, font, 15.0f, x + 10, info_y, is_play ? C_ACCENT : C_TXT, tr->title, cw - 20);
         char dur_s[16] = "--:--";
         if (tr->dur > 0.5) fmt_time(tr->dur, dur_s, sizeof(dur_s));
-        int dw = text_width(font, 11.5f, dur_s);
-        draw_text_right(screen, font, 11.5f, x + cw - 10, info_y + 24, is_play ? C_ACCENT : C_TXT3, dur_s);
+        int dw = text_width(font, 12.5f, dur_s);
+        draw_text_right(screen, font, 12.5f, x + cw - 10, info_y + 26, is_play ? C_ACCENT : C_TXT3, dur_s);
         const char* sub = tr->artist[0] ? tr->artist : tr->album;
-        draw_text_max(screen, font, 12.0f, x + 10, info_y + 23, C_TXT2, sub[0] ? sub : tr->fmt, cw - 26 - dw);
+        draw_text_max(screen, font, 13.0f, x + 10, info_y + 25, C_TXT2, sub[0] ? sub : tr->fmt, cw - 26 - dw);
 
         if (ngrid_hits < MAX_GRID_HITS) {
             Rect hit_card = card_rc;
@@ -1713,10 +1725,10 @@ static void draw_table_view(int mx, int my) {
     ui_list_x0 = lx; ui_list_x1 = lx + tw; ui_list_y0 = top_y; ui_list_y1 = top_y + vh;
 
     fill_round_rect_aa(screen, lx, top_y, tw, 30, 10, C_GLASS);
-    draw_text(screen, font, 12.0f, lx + 56, top_y + 7, C_TXT3, "歌曲");
-    draw_text(screen, font, 12.0f, lx + (int)(tw * 0.44f), top_y + 7, C_TXT3, "歌手");
-    draw_text(screen, font, 12.0f, lx + (int)(tw * 0.68f), top_y + 7, C_TXT3, "格式");
-    draw_text_right(screen, font, 12.0f, lx + tw - 24, top_y + 7, C_TXT3, "时长");
+    draw_text(screen, font, 12.5f, lx + 56, top_y + 7, C_TXT3, "歌曲");
+    draw_text(screen, font, 12.5f, lx + (int)(tw * 0.44f), top_y + 7, C_TXT3, "歌手");
+    draw_text(screen, font, 12.5f, lx + (int)(tw * 0.68f), top_y + 7, C_TXT3, "格式");
+    draw_text_right(screen, font, 12.5f, lx + tw - 24, top_y + 7, C_TXT3, "时长");
 
     int body_y = top_y + 34;
     int body_h = vh - 34;
@@ -1743,15 +1755,15 @@ static void draw_table_view(int mx, int my) {
         Rect fav_rc = { lx + 56, y + 14, 24, 24 };
         icon_heart_ex(screen, fav_rc.x + 4, fav_rc.y + 4, 15, tr->fav ? C_HEART : C_TXT3, tr->fav);
 
-        draw_text_max_bold(screen, font, 14.0f, lx + 88, y + 10, is_play ? C_ACCENT : C_TXT,
+        draw_text_max_bold(screen, font, 15.0f, lx + 88, y + 8, is_play ? C_ACCENT : C_TXT,
                            tr->title, (int)(tw * 0.44f) - 98);
-        draw_text_max(screen, font, 12.0f, lx + 88, y + 30, C_TXT3, tr->album, (int)(tw * 0.44f) - 98);
-        draw_text_max(screen, font, 13.0f, lx + (int)(tw * 0.44f), y + 17, C_TXT2,
+        draw_text_max(screen, font, 12.5f, lx + 88, y + 30, C_TXT3, tr->album, (int)(tw * 0.44f) - 98);
+        draw_text_max(screen, font, 13.5f, lx + (int)(tw * 0.44f), y + 17, C_TXT2,
                       tr->artist[0] ? tr->artist : "未知", (int)(tw * 0.22f));
-        draw_text(screen, font, 12.0f, lx + (int)(tw * 0.68f), y + 18, is_play ? C_ACCENT : C_TXT3, tr->fmt);
+        draw_text(screen, font, 12.5f, lx + (int)(tw * 0.68f), y + 18, is_play ? C_ACCENT : C_TXT3, tr->fmt);
         char ds[16] = "--:--";
         if (tr->dur > 0.5) fmt_time(tr->dur, ds, sizeof(ds));
-        draw_text_right(screen, font, 12.5f, lx + tw - 24, y + 18, is_play ? C_ACCENT : C_TXT2, ds);
+        draw_text_right(screen, font, 13.0f, lx + tw - 24, y + 18, is_play ? C_ACCENT : C_TXT2, ds);
 
         if (ngrid_hits < MAX_GRID_HITS) {
             Rect hr = row_rc;
@@ -1847,7 +1859,7 @@ static void draw_dynamic_island(int mx, int my) {
     int info_x = rc_bar_cov.x + cov_sz + 12;
     int info_max = rc_bar_fav.x - info_x - 10;
     if (info_max > 40) {
-        draw_text_max_bold(screen, font, 14.0f, info_x, iy + 11, C_TXT, p_title, info_max);
+        draw_text_max_bold(screen, font, 15.0f, info_x, iy + 9, C_TXT, p_title, info_max);
         int eq_x = info_x;
         int eq_y = iy + 39;
         for (int b = 0; b < 5; b++) {
@@ -1857,7 +1869,7 @@ static void draw_dynamic_island(int mx, int my) {
             int bh = 3 + (int)(lvl * 10.0f);
             fill_round_rect_aa(screen, eq_x + b * 5, eq_y - bh / 2, 3, bh, 1, C_ACCENT);
         }
-        draw_text_max(screen, font, 11.5f, eq_x + 32, iy + 32, C_TXT2,
+        draw_text_max(screen, font, 12.5f, eq_x + 32, iy + 31, C_TXT2,
                       p_artist[0] ? p_artist : "点击封面进入歌词", info_max - 32);
     }
 
@@ -1867,14 +1879,14 @@ static void draw_dynamic_island(int mx, int my) {
     int act_lyr = (lyr && lyr->n > 0);
     if (act_lyr) fill_round_rect_aa_a(screen, rc_bar_lyr.x, rc_bar_lyr.y, 34, 28, 14, mix_col(C_SURFACE, C_ACCENT, 0.30f), 205);
     else         fill_round_rect_aa(screen, rc_bar_lyr.x, rc_bar_lyr.y, 34, 28, 14, in_rc(mx, my, rc_bar_lyr) ? C_GLASS_HOV : C_GLASS);
-    draw_text_centered(screen, font, 12.5f, rc_bar_lyr.x, rc_bar_lyr.x + 34, rc_bar_lyr.y + 6,
+    draw_text_centered(screen, font, 13.0f, rc_bar_lyr.x, rc_bar_lyr.x + 34, rc_bar_lyr.y + 5,
                        act_lyr ? C_ACCENT : C_TXT2, "词");
 
     const char* mode_lbl = play_mode == MODE_LOOP_ONE ? "单曲" : (play_mode == MODE_SHUFFLE ? "随机" : "顺序");
-    rc_bar_mode = (Rect){ rc_bar_lyr.x - 46, ctrl_y - 14, 40, 28 };
-    fill_round_rect_aa(screen, rc_bar_mode.x, rc_bar_mode.y, 40, 28, 14,
+    rc_bar_mode = (Rect){ rc_bar_lyr.x - 48, ctrl_y - 14, 42, 28 };
+    fill_round_rect_aa(screen, rc_bar_mode.x, rc_bar_mode.y, 42, 28, 14,
                        in_rc(mx, my, rc_bar_mode) ? C_GLASS_HOV : C_GLASS);
-    draw_text_centered(screen, font, 11.5f, rc_bar_mode.x, rc_bar_mode.x + 40, rc_bar_mode.y + 7, C_TXT2, mode_lbl);
+    draw_text_centered(screen, font, 12.5f, rc_bar_mode.x, rc_bar_mode.x + 42, rc_bar_mode.y + 6, C_TXT2, mode_lbl);
 
     int vol_w = 56;
     if (rc_bar_mode.x - rc_bar_next.x - rc_bar_next.w > 110) {
@@ -1884,26 +1896,22 @@ static void draw_dynamic_island(int mx, int my) {
         rc_bar_vol_ico = (Rect){ ui_vx0 - 26, ctrl_y - 12, 22, 24 };
         float v = audio_volume();
         icon_vol(screen, rc_bar_vol_ico.x + 11, ctrl_y, 14, C_TXT2, v <= 0.01f);
-        fill_round_rect_aa(screen, ui_vx0, ctrl_y - 2, vol_w, 4, 2, C_TRACK_BG);
+        fill_round_rect_aa(screen, ui_vx0, ctrl_y - 2, vol_w, 5, 2, C_TRACK_BG);
         int vw = (int)(v * (float)vol_w);
-        if (vw > 0) fill_round_rect_aa(screen, ui_vx0, ctrl_y - 2, vw, 4, 2, C_ACCENT);
+        if (vw > 0) fill_round_rect_aa(screen, ui_vx0, ctrl_y - 2, vw, 5, 2, C_ACCENT);
         fill_ellipse_aa(screen, ui_vx0 + vw, ctrl_y, 5, 5, C_ACCENT);
     }
 
-    // Bottom edge integrated pill scrubber across the Dynamic Island
+    // Bottom edge thick straight liquid water-ripple scrubber across the Dynamic Island
     double dur = playing_idx >= 0 ? audio_duration() : 0.0;
     double pos = playing_idx >= 0 ? (scrub_drag == 1 ? scrub_sec : audio_position()) : 0.0;
     float frac = (dur > 0.1) ? clampf((float)(pos / dur), 0.0f, 1.0f) : 0.0f;
     ui_px0 = ix + 34;
     ui_px1 = ix + iw - 34;
-    ui_py = iy + ih - 7;
-    rc_bar_prog = (Rect){ ui_px0, ui_py - 8, ui_px1 - ui_px0, 16 };
-    fill_round_rect_aa(screen, ui_px0, ui_py - 1, ui_px1 - ui_px0, 3, 2, C_TRACK_BG);
-    int aw = (int)((float)(ui_px1 - ui_px0) * frac);
-    if (aw > 0) fill_round_rect_aa(screen, ui_px0, ui_py - 1, aw, 3, 2, C_ACCENT);
-    if (island_exp > 0.15f || scrub_drag == 1) {
-        fill_ellipse_aa(screen, ui_px0 + aw, ui_py, 4 + (int)(2.0f * island_exp), 4 + (int)(2.0f * island_exp), C_ACCENT);
-    }
+    ui_py = iy + ih - 8;
+    rc_bar_prog = (Rect){ ui_px0, ui_py - 9, ui_px1 - ui_px0, 18 };
+    draw_m3_water_progress(screen, ui_px0, ui_px1, ui_py, frac, wave_phase, 5,
+                           (island_exp > 0.15f || scrub_drag == 1) ? 1 : 0, C_ACCENT, C_TRACK_BG);
 }
 
 // ---------------- Immersive Fullscreen Water-Ripple Bilingual Lyrics View ----------------
@@ -1958,37 +1966,36 @@ static void draw_immersive_view(int mx, int my) {
 
     char spec[96];
     snprintf(spec, sizeof(spec), "%s  %dHz  %dch", p_fmt, audio_sample_rate(), audio_channels());
-    int spw = text_width(font, 11.5f, spec) + 18;
-    fill_round_rect_aa(screen, info_x, ty + 62, spw, 22, 11, C_GLASS);
-    stroke_round_rect_aa(screen, info_x, ty + 62, spw, 22, 11, 1, C_DIV, col_a(C_DIV));
-    draw_text_centered(screen, font, 11.5f, info_x, info_x + spw, ty + 66, C_ACCENT, spec);
+    int spw = text_width(font, 12.5f, spec) + 20;
+    fill_round_rect_aa(screen, info_x, ty + 62, spw, 24, 12, C_GLASS);
+    stroke_round_rect_aa(screen, info_x, ty + 62, spw, 24, 12, 1, C_DIV, col_a(C_DIV));
+    draw_text_centered(screen, font, 12.5f, info_x, info_x + spw, ty + 66, C_ACCENT, spec);
 
-    // Wavy progress bar + timestamps
+    // Bold straight liquid water-ripple progress bar + timestamps
     double dur = playing_idx >= 0 ? audio_duration() : 0.0;
     double pos = playing_idx >= 0 ? (scrub_drag == 1 ? scrub_sec : audio_position()) : 0.0;
     float frac = (dur > 0.1) ? clampf((float)(pos / dur), 0.0f, 1.0f) : 0.0f;
-    int py = ty + 104;
+    int py = ty + 106;
     ui_px0 = info_x;
     ui_px1 = info_x + info_w;
     ui_py = py;
     rc_bar_prog = (Rect){ ui_px0, py - 12, info_w, 24 };
-    draw_m3_wavy_progress(screen, ui_px0, ui_px1, py, frac, wave_phase,
-                          (!audio_paused() && playing_idx >= 0) ? 4.2f : 1.5f, 22.0f, 4, 4, 1, C_ACCENT, C_TRACK_BG);
+    draw_m3_water_progress(screen, ui_px0, ui_px1, py, frac, wave_phase, 10, 1, C_ACCENT, C_TRACK_BG);
 
     char bpos[20], bdur[20];
     fmt_time(pos, bpos, sizeof(bpos));
     fmt_time(dur, bdur, sizeof(bdur));
-    draw_text(screen, font, 12.0f, ui_px0, py + 12, C_TXT2, bpos);
-    draw_text_right(screen, font, 12.0f, ui_px1, py + 12, C_TXT2, bdur);
+    draw_text(screen, font, 13.0f, ui_px0, py + 14, C_TXT2, bpos);
+    draw_text_right(screen, font, 13.0f, ui_px1, py + 14, C_TXT2, bdur);
 
-    // Controls below wavy bar
-    int cy = py + 52;
+    // Controls below progress bar
+    int cy = py + 54;
     int cx = info_x + info_w / 2;
     rc_bar_play = (Rect){ cx - 26, cy - 26, 52, 52 };
     rc_bar_prev = (Rect){ cx - 76, cy - 18, 36, 36 };
     rc_bar_next = (Rect){ cx + 40, cy - 18, 36, 36 };
     rc_bar_fav  = (Rect){ info_x, cy - 16, 32, 32 };
-    rc_bar_mode = (Rect){ info_x + info_w - 48, cy - 15, 48, 30 };
+    rc_bar_mode = (Rect){ info_x + info_w - 52, cy - 16, 52, 32 };
 
     int is_fav = (playing_idx >= 0 && tracks[playing_idx].fav);
     icon_heart_ex(screen, rc_bar_fav.x + 6, rc_bar_fav.y + 6, 20, is_fav ? C_HEART : C_TXT2, is_fav);
@@ -1999,9 +2006,9 @@ static void draw_immersive_view(int mx, int my) {
     icon_next(screen, rc_bar_next.x + 18, rc_bar_next.y + 18, 14, C_TXT);
 
     const char* ml = play_mode == MODE_LOOP_ONE ? "单曲" : (play_mode == MODE_SHUFFLE ? "随机" : "顺序");
-    fill_round_rect_aa(screen, rc_bar_mode.x, rc_bar_mode.y, 48, 30, 15, C_GLASS);
-    stroke_round_rect_aa(screen, rc_bar_mode.x, rc_bar_mode.y, 48, 30, 15, 1, C_DIV, col_a(C_DIV));
-    draw_text_centered(screen, font, 12.0f, rc_bar_mode.x, rc_bar_mode.x + 48, rc_bar_mode.y + 7, C_TXT2, ml);
+    fill_round_rect_aa(screen, rc_bar_mode.x, rc_bar_mode.y, 52, 32, 16, C_GLASS);
+    stroke_round_rect_aa(screen, rc_bar_mode.x, rc_bar_mode.y, 52, 32, 16, 1, C_DIV, col_a(C_DIV));
+    draw_text_centered(screen, font, 13.0f, rc_bar_mode.x, rc_bar_mode.x + 52, rc_bar_mode.y + 7, C_TXT2, ml);
 
     // Right Column: Large Bilingual Wrapped Lyrics
     int lyr_x = cov_x + cov_sz + 56;
@@ -2054,13 +2061,17 @@ static void draw_immersive_view(int mx, int my) {
 
             int is_cur = (i == cur_idx);
             int dist = abs(i - cur_idx);
-            float alpha = is_cur ? 1.0f : clampf(0.54f - (float)dist * 0.09f, 0.14f, 0.52f);
-            // Smooth top/bottom edge fade
-            if (y < lyr_y0 + 70) alpha *= clampf((float)(y - lyr_y0 + 20) / 90.0f, 0.0f, 1.0f);
-            if (y + line_hs[i] > lyr_y1 - 60) alpha *= clampf((float)(lyr_y1 - y) / 90.0f, 0.0f, 1.0f);
+            float alpha = is_cur ? 1.0f : clampf(0.68f - (float)dist * 0.11f, 0.24f, 0.68f);
+            float edge_fade = 1.0f;
+            if (y < lyr_y0 + 68) edge_fade = clampf((float)(y - lyr_y0 + 6) / 74.0f, 0.0f, 1.0f);
+            if (y + line_hs[i] > lyr_y1 - 56) {
+                float bf = clampf((float)(lyr_y1 - y - line_hs[i] / 2) / 64.0f, 0.0f, 1.0f);
+                if (bf < edge_fade) edge_fade = bf;
+            }
+            if (!is_cur && edge_fade <= 0.03f) continue;
 
             int hov_l = in_rect(mx, my, lyr_x - 10, y - 4, lyr_w, line_hs[i] - 12);
-            if (hov_l) alpha = alpha < 0.78f ? 0.78f : alpha;
+            if (hov_l) alpha = alpha < 0.85f ? 0.85f : alpha;
 
             if (is_cur) {
                 fill_round_rect_aa_a(screen, lyr_x - 14, y - 8, lyr_w + 16, line_hs[i] - 14, 18,
@@ -2070,8 +2081,10 @@ static void draw_immersive_view(int mx, int my) {
                 fill_round_rect_aa(screen, lyr_x - 14, y - 8, lyr_w + 16, line_hs[i] - 14, 18, C_GLASS);
             }
 
-            uint32_t col_orig = mix_col(C_TXT3, C_TXT, alpha);
-            uint32_t col_sub  = mix_col(C_TXT3, is_cur ? C_ACCENT : C_TXT2, alpha * 0.92f);
+            uint8_t oa = (uint8_t)clampf(alpha * edge_fade * 255.0f, 4.0f, 255.0f);
+            uint8_t sa = (uint8_t)clampf(alpha * edge_fade * 225.0f, 4.0f, 255.0f);
+            uint32_t col_orig = with_alpha(is_cur ? C_TXT : C_TXT2, oa);
+            uint32_t col_sub  = with_alpha(is_cur ? C_ACCENT : C_TXT2, sa);
 
             char o_lines[4][256], s_lines[3][256];
             const char* orig_s = lyr->lines[i].orig[0] ? lyr->lines[i].orig : lyr->lines[i].text;

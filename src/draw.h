@@ -71,6 +71,10 @@ void draw_m3_wavy_progress(Canvas* c, int x0, int x1, int mid_y, float frac,
                            float phase, float wave_amp, float wave_period,
                            int wave_thick, int track_thick, int draw_thumb,
                            uint32_t col_active, uint32_t col_track);
+// 加粗直线水纹胶囊进度条（直线轮廓 + 流动液态水纹光泽 + 顺滑液滴滑块）
+void draw_m3_water_progress(Canvas* c, int x0, int x1, int mid_y, float frac,
+                            float phase, int bar_thick, int draw_thumb,
+                            uint32_t col_active, uint32_t col_track);
 void fill_m3_scallop(Canvas* c, int cx, int cy, int r, int lobes, float rot, uint32_t col);
 void fill_m3_wave_panel_right(Canvas* c, int x, int y, int w, int h, int r,
                               int split_x, float amp, float period, float phase,

@@ -1217,3 +1217,102 @@ void fill_m3_wave_panel_right(Canvas* c, int x, int y, int w, int h, int r,
         }
     }
 }
+
+void draw_m3_water_progress(Canvas* c, int x0, int x1, int mid_y, float frac,
+                            float phase, int bar_thick, int draw_thumb,
+                            uint32_t col_active, uint32_t col_track) {
+    if (!c || x1 <= x0 + 6) return;
+    if (frac < 0.0f) frac = 0.0f;
+    if (frac > 1.0f) frac = 1.0f;
+
+    float s = c->s > 0.0f ? c->s : 1.0f;
+    int px0 = sc_i(s, x0);
+    int px1 = sc_i(s, x1);
+    int py  = sc_i(s, mid_y);
+    int th  = sc_sz(s, bar_thick);
+    if (th < 4) th = 4;
+    float r = (float)th * 0.5f;
+
+    int cx0, cy0, cx1, cy1;
+    canvas_clip_bounds(c, &cx0, &cy0, &cx1, &cy1);
+
+    int iy0 = py - (int)ceilf(r + 1.0f); if (iy0 < cy0) iy0 = cy0;
+    int iy1 = py + (int)ceilf(r + 1.0f); if (iy1 >= cy1) iy1 = cy1 - 1;
+    int ix0 = px0 - 1; if (ix0 < cx0) ix0 = cx0;
+    int ix1 = px1 + 1; if (ix1 >= cx1) ix1 = cx1 - 1;
+
+    uint8_t ta = (uint8_t)(col_track >> 24);
+    if (ta == 0) ta = 255;
+    uint8_t aa_base = (uint8_t)(col_active >> 24);
+    if (aa_base == 0) aa_base = 255;
+
+    float fx0 = (float)px0 + r;
+    float fx1 = (float)px1 - r;
+    if (fx1 < fx0) fx1 = fx0;
+    float thumb_x = (float)px0 + (float)(px1 - px0) * frac;
+
+    uint32_t ar = col_active & 0xFFu, ag = (col_active >> 8) & 0xFFu, ab = (col_active >> 16) & 0xFFu;
+    uint32_t tr = col_track & 0xFFu,  tg = (col_track >> 8) & 0xFFu,  tb = (col_track >> 16) & 0xFFu;
+
+    for (int y = iy0; y <= iy1; y++) {
+        float dy = (float)y + 0.5f - (float)py;
+        if (fabsf(dy) > r + 1.0f) continue;
+        for (int x = ix0; x <= ix1; x++) {
+            float fx = (float)x + 0.5f;
+            float dx = (fx < fx0) ? (fx0 - fx) : ((fx > fx1) ? (fx - fx1) : 0.0f);
+            float dist = sqrtf(dx * dx + dy * dy);
+            float cov = r - dist + 0.5f;
+            if (cov <= 0.0f) continue;
+            if (cov > 1.0f) cov = 1.0f;
+
+            if (frac > 0.002f && fx <= thumb_x + 0.5f) {
+                float acov = cov;
+                if (fx > thumb_x - 0.5f) {
+                    float ec = (thumb_x + 0.5f) - fx;
+                    if (ec < acov) acov = ec < 0.0f ? 0.0f : ec;
+                }
+                // Background track blend first on edge, then liquid water ripple fill
+                if (cov > acov && acov < 1.0f) {
+                    px_blend(c, x, y, COL(tr, tg, tb, 255), (uint8_t)((cov - acov) * (float)ta + 0.5f));
+                }
+                if (acov > 0.0f) {
+                    float nx = (fx - (float)px0) / s;
+                    float ny = dy / r;
+                    float w1 = sinf(nx * 0.14f - phase * 2.6f);
+                    float w2 = sinf(nx * 0.25f + phase * 1.5f + ny * 1.8f);
+                    float ripple = (w1 + w2 * 0.6f) * 0.5f;
+                    // Liquid sheen along top edge + flowing caustic wave
+                    float sheen = (ny < 0.0f ? (-ny) * 0.14f : 0.0f) + (ripple > 0.0f ? ripple * 0.36f : ripple * 0.14f);
+                    // Travelling crest glow near playhead
+                    float dhead = fabsf(fx - thumb_x) / s;
+                    if (dhead < 28.0f) sheen += (1.0f - dhead / 28.0f) * 0.18f;
+
+                    float wr = (float)ar, wg = (float)ag, wb = (float)ab;
+                    if (sheen >= 0.0f) {
+                        float t = sheen > 0.52f ? 0.52f : sheen;
+                        wr += (255.0f - wr) * t;
+                        wg += (255.0f - wg) * t;
+                        wb += (255.0f - wb) * t;
+                    } else {
+                        float k = 1.0f + sheen;
+                        if (k < 0.72f) k = 0.72f;
+                        wr *= k; wg *= k; wb *= k;
+                    }
+                    uint32_t wc = COL((uint8_t)wr, (uint8_t)wg, (uint8_t)wb, 255);
+                    px_blend(c, x, y, wc, (uint8_t)(acov * (float)aa_base + 0.5f));
+                }
+            } else {
+                px_blend(c, x, y, COL(tr, tg, tb, 255), (uint8_t)(cov * (float)ta + 0.5f));
+            }
+        }
+    }
+
+    if (draw_thumb) {
+        int ttx = (int)(thumb_x + 0.5f);
+        float hr = r + 3.2f * s;
+        fill_circle_a_px(c, ttx, py, (int)(hr + 3.0f * s), col_active, 48);
+        fill_ellipse_aa_px(c, ttx, py, (int)hr, (int)hr, COL(250, 252, 255, 255));
+        fill_ellipse_aa_px(c, ttx, py, (int)(hr - 2.0f * s) > 1 ? (int)(hr - 2.0f * s) : 1,
+                           (int)(hr - 2.0f * s) > 1 ? (int)(hr - 2.0f * s) : 1, col_active);
+    }
+}
