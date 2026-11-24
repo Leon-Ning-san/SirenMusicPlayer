@@ -195,10 +195,16 @@ void draw_text(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const c
         if (g->bmp) {
             int gx = cx + g->x0;
             int gy = base_y + g->y0;
-            int j0 = gy < 0 ? -gy : 0;
-            int j1 = (gy + g->bh > c->h) ? (c->h - gy) : g->bh;
-            int i0 = gx < 0 ? -gx : 0;
-            int i1 = (gx + g->bw > c->w) ? (c->w - gx) : g->bw;
+            int cx0 = c->clip_x0, cy0 = c->clip_y0, cx1 = c->clip_x1, cy1 = c->clip_y1;
+            if (cx0 == 0 && cy0 == 0 && cx1 == 0 && cy1 == 0) { cx1 = c->w; cy1 = c->h; }
+            if (cx0 < 0) cx0 = 0;
+            if (cy0 < 0) cy0 = 0;
+            if (cx1 > c->w) cx1 = c->w;
+            if (cy1 > c->h) cy1 = c->h;
+            int j0 = gy < cy0 ? (cy0 - gy) : 0;
+            int j1 = (gy + g->bh > cy1) ? (cy1 - gy) : g->bh;
+            int i0 = gx < cx0 ? (cx0 - gx) : 0;
+            int i1 = (gx + g->bw > cx1) ? (cx1 - gx) : g->bw;
             for (int j = j0; j < j1; j++) {
                 uint32_t* drow = c->px + (size_t)(gy + j) * c->w + gx;
                 const uint8_t* srow = g->bmp + (size_t)j * g->bw;

@@ -18,6 +18,7 @@ typedef struct {
 // Returns NULL if not found/empty.
 Lyrics* lyrics_load(const char* media_path);
 Lyrics* lyrics_load_ex(const char* media_path, const char* title, const char* artist);
+Lyrics* lyrics_load_file(const char* lrc_path);
 void lyrics_free(Lyrics* l);
 // index of active line for time t, or -1
 int lyrics_index(const Lyrics* l, double t);

@@ -5,12 +5,15 @@
 typedef struct {
     int w, h;
     uint32_t* px; // RGBA8888, memory bytes: R,G,B,A
+    int clip_x0, clip_y0, clip_x1, clip_y1;
 } Canvas;
 
 #define COL(r,g,b,a) (((uint32_t)(a)<<24)|((uint32_t)(b)<<16)|((uint32_t)(g)<<8)|(uint32_t)(r))
 
 Canvas* canvas_new(int w, int h);
 void canvas_free(Canvas* c);
+void canvas_set_clip(Canvas* c, int x0, int y0, int x1, int y1);
+void canvas_reset_clip(Canvas* c);
 void canvas_clear(Canvas* c, uint32_t col);
 void fill_rect(Canvas* c, int x, int y, int w, int h, uint32_t col);
 void fill_rect_a(Canvas* c, int x, int y, int w, int h, uint32_t col, uint8_t alpha);
@@ -57,6 +60,11 @@ void fill_circle_a(Canvas* c, int cx, int cy, int r, uint32_t col, uint8_t a);
 // 抗锯齿圆形（带透明度 + 矩形裁剪）：水波纹只在卡片范围内扩散
 void fill_circle_clip_a(Canvas* c, int cx, int cy, int r, uint32_t col, uint8_t a,
                         int clipx, int clipy, int clipw, int cliph);
+// Material You 粗波浪进度条（已播放段正弦波浪 + 未播放段圆角轨 + 竖向胶囊滑块）
+void draw_m3_wavy_progress(Canvas* c, int x0, int x1, int mid_y, float frac,
+                           float phase, float wave_amp, float wave_period,
+                           int wave_thick, int track_thick, int draw_thumb,
+                           uint32_t col_active, uint32_t col_track);
 
 // ---- text ----
 typedef struct Font Font;

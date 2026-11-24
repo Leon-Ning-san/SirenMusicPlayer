@@ -81,7 +81,7 @@ static int parse_time_tag(const char* tag, double* out_t) {
             hh = a; mm = b; ss = c; p = q;
         }
     }
-    if (*p == '.' || *p == ':' || *p == '-') {
+    if (*p == '.' || *p == ':' || *p == '-' || *p == ',') {
         p++;
         double div = 10.0;
         while (isdigit((unsigned char)*p)) {
@@ -433,12 +433,30 @@ static Lyrics* find_lrc_in_dir_ci(const char* dir, const char* stem, const char*
     return NULL;
 }
 
-// 模糊匹配目录中的 .lrc（应对 "01. 歌名 (Live).flac" vs "歌手 - 歌名.lrc"）
+// 模糊匹配目录中的 .lrc（应对 "01. 歌名 (Live).flac" vs "歌手 - 歌名.lrc" 或 "歌名 (Live)" vs "歌名.lrc"）
+static void strip_title_parens(const char* in, char* out, size_t cap) {
+    if (!in || !*in) { if (cap) out[0] = 0; return; }
+    size_t j = 0;
+    for (size_t i = 0; in[i] && j + 1 < cap; i++) {
+        if (in[i] == '(' || in[i] == '[' ||
+            ((unsigned char)in[i] == 0xEF && (unsigned char)in[i + 1] == 0xBC && (unsigned char)in[i + 2] == 0x88)) {
+            break;
+        }
+        out[j++] = in[i];
+    }
+    while (j > 0 && (out[j - 1] == ' ' || out[j - 1] == '-' || out[j - 1] == '_')) j--;
+    out[j] = 0;
+}
+
 static Lyrics* find_lrc_fuzzy_in_dir(const char* dir, const char* key_title, const char* key_artist, const char* source_label) {
     if (!dir || !*dir || !key_title || strlen(key_title) < 2) return NULL;
     char open_dir[600];
     if (!strcmp(dir, "sdmc:")) snprintf(open_dir, sizeof(open_dir), "sdmc:/");
     else snprintf(open_dir, sizeof(open_dir), "%s", dir);
+
+    char base_title[300];
+    strip_title_parens(key_title, base_title, sizeof(base_title));
+    if (strlen(base_title) < 2) snprintf(base_title, sizeof(base_title), "%s", key_title);
 
     PlatDir* d = plat_opendir(open_dir);
     if (!d) return NULL;
@@ -449,17 +467,19 @@ static Lyrics* find_lrc_fuzzy_in_dir(const char* dir, const char* key_title, con
         if (!ci_ends_with(e.d_name, ".lrc")) continue;
         char fstem[300];
         basename_no_ext(e.d_name, fstem, sizeof(fstem));
-        if (!ci_contains_sub(fstem, key_title)) continue;
-        int score = 10;
+        int fwd = ci_contains_sub(fstem, key_title) || ci_contains_sub(fstem, base_title);
+        int rev = (strlen(fstem) >= 3 && (ci_contains_sub(key_title, fstem) || ci_contains_sub(base_title, fstem)));
+        if (!fwd && !rev) continue;
+        int score = fwd ? 10 : 8;
         if (key_artist && key_artist[0] && ci_contains_sub(fstem, key_artist)) score += 20;
-        if (strlen(fstem) <= strlen(key_title) + 4) score += 5;
+        if (strlen(fstem) <= strlen(base_title) + 4) score += 5;
         if (score > best_score) {
             best_score = score;
             snprintf(best_name, sizeof(best_name), "%s", e.d_name);
         }
     }
     plat_closedir(d);
-    if (best_score >= 15 || (best_score >= 10 && strlen(key_title) >= 4)) {
+    if (best_score >= 15 || (best_score >= 10 && strlen(base_title) >= 4) || (best_score >= 8 && strlen(best_name) >= 6)) {
         char full[680];
         join_lrc_path(full, sizeof(full), open_dir, best_name);
         return load_lrc_file_path(full, source_label);
@@ -621,11 +641,16 @@ static Lyrics* extract_id3v2_block(const unsigned char* hdr10, const unsigned ch
         if ((!strcmp(fid, "USLT") || !strcmp(fid, "ULT")) && dlen > 4) {
             int enc = data[0];
             const unsigned char* p = data + 1;
-            // 标准 USLT 有 3 字节语言码 + 描述符\0，但少数非标工具直接写 [00: 或 BOM
-            if (!((p[0] == 0xFF && p[1] == 0xFE) || (p[0] == 0xFE && p[1] == 0xFF) ||
-                  (p[0] == '[' && isdigit(p[1])))) {
+            // 标准 USLT 有 3 字节语言码 + 描述符\0，但少数非标工具直接写 [00: / BOM 或单字节 0x00 结束描述符
+            if (!((p + 1 < end && ((p[0] == 0xFF && p[1] == 0xFE) || (p[0] == 0xFE && p[1] == 0xFF))) ||
+                  (p + 1 < end && p[0] == '[' && isdigit(p[1])))) {
                 if (p + 3 <= end) p += 3;
-                if (p < end) p += skip_id3_zstr(enc, p, end);
+                if ((enc == 1 || enc == 2) && p + 2 < end && p[0] == 0 &&
+                    ((p[1] == 0xFF && p[2] == 0xFE) || (p[1] == 0xFE && p[2] == 0xFF) || p[1] == '[')) {
+                    p += 1;
+                } else if (p < end) {
+                    p += skip_id3_zstr(enc, p, end);
+                }
             }
             if (p < end) {
                 char* txt = id3_decode_buf(enc, p, (size_t)(end - p));
@@ -1039,6 +1064,8 @@ Lyrics* lyrics_load_ex(const char* media_path, const char* title, const char* ar
 
     char dir[560] = {0};
     char parent_lyrics[600] = {0};
+    char parent_Lyrics[600] = {0};
+    char parent_lrc[600] = {0};
     char stem[256] = {0};
     char stem_clean[256] = {0};
 
@@ -1049,11 +1076,14 @@ Lyrics* lyrics_load_ex(const char* media_path, const char* title, const char* ar
         memcpy(dir, media_path, dlen);
         dir[dlen] = 0;
         while (dlen > 0 && (dir[dlen - 1] == '/' || dir[dlen - 1] == '\\')) dir[--dlen] = 0;
-        if (!strcmp(dir, "sdmc:") || dir[0] == 0) snprintf(dir, sizeof(dir), "sdmc:/");
+        if (!strcmp(dir, "sdmc:")) snprintf(dir, sizeof(dir), "sdmc:/");
+        else if (dir[0] == 0) snprintf(dir, sizeof(dir), (media_path[0] == '/') ? "/" : ".");
         const char* pslash = path_last_sep(dir);
         if (pslash && pslash > dir + 2) {
             size_t plen = (size_t)(pslash - dir);
             snprintf(parent_lyrics, sizeof(parent_lyrics), "%.*s/lyrics", (int)plen, dir);
+            snprintf(parent_Lyrics, sizeof(parent_Lyrics), "%.*s/Lyrics", (int)plen, dir);
+            snprintf(parent_lrc,    sizeof(parent_lrc),    "%.*s/lrc",    (int)plen, dir);
         }
     } else {
         snprintf(dir, sizeof(dir), ".");
@@ -1062,8 +1092,8 @@ Lyrics* lyrics_load_ex(const char* media_path, const char* title, const char* ar
     basename_no_ext(media_path, stem, sizeof(stem));
     strip_track_prefix(stem, stem_clean, sizeof(stem_clean));
 
-    // 构建候选文件名列表：原文件名、去曲号文件名、标题、歌手-标题、标题-歌手
-    char stems[5][300];
+    // 构建候选文件名列表：原文件名、去曲号、标题、歌手 - 标题（含无空格写法）
+    char stems[7][300];
     int nstems = 0;
     snprintf(stems[nstems++], sizeof(stems[0]), "%s", stem);
     if (stem_clean[0] && strcasecmp(stem_clean, stem) != 0)
@@ -1073,6 +1103,8 @@ Lyrics* lyrics_load_ex(const char* media_path, const char* title, const char* ar
     if (title && title[0] && artist && artist[0]) {
         snprintf(stems[nstems++], sizeof(stems[0]), "%s - %s", artist, title);
         snprintf(stems[nstems++], sizeof(stems[0]), "%s - %s", title, artist);
+        snprintf(stems[nstems++], sizeof(stems[0]), "%s-%s", artist, title);
+        snprintf(stems[nstems++], sizeof(stems[0]), "%s-%s", title, artist);
     }
 
     char dir_lyrics[620], dir_Lyrics[620], dir_lrc[620];
@@ -1081,12 +1113,16 @@ Lyrics* lyrics_load_ex(const char* media_path, const char* title, const char* ar
     join_lrc_path(dir_lrc,    sizeof(dir_lrc),    dir, "lrc");
 
     const char* search_dirs[] = {
-        dir, dir_lyrics, dir_Lyrics, dir_lrc, parent_lyrics,
+        dir, dir_lyrics, dir_Lyrics, dir_lrc,
+        parent_lyrics, parent_Lyrics, parent_lrc,
+        "lyrics", "Lyrics", "lrc",
         "sdmc:/music/lyrics", "sdmc:/Music/lyrics", "sdmc:/lyrics",
         "sdmc:/Sirene/lyrics", "sdmc:/Siren/lyrics"
     };
     const char* dir_labels[] = {
-        "同目录 .lrc", "同级 lyrics/ .lrc", "同级 Lyrics/ .lrc", "同级 lrc/ .lrc", "上级 lyrics/ .lrc",
+        "同目录 .lrc", "同级 lyrics/ .lrc", "同级 Lyrics/ .lrc", "同级 lrc/ .lrc",
+        "上级 lyrics/ .lrc", "上级 Lyrics/ .lrc", "上级 lrc/ .lrc",
+        "当前 lyrics/ .lrc", "当前 Lyrics/ .lrc", "当前 lrc/ .lrc",
         "music/lyrics .lrc", "Music/lyrics .lrc", "sdmc:/lyrics .lrc",
         "Sirene/lyrics .lrc", "Siren/lyrics .lrc"
     };
@@ -1105,6 +1141,10 @@ Lyrics* lyrics_load_ex(const char* media_path, const char* title, const char* ar
     if (fl) return fl;
     fl = find_lrc_fuzzy_in_dir(dir_lyrics, fz_title, artist, "lyrics/模糊匹配 .lrc");
     if (fl) return fl;
+    fl = find_lrc_fuzzy_in_dir(dir_Lyrics, fz_title, artist, "Lyrics/模糊匹配 .lrc");
+    if (fl) return fl;
+    fl = find_lrc_fuzzy_in_dir(parent_lyrics, fz_title, artist, "上级 lyrics/模糊匹配 .lrc");
+    if (fl) return fl;
 
     // 音频内嵌歌词提取
     Lyrics* l = NULL;
@@ -1121,6 +1161,13 @@ Lyrics* lyrics_load_ex(const char* media_path, const char* title, const char* ar
 
     set_diag("未检测到同名.lrc或音频内嵌歌词标签");
     return NULL;
+}
+
+Lyrics* lyrics_load_file(const char* lrc_path) {
+    if (!lrc_path || !*lrc_path) return NULL;
+    Lyrics* l = load_lrc_file_path(lrc_path, "拖入外部 .lrc");
+    if (!l) set_diag("外部 .lrc 文件无法解析或为空");
+    return l;
 }
 
 Lyrics* lyrics_load(const char* media_path) {

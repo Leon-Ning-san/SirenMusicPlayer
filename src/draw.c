@@ -3,11 +3,43 @@
 #include <string.h>
 #include <math.h>
 
+static inline void canvas_clip_bounds(const Canvas* c, int* x0, int* y0, int* x1, int* y1) {
+    int cx0 = c->clip_x0, cy0 = c->clip_y0, cx1 = c->clip_x1, cy1 = c->clip_y1;
+    if (cx0 == 0 && cy0 == 0 && cx1 == 0 && cy1 == 0) {
+        cx1 = c->w;
+        cy1 = c->h;
+    }
+    *x0 = cx0 < 0 ? 0 : cx0;
+    *y0 = cy0 < 0 ? 0 : cy0;
+    *x1 = cx1 > c->w ? c->w : cx1;
+    *y1 = cy1 > c->h ? c->h : cy1;
+}
+
 Canvas* canvas_new(int w, int h) {
     Canvas* c = (Canvas*)malloc(sizeof(Canvas));
     c->w = w; c->h = h;
+    c->clip_x0 = 0; c->clip_y0 = 0;
+    c->clip_x1 = w; c->clip_y1 = h;
     c->px = (uint32_t*)calloc((size_t)w * h, 4);
     return c;
+}
+
+void canvas_set_clip(Canvas* c, int x0, int y0, int x1, int y1) {
+    if (!c) return;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > c->w) x1 = c->w;
+    if (y1 > c->h) y1 = c->h;
+    if (x1 < x0) x1 = x0;
+    if (y1 < y0) y1 = y0;
+    c->clip_x0 = x0; c->clip_y0 = y0;
+    c->clip_x1 = x1; c->clip_y1 = y1;
+}
+
+void canvas_reset_clip(Canvas* c) {
+    if (!c) return;
+    c->clip_x0 = 0; c->clip_y0 = 0;
+    c->clip_x1 = c->w; c->clip_y1 = c->h;
 }
 
 void canvas_free(Canvas* c) {
@@ -21,10 +53,12 @@ void canvas_clear(Canvas* c, uint32_t col) {
 }
 
 void fill_rect(Canvas* c, int x, int y, int w, int h, uint32_t col) {
-    if (x < 0) { w += x; x = 0; }
-    if (y < 0) { h += y; y = 0; }
-    if (x + w > c->w) w = c->w - x;
-    if (y + h > c->h) h = c->h - y;
+    int cx0, cy0, cx1, cy1;
+    canvas_clip_bounds(c, &cx0, &cy0, &cx1, &cy1);
+    if (x < cx0) { w += x - cx0; x = cx0; }
+    if (y < cy0) { h += y - cy0; y = cy0; }
+    if (x + w > cx1) w = cx1 - x;
+    if (y + h > cy1) h = cy1 - y;
     if (w <= 0 || h <= 0) return;
     for (int j = 0; j < h; j++) {
         uint32_t* row = c->px + (size_t)(y + j) * c->w + x;
@@ -57,10 +91,12 @@ static inline uint32_t blend_px_a(uint32_t dst, uint32_t src, uint8_t ga) {
 void fill_rect_a(Canvas* c, int x, int y, int w, int h, uint32_t col, uint8_t alpha) {
     if (alpha == 0) return;
     if (alpha == 255) { fill_rect(c, x, y, w, h, col | 0xFF000000u); return; }
-    if (x < 0) { w += x; x = 0; }
-    if (y < 0) { h += y; y = 0; }
-    if (x + w > c->w) w = c->w - x;
-    if (y + h > c->h) h = c->h - y;
+    int cx0, cy0, cx1, cy1;
+    canvas_clip_bounds(c, &cx0, &cy0, &cx1, &cy1);
+    if (x < cx0) { w += x - cx0; x = cx0; }
+    if (y < cy0) { h += y - cy0; y = cy0; }
+    if (x + w > cx1) w = cx1 - x;
+    if (y + h > cy1) h = cy1 - y;
     if (w <= 0 || h <= 0) return;
 
     uint32_t a = alpha;
@@ -79,9 +115,11 @@ void fill_rect_a(Canvas* c, int x, int y, int w, int h, uint32_t col, uint8_t al
 }
 
 static void hline_a(Canvas* c, int x, int y, int len, uint32_t s_rb, uint32_t s_g, uint32_t na) {
-    if (y < 0 || y >= c->h || len <= 0) return;
-    if (x < 0) { len += x; x = 0; }
-    if (x + len > c->w) len = c->w - x;
+    int cx0, cy0, cx1, cy1;
+    canvas_clip_bounds(c, &cx0, &cy0, &cx1, &cy1);
+    if (y < cy0 || y >= cy1 || len <= 0) return;
+    if (x < cx0) { len += x - cx0; x = cx0; }
+    if (x + len > cx1) len = cx1 - x;
     if (len <= 0) return;
     uint32_t* row = c->px + (size_t)y * c->w + x;
     for (int i = 0; i < len; i++) {
@@ -122,10 +160,12 @@ void fill_tri(Canvas* c, int x0, int y0, int x1, int y1, int x2, int y2, uint32_
 }
 
 void blit_rgba(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, int sh) {
-    int x0 = dx < 0 ? -dx : 0;
-    int y0 = dy < 0 ? -dy : 0;
-    int x1 = (dx + sw > dst->w) ? dst->w - dx : sw;
-    int y1 = (dy + sh > dst->h) ? dst->h - dy : sh;
+    int cx0, cy0, cx1, cy1;
+    canvas_clip_bounds(dst, &cx0, &cy0, &cx1, &cy1);
+    int x0 = dx < cx0 ? cx0 - dx : 0;
+    int y0 = dy < cy0 ? cy0 - dy : 0;
+    int x1 = (dx + sw > cx1) ? cx1 - dx : sw;
+    int y1 = (dy + sh > cy1) ? cy1 - dy : sh;
     if (x1 <= x0 || y1 <= y0) return;
     for (int j = y0; j < y1; j++) {
         uint32_t* d = dst->px + (size_t)(dy + j) * dst->w + dx + x0;
@@ -195,10 +235,12 @@ static inline int corner_cov(int dx_c, int dy_c, int r) {
 void blit_rgb_round(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, int sh, int corner) {
     if (corner > sw / 2) corner = sw / 2;
     if (corner > sh / 2) corner = sh / 2;
-    int x0 = dx < 0 ? -dx : 0;
-    int y0 = dy < 0 ? -dy : 0;
-    int x1 = (dx + sw > dst->w) ? dst->w - dx : sw;
-    int y1 = (dy + sh > dst->h) ? dst->h - dy : sh;
+    int cx0, cy0, cx1, cy1;
+    canvas_clip_bounds(dst, &cx0, &cy0, &cx1, &cy1);
+    int x0 = dx < cx0 ? cx0 - dx : 0;
+    int y0 = dy < cy0 ? cy0 - dy : 0;
+    int x1 = (dx + sw > cx1) ? cx1 - dx : sw;
+    int y1 = (dy + sh > cy1) ? cy1 - dy : sh;
     if (x1 <= x0 || y1 <= y0) return;
 
     for (int j = y0; j < y1; j++) {
@@ -235,10 +277,12 @@ void blit_rgba_round_a(Canvas* dst, int dx, int dy, const uint32_t* src, int sw,
     if (a == 0) return;
     if (corner > sw / 2) corner = sw / 2;
     if (corner > sh / 2) corner = sh / 2;
-    int x0 = dx < 0 ? -dx : 0;
-    int y0 = dy < 0 ? -dy : 0;
-    int x1 = (dx + sw > dst->w) ? dst->w - dx : sw;
-    int y1 = (dy + sh > dst->h) ? dst->h - dy : sh;
+    int cx0, cy0, cx1, cy1;
+    canvas_clip_bounds(dst, &cx0, &cy0, &cx1, &cy1);
+    int x0 = dx < cx0 ? cx0 - dx : 0;
+    int y0 = dy < cy0 ? cy0 - dy : 0;
+    int x1 = (dx + sw > cx1) ? cx1 - dx : sw;
+    int y1 = (dy + sh > cy1) ? cy1 - dy : sh;
     if (x1 <= x0 || y1 <= y0) return;
 
     for (int j = y0; j < y1; j++) {
@@ -270,10 +314,12 @@ void blit_rgba_round_a(Canvas* dst, int dx, int dy, const uint32_t* src, int sw,
 void blit_rgba_round(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, int sh, int corner) {
     if (corner > sw / 2) corner = sw / 2;
     if (corner > sh / 2) corner = sh / 2;
-    int x0 = dx < 0 ? -dx : 0;
-    int y0 = dy < 0 ? -dy : 0;
-    int x1 = (dx + sw > dst->w) ? dst->w - dx : sw;
-    int y1 = (dy + sh > dst->h) ? dst->h - dy : sh;
+    int cx0, cy0, cx1, cy1;
+    canvas_clip_bounds(dst, &cx0, &cy0, &cx1, &cy1);
+    int x0 = dx < cx0 ? cx0 - dx : 0;
+    int y0 = dy < cy0 ? cy0 - dy : 0;
+    int x1 = (dx + sw > cx1) ? cx1 - dx : sw;
+    int y1 = (dy + sh > cy1) ? cy1 - dy : sh;
     if (x1 <= x0 || y1 <= y0) return;
 
     for (int j = y0; j < y1; j++) {
@@ -390,8 +436,14 @@ void scale_rgb(uint32_t* img, int n, float f) {
 }
 
 // ================= 快速抗锯齿原语 =================
+static inline int px_in_clip(const Canvas* c, int x, int y) {
+    int cx0, cy0, cx1, cy1;
+    canvas_clip_bounds(c, &cx0, &cy0, &cx1, &cy1);
+    return x >= cx0 && y >= cy0 && x < cx1 && y < cy1;
+}
+
 static inline void px_blend(Canvas* c, int x, int y, uint32_t col, uint8_t a) {
-    if (x < 0 || y < 0 || x >= c->w || y >= c->h || a == 0) return;
+    if (a == 0 || !px_in_clip(c, x, y)) return;
     if (a >= 255) {
         c->px[(size_t)y * c->w + x] = col | 0xFF000000u;
         return;
@@ -441,14 +493,10 @@ void fill_round_rect_aa_a(Canvas* c, int x, int y, int w, int h, int r, uint32_t
             }
             if (a == 0) continue;
             if (a >= 255) {
-                if (y + j >= 0 && y + j < c->h) {
-                    if (x + i >= 0 && x + i < c->w) c->px[(size_t)(y + j) * c->w + (x + i)] = opaque;
-                    if (x + w - 1 - i >= 0 && x + w - 1 - i < c->w) c->px[(size_t)(y + j) * c->w + (x + w - 1 - i)] = opaque;
-                }
-                if (y + h - 1 - j >= 0 && y + h - 1 - j < c->h) {
-                    if (x + i >= 0 && x + i < c->w) c->px[(size_t)(y + h - 1 - j) * c->w + (x + i)] = opaque;
-                    if (x + w - 1 - i >= 0 && x + w - 1 - i < c->w) c->px[(size_t)(y + h - 1 - j) * c->w + (x + w - 1 - i)] = opaque;
-                }
+                if (px_in_clip(c, x + i, y + j))                 c->px[(size_t)(y + j) * c->w + (x + i)] = opaque;
+                if (px_in_clip(c, x + w - 1 - i, y + j))         c->px[(size_t)(y + j) * c->w + (x + w - 1 - i)] = opaque;
+                if (px_in_clip(c, x + i, y + h - 1 - j))         c->px[(size_t)(y + h - 1 - j) * c->w + (x + i)] = opaque;
+                if (px_in_clip(c, x + w - 1 - i, y + h - 1 - j)) c->px[(size_t)(y + h - 1 - j) * c->w + (x + w - 1 - i)] = opaque;
             } else {
                 px_blend(c, x + i,         y + j,         col, a);
                 px_blend(c, x + w - 1 - i, y + j,         col, a);
@@ -579,8 +627,10 @@ void stroke_circle_aa(Canvas* c, int cx, int cy, int r, int thickness, uint32_t 
     float r_max2 = r_max * r_max;
     float r_min2 = r_min * r_min;
 
-    int j0 = (cy - r - 1 < 0) ? -cy : (-r - 1);
-    int j1 = (cy + r + 1 >= c->h) ? (c->h - 1 - cy) : (r + 1);
+    int cx0, cy0, cx1, cy1;
+    canvas_clip_bounds(c, &cx0, &cy0, &cx1, &cy1);
+    int j0 = (cy - r - 1 < cy0) ? (cy0 - cy) : (-r - 1);
+    int j1 = (cy + r + 1 >= cy1) ? (cy1 - 1 - cy) : (r + 1);
     for (int j = j0; j <= j1; j++) {
         int y = cy + j;
         float j2 = (float)(j * j);
@@ -626,10 +676,12 @@ void fill_tri_aa(Canvas* c, int x0, int y0, int x1, int y1, int x2, int y2, uint
     int maxx = x0 > x1 ? (x0 > x2 ? x0 : x2) : (x1 > x2 ? x1 : x2);
     int miny = y0 < y1 ? (y0 < y2 ? y0 : y2) : (y1 < y2 ? y1 : y2);
     int maxy = y0 > y1 ? (y0 > y2 ? y0 : y2) : (y1 > y2 ? y1 : y2);
-    if (minx < 1) minx = 1;
-    if (miny < 1) miny = 1;
-    if (maxx >= c->w - 1) maxx = c->w - 2;
-    if (maxy >= c->h - 1) maxy = c->h - 2;
+    int cx0, cy0, cx1, cy1;
+    canvas_clip_bounds(c, &cx0, &cy0, &cx1, &cy1);
+    if (minx < cx0) minx = cx0;
+    if (miny < cy0) miny = cy0;
+    if (maxx >= cx1) maxx = cx1 - 1;
+    if (maxy >= cy1) maxy = cy1 - 1;
     for (int y = miny; y <= maxy; y++) {
         double py = y + 0.5;
         for (int x = minx; x <= maxx; x++) {
@@ -656,8 +708,10 @@ void fill_ellipse_aa(Canvas* c, int cx, int cy, int rx, int ry, uint32_t col) {
     float dout2 = d_out * d_out;
     uint32_t opaque = col | 0xFF000000u;
 
-    int j0 = (cy - ry < 0) ? -cy : -ry;
-    int j1 = (cy + ry >= c->h) ? (c->h - 1 - cy) : ry;
+    int cx0, cy0, cx1, cy1;
+    canvas_clip_bounds(c, &cx0, &cy0, &cx1, &cy1);
+    int j0 = (cy - ry < cy0) ? (cy0 - cy) : -ry;
+    int j1 = (cy + ry >= cy1) ? (cy1 - 1 - cy) : ry;
     for (int j = j0; j <= j1; j++) {
         int y = cy + j;
         float jy = (float)j / (float)ry;
@@ -670,8 +724,8 @@ void fill_ellipse_aa(Canvas* c, int cx, int cy, int rx, int ry, uint32_t col) {
         int x_in = (rem_in > 0.0f) ? (int)floorf((float)rx * sqrtf(rem_in)) : -1;
 
         if (x_in >= 0) {
-            int lx = cx - x_in; if (lx < 0) lx = 0;
-            int rx_c = cx + x_in; if (rx_c >= c->w) rx_c = c->w - 1;
+            int lx = cx - x_in; if (lx < cx0) lx = cx0;
+            int rx_c = cx + x_in; if (rx_c >= cx1) rx_c = cx1 - 1;
             uint32_t* row = c->px + (size_t)y * c->w;
             for (int x = lx; x <= rx_c; x++) row[x] = opaque;
         }
@@ -700,8 +754,10 @@ void fill_circle_a(Canvas* c, int cx, int cy, int r, uint32_t col, uint8_t a) {
     uint32_t s_rb = (col & 0x00FF00FFu) * ua;
     uint32_t s_g  = (col & 0x0000FF00u) * ua;
 
-    int j0 = (cy - r - 1 < 0) ? -cy : (-r - 1);
-    int j1 = (cy + r + 1 >= c->h) ? (c->h - 1 - cy) : (r + 1);
+    int cx0, cy0, cx1, cy1;
+    canvas_clip_bounds(c, &cx0, &cy0, &cx1, &cy1);
+    int j0 = (cy - r - 1 < cy0) ? (cy0 - cy) : (-r - 1);
+    int j1 = (cy + r + 1 >= cy1) ? (cy1 - 1 - cy) : (r + 1);
     for (int j = j0; j <= j1; j++) {
         int y = cy + j;
         float j2 = (float)(j * j);
@@ -742,5 +798,113 @@ void fill_circle_clip_a(Canvas* c, int cx, int cy, int r, uint32_t col, uint8_t 
             uint8_t aa = (uint8_t)(cov * (float)a + 0.5f);
             if (aa > 0) px_blend(c, i, j, col, aa);
         }
+    }
+}
+
+void draw_m3_wavy_progress(Canvas* c, int x0, int x1, int mid_y, float frac,
+                           float phase, float wave_amp, float wave_period,
+                           int wave_thick, int track_thick, int draw_thumb,
+                           uint32_t col_active, uint32_t col_track) {
+    if (!c || x1 <= x0 + 2 || wave_thick < 1) return;
+    if (frac < 0.0f) frac = 0.0f;
+    if (frac > 1.0f) frac = 1.0f;
+    if (wave_amp < 0.0f) wave_amp = 0.0f;
+    if (track_thick < 2) track_thick = 2;
+
+    int knob_x = x0 + (int)(frac * (float)(x1 - x0) + 0.5f);
+    int gap = draw_thumb ? 7 : 2;
+    int track_start = knob_x + gap;
+    int wave_end = knob_x - gap;
+
+    // 1. 未播放段圆角底轨
+    if (track_start < x1) {
+        fill_round_rect_aa(c, track_start, mid_y - track_thick / 2,
+                           x1 - track_start, track_thick, track_thick / 2, col_track);
+    }
+
+    // 2. 已播放段 Material You 粗波浪进度带（法向等距抗锯齿 + 两端柔和收敛圆头）
+    if (wave_end > x0) {
+        if (wave_amp < 0.35f) {
+            fill_round_rect_aa(c, x0, mid_y - wave_thick / 2,
+                               wave_end - x0 + 1, wave_thick, wave_thick / 2, col_active);
+        } else {
+            float r = (float)wave_thick * 0.5f;
+            float freq = (wave_period > 2.0f) ? (6.2831853f / wave_period) : 0.22f;
+            int cx0, cy0, cx1, cy1;
+            canvas_clip_bounds(c, &cx0, &cy0, &cx1, &cy1);
+
+            int pad = (int)ceilf(r) + 1;
+            int xmin = x0 - pad;
+            int xmax = wave_end + pad;
+            if (xmin < cx0) xmin = cx0;
+            if (xmax >= cx1) xmax = cx1 - 1;
+
+            int ymin = mid_y - (int)ceilf(wave_amp + r) - 2;
+            int ymax = mid_y + (int)ceilf(wave_amp + r) + 2;
+            if (ymin < cy0) ymin = cy0;
+            if (ymax >= cy1) ymax = cy1 - 1;
+
+            uint32_t opaque = col_active | 0xFF000000u;
+            for (int x = xmin; x <= xmax; x++) {
+                float yc = (float)mid_y;
+                float inv_n = 1.0f;
+                if (x >= x0 && x <= wave_end) {
+                    float d_left = (float)(x - x0);
+                    float d_right = (float)(wave_end - x);
+                    float edge = d_left < d_right ? d_left : d_right;
+                    float env = edge / 7.0f;
+                    float env_d = 0.0f;
+                    if (env >= 1.0f) {
+                        env = 1.0f;
+                    } else if (env <= 0.0f) {
+                        env = 0.0f;
+                    } else {
+                        float t = env;
+                        env = t * t * (3.0f - 2.0f * t);
+                        env_d = 6.0f * t * (1.0f - t) / 7.0f * (d_left < d_right ? 1.0f : -1.0f);
+                    }
+                    float ang = d_left * freq - phase;
+                    float s = sinf(ang);
+                    float cs = cosf(ang);
+                    yc = (float)mid_y + wave_amp * env * s;
+                    float dy_dx = wave_amp * (env * freq * cs + env_d * s);
+                    inv_n = sqrtf(1.0f + dy_dx * dy_dx);
+                }
+
+                float ry = (r + 0.7f) * inv_n;
+                int ylo = (int)floorf(yc - ry);
+                int yhi = (int)ceilf(yc + ry);
+                if (ylo < ymin) ylo = ymin;
+                if (yhi > ymax) yhi = ymax;
+
+                for (int y = ylo; y <= yhi; y++) {
+                    float dist;
+                    if (x < x0) {
+                        float dx = (float)x - (float)x0;
+                        float dy = (float)y + 0.5f - (float)mid_y;
+                        dist = sqrtf(dx * dx + dy * dy);
+                    } else if (x > wave_end) {
+                        float dx = (float)x - (float)wave_end;
+                        float dy = (float)y + 0.5f - (float)mid_y;
+                        dist = sqrtf(dx * dx + dy * dy);
+                    } else {
+                        dist = fabsf((float)y + 0.5f - yc) / inv_n;
+                    }
+                    float cov = r + 0.55f - dist;
+                    if (cov <= 0.0f) continue;
+                    if (cov >= 1.0f) {
+                        c->px[(size_t)y * c->w + x] = opaque;
+                    } else {
+                        px_blend(c, x, y, col_active, (uint8_t)(cov * 255.0f + 0.5f));
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Material You 竖向圆角胶囊游标滑块
+    if (draw_thumb) {
+        int tw = 6, th = 24;
+        fill_round_rect_aa(c, knob_x - tw / 2, mid_y - th / 2, tw, th, tw / 2, col_active);
     }
 }

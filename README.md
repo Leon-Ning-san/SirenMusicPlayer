@@ -2,23 +2,23 @@
   <img src="icon.jpg" width="128" alt="Sirène Icon" />
 </p>
 
-<h1 align="center">Sirène · 跨平台本地音乐播放器（v1.2.3）</h1>
+<h1 align="center">Sirène · 跨平台本地音乐播放器（v1.2.4）</h1>
 
 <p align="center">
   <b>Nintendo Switch（<code>.nro</code>）· Windows · Linux · macOS</b><br/>
   <b>乔布斯 iPod Click Wheel × 现代 Apple 悬浮毛玻璃 × Google Material You 融合设计</b><br/>
-  <b>桌面端原生单向竖屏随身听（720×1280 等比缩放窗口 · 拖放即播 · 零配置开箱即用）</b>
+  <b>桌面端原生单向竖屏随身听（720×1280 等比缩放 · 实时歌词栏 · Material You 波浪进度条）</b>
 </p>
 
-纯软件渲染、无需 GPU，融合乔布斯经典 iPod 转盘骨架、现代 Apple 流体光晕卡片与 Google Material You 色调容器体系，所有切页、切歌、旋转与弹窗均采用轻量丝滑 **60 FPS 淡入动画**。Switch 端支持拆下 Joy-Con 全触屏随身听与专属按键映射；Windows / Linux / macOS 桌面端专注于简洁顺手的**经典竖屏随身听**体验，支持 WAV / MP3 / FLAC / OGG 无损音频与全能内嵌/外挂 `.lrc` 歌词。
+纯软件渲染、无需 GPU，融合乔布斯经典 iPod 转盘骨架、现代 Apple 流体光晕卡片与 Google Material You 表现力色调与**粗波浪动态进度条**，所有切页、切歌、旋转与弹窗均采用轻量丝滑 **60 FPS 淡入动画**。Windows / Linux / macOS 桌面端专注于简洁顺手的**经典竖屏随身听**体验，支持列表内嵌实时同步歌词、`.lrc` 直接拖入窗口、WAV / MP3 / FLAC / OGG 无损音频与多形态歌词/封面解析。
 
 ## 界面预览
 
-| 桌面 / Switch 竖屏列表页（冰霜白 Apple × M3） | 桌面 / Switch 竖屏播放页（歌词与 Click Wheel） |
+| 桌面竖屏列表（实时歌词栏 + 列表严格裁剪） | 竖屏全屏播放（Material You 粗波浪进度条） |
 | :---: | :---: |
-| ![竖屏列表页](previews/list_port.png) | ![竖屏播放页](previews/player_port.png) |
+| ![桌面竖屏列表](previews/list_port.png) | ![竖屏播放页](previews/player_port.png) |
 
-| Switch 横屏双栏（冰霜白 Apple × M3） | Switch 横屏全屏播放（钛空黑 · 流体光晕） |
+| Switch 横屏双栏（冰霜白 Apple × M3） | Switch 横屏全屏播放（钛空黑 · 流体光晕 + 波浪条） |
 | :---: | :---: |
 | ![横屏列表页](previews/list_land.png) | ![横屏全屏播放](previews/player_land.png) |
 
@@ -26,31 +26,29 @@
 | :---: | :---: |
 | ![钛空黑主题](previews/list_blue.png) | ![青瓷绿主题](previews/list_sage.png) |
 
-## 多平台支持（v1.2.3）
+## 多平台支持（v1.2.4）
 
 | 平台 | 产物文件名 | 渲染与音频后端 | 窗口 / 形态说明 |
 |---|---|---|---|
+| **Windows x64** | `Sirene-v1.2.4-Windows-x64.exe` | 原生 Win32 GDI + WinMM | 单文件免安装，零外部 DLL 依赖；默认 `468×832` 锁定纵横比竖屏窗口 |
+| **Linux x86_64** | `Sirene-v1.2.4-Linux-x86_64.tar.gz` | SDL2 逻辑缩放 + SDL2 Audio | 竖屏窗口（支持 HiDPI / 自由缩放），原生支持 `zenity` / `kdialog` 选目录 |
+| **macOS Apple Silicon** | `Sirene-v1.2.4-macOS-arm64.zip` | SDL2 逻辑缩放 + SDL2 Audio | 独立 `Sirène.app`（已内置 SDL2/SDL3 运行库，开箱即用），原生支持文件夹选择器 |
 | **Nintendo Switch** | `Sirene.nro` | Switch 帧缓冲 + SDL2 | 横屏/竖屏自动或手动切换，无手柄纯触屏闭环 + 专属按键映射 |
-| **Windows x64** | `Sirene-v1.2.3-Windows-x64.exe` | 原生 Win32 GDI + WinMM | 单文件免安装，零外部 DLL 依赖；默认 `468×832` 锁定纵横比竖屏窗口 |
-| **Linux x86_64** | `Sirene-v1.2.3-Linux-x86_64.tar.gz` | SDL2 逻辑缩放 + SDL2 Audio | 竖屏窗口（支持 HiDPI / 自由缩放），原生支持 `zenity` / `kdialog` 选目录 |
-| **macOS Apple Silicon** | `Sirene-v1.2.3-macOS-arm64.zip` | SDL2 逻辑缩放 + SDL2 Audio | 独立 `.app` 应用包（`Sirène.app`），竖屏随身听形态，原生支持系统文件夹选择器 |
 
-## 核心特性（v1.2.3）
+## 核心特性（v1.2.4）
 
-- **多平台竖屏本地播放器（v1.2.3 跨平台）**：
-  - Windows / Linux / macOS 统一以 `720×1280` 经典单向竖屏逻辑分辨率运行（自动适配屏幕缩放、保持清晰等比竖屏），内置中文搜索输入框、文件夹选择器与**拖放文件夹/单曲直接播放**。
-  - 默认自动扫描用户音乐目录（`~/Music` / `%USERPROFILE%\Music` / 运行目录下的 `music`），也可通过顶部 **`选目录`** 胶囊或拖入任意目录并自动记忆。
-- **60 FPS 流畅优化引擎**：
-  - 时间驱动 Cubic Ease-Out 淡入动画 + Click Wheel 精灵缓存 + O(R) 抗锯齿圆形/空心阴影光栅 + O(1) 字形哈希表，Switch 与桌面端皆丝滑跟手。
-- **法语品牌 `Sirène`（塞壬）与融合设计**：
-  - 乔布斯 iPod Click Wheel 转盘（支持点按及顺/逆时针环形滑动选曲/调音量）× 现代 Apple 流体专辑光晕 × Google Material You 动态色调胶囊；内置**冰霜白**、**钛空黑**、**青瓷绿**三套主题。
-- **全能歌词与封面引擎**：
-  - 支持非正方形封面居中裁切、MP3 ID3v2.3/2.4（含去非同步化）、FLAC `PICTURE`、OGG Base64 封面及同目录 `cover.jpg / folder.jpg`。
-  - 支持外挂 `.lrc`（含 `歌名 - 歌手.lrc`、去曲号匹配、模糊匹配、网易云/QQ JSON 转义换行、双语同时间轴合并）与 MP3（`USLT / SYLT / TXXX / COMM / APEv2`）、FLAC/OGG（`LYRICS / LYRICS-XXX`）、WAV 内嵌及二进制兜底扫描。
+- **列表视口严格像素裁剪（修复封面越界）**：为软光栅画布加入全局裁剪矩形（`Canvas` clip），列表上下滚动时最顶端与最底端歌曲的**专辑封面、高亮边框、文字与收藏心形**严格限制在列表视窗内部，绝不再突破边框覆盖顶栏或胶囊标签。
+- **Material You 粗波浪动态进度条**：全屏播放页与桌面底部播控栏全面升级为 **Google Material 3 Expressive 风格粗波浪进度条**（法向等距抗锯齿正弦波 + 平滑收敛圆头 + 4px 间距竖向胶囊游标 + 播放时实时流体波动 / 暂停自动归平）。
+- **PC 三平台歌词强化与列表实时歌词栏**：
+  - Windows / Linux / macOS 竖屏列表底部新增 **Apple × M3 实时歌词灵动栏**，无需切进全屏即可同步高亮当前歌词；点击卡片或 `歌词全屏`（`F` / `X`）可淡入展开多行居中歌词页。
+  - 增强 `.lrc` 与内嵌解析：支持 `歌手-歌名.lrc` 无空格匹配、括弧后缀反向模糊匹配、`[mm:ss,xx]` 逗号毫秒、上级/当前 `Lyrics/lrc` 子目录扫描、非标准单字节 `\0` UTF-16 ID3 `USLT` 帧，并支持**直接将 `.lrc` 文件拖入桌面窗口即时加载**。
+- **60 FPS 流畅引擎 + 融合设计**：
+  - 时间驱动 Cubic Ease-Out 淡入动画 + Click Wheel 精灵缓存 + O(R) 扫描线光栅 + O(1) 字形哈希表；内置**冰霜白**、**钛空黑**、**青瓷绿**三套主题。
 
 ## 版本归档（独立 Release）
 
-- **v1.2.3（最新 · 多平台竖屏 + 60 FPS 流畅优化版）**：在 60 FPS 轻量光栅引擎基础上新增 **Windows / Linux / macOS 竖屏桌面版**（与 Switch `Sirene.nro` 同置于 `v1.2.3` Release），支持拖放选目录、桌面快捷按键与内建搜歌框。
+- **v1.2.4（最新 · Material You 波浪条 + 列表防溢出 + PC 歌词全面升级）**：修复滚动时顶部歌曲封面突破列表框问题，新增 Material You 粗波浪进度条、PC 端列表实时歌词栏、外部 `.lrc` 拖放与多处 ID3/模糊匹配增强，统一打包 Windows / Linux / macOS / Switch 于 `v1.2.4`。
+- **v1.2.3**：新增 Windows / Linux / macOS 竖屏桌面版 + 60 FPS 流畅优化引擎。
 - **v1.2.2**：`Sirène` 法语命名 + 乔布斯 Click Wheel × 现代 Apple × Material You 融合 UI + 无手柄全触控闭环 + 深度歌词/封面修复 + 专属手柄映射。
 - **v1.2.1**：现代 Hi-Res 便携 MP4 双栏版。
 - **v1.2.0**：复古乔布斯 iPod Classic 版。
@@ -59,14 +57,14 @@
 ## 安装与使用说明
 
 ### 桌面端（Windows / Linux / macOS）
-1. 前往 [**Releases v1.2.3 页面**](../../releases/tag/v1.2.3) 下载对应系统的桌面版压缩包或单文件运行即可：
-   - **Windows**：直接双击 `Sirene-v1.2.3-Windows-x64.exe`（可传入目录或音频路径作为启动参数）。
-   - **Linux**：解压 `Sirene-v1.2.3-Linux-x86_64.tar.gz` 后运行 `./Sirene`（需系统已安装 `libsdl2` 运行库）。
-   - **macOS**：解压 `Sirene-v1.2.3-macOS-arm64.zip`，若系统提示未知开发者，可在终端执行 `xattr -cr Sirène.app` 后打开。
-2. **添加歌曲**：
+1. 前往 [**Releases v1.2.4 页面**](../../releases/tag/v1.2.4) 下载对应系统的桌面版压缩包或单文件运行即可：
+   - **Windows**：直接双击 `Sirene-v1.2.4-Windows-x64.exe`（可传入目录或音频路径作为启动参数）。
+   - **Linux**：解压 `Sirene-v1.2.4-Linux-x86_64.tar.gz` 后运行 `./Sirene`（需系统已安装 `libsdl2` 运行库）。
+   - **macOS**：解压 `Sirene-v1.2.4-macOS-arm64.zip` 后打开 `Sirène.app`（已内置 SDL2/SDL3 运行库；若遇系统拦截可运行 `xattr -cr Sirène.app`）。
+2. **添加歌曲与歌词**：
    - 将歌曲和 `.lrc` 放入系统 **`音乐 / Music`** 文件夹（或程序旁的 `music/` 目录），启动自动扫描；
    - 点击列表顶栏 **`选目录`**（或按 `O` / `Ctrl+O`）选择任意音乐文件夹（配置自动保存在 `%APPDATA%\Sirene` / `~/.config/sirene` / `~/Library/Application Support/Sirene`）；
-   - 或直接将电脑里的**音乐文件夹 / 音频文件拖进播放器窗口**即可切换并开播。
+   - 支持直接将**音乐文件夹、音频文件或单独的 `.lrc` 歌词文件拖进播放器窗口**即可切换或加载。
 
 ### Nintendo Switch（`.nro`）
 1. 从 [**Releases 页面**](../../releases) 下载 `Sirene.nro`（或兼容名 `Siren.nro`），放入 SD 卡 `sdmc:/switch/Sirene.nro`。
@@ -77,7 +75,7 @@
 ## 操控与快捷键说明
 
 ### 桌面端键盘与鼠标
-- **鼠标操作**：点击或拖拽界面按钮 / 列表 / 进度条 / 音量滑块；在 **Click Wheel 转盘**上顺/逆时针环形拖动可快速选曲或调音量；鼠标滚轮上下滚动列表或调音量。
+- **鼠标操作**：点击或拖拽界面按钮 / 列表 / 进度条 / 音量滑块；在 **Click Wheel 转盘**上顺/逆时针环形拖动可快速选曲或调音量；鼠标滚轮上下滚动列表或调音量；点击底部实时歌词播控栏即可打开全屏歌词。
 - **快捷键**：
   - `↑ / ↓`：移动列表光标 / 全屏调节音量
   - `← / →`：切换上一首 / 下一首

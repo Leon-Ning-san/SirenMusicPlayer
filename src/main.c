@@ -99,7 +99,9 @@ static void update_layout(void) {
     }
 }
 
-static int list_bottom_y(void) { return LCD_Y + LCD_H - 68; }
+static int list_bottom_y(void) {
+    return LCD_Y + LCD_H - ((portrait() && be_is_desktop()) ? 116 : 68);
+}
 
 static int list_area_h(void) {
     int h = list_bottom_y() - L_TOP;
@@ -244,6 +246,8 @@ static Canvas* trans_shot = NULL;
 static float fade_time = 0.0f;
 static int fade_mode = 0;    // 0 = 无, 1 = 交叉淡入 (trans_shot), 2 = 底色淡入 (boot/ori)
 static int fade_armed = 0;   // 1 = 首帧跳过阻塞加载耗时，从下帧开始平滑计时
+static float wave_phase = 0.0f;
+static float wave_amp_cur = 4.4f;
 
 static Canvas* wheel_cache = NULL;
 static int wc_ori = -1, wc_theme = -1, wc_zone = -1, wc_list = -1, wc_paused = -1;
@@ -745,7 +749,7 @@ static void make_default_art(uint32_t* dst, int n, const char* seed) {
                                          (uint8_t)(b * (1 - t) + 44 * t), 255);
         }
     }
-    Canvas c = { n, n, dst };
+    Canvas c = { n, n, dst, 0, 0, n, n };
     draw_note(&c, n / 6, n / 6, n * 2 / 3, COL(255, 255, 255, 225));
 }
 
@@ -1246,6 +1250,15 @@ static void handle_dropped_path(const char* raw_p) {
             load_track(hit);
             show_toast(p_title[0] ? p_title : "开始播放拖入曲目");
         }
+    } else if (is_reg && ci_ends_with(clean, ".lrc")) {
+        Lyrics* nl = lyrics_load_file(clean);
+        if (nl) {
+            if (lyr) lyrics_free(lyr);
+            lyr = nl;
+            show_toast("已加载拖入 .lrc 歌词");
+        } else {
+            show_toast("拖入 .lrc 歌词解析失败");
+        }
     }
 }
 
@@ -1551,7 +1564,12 @@ static void handle_touch_list(TouchInfo* t) {
 
     if (in_rc(x, y, rc_tab_all))  { search_q[0] = 0; set_view(VIEW_HOME); return; }
     if (in_rc(x, y, rc_tab_fav))  { set_view(view == VIEW_FAVORITE ? VIEW_HOME : VIEW_FAVORITE); return; }
-    if (in_rc(x, y, rc_btn_rescan) || in_rc(x, y, rc_empty_rescan)) { scan_library(1); return; }
+    if (in_rc(x, y, rc_btn_rescan)) { scan_library(1); return; }
+    if (in_rc(x, y, rc_empty_rescan)) {
+        if (be_is_desktop()) open_desktop_folder();
+        else scan_library(1);
+        return;
+    }
     if (in_rc(x, y, rc_btn_mode)) { cycle_play_mode(); return; }
     if (in_rc(x, y, rc_btn_full) || in_rc(x, y, rc_pod_card) || in_rc(x, y, rc_mini_bar)) {
         toggle_fullscreen_player();
@@ -1861,8 +1879,10 @@ static void draw_list(void) {
         int by = L_TOP + (list_area_h() - bh) / 2;
         fill_round_rect_aa(screen, bx, by, bw, bh, 22, C_SURF_SUB);
 
-        const char* tmsg = "未在 SD 卡找到音频";
-        const char* smsg = "支持 MP3 / FLAC / OGG / WAV · 可放入 sdmc:/music";
+        const char* tmsg = be_is_desktop() ? "未在音乐目录找到音频" : "未在 SD 卡找到音频";
+        const char* smsg = be_is_desktop()
+            ? "支持 MP3 / FLAC / OGG / WAV · 点上方「选目录」或直接拖入"
+            : "支持 MP3 / FLAC / OGG / WAV · 可放入 sdmc:/music";
         if (view == VIEW_FAVORITE && ntracks > 0) {
             tmsg = "暂无收藏歌曲";
             smsg = "点击歌曲右侧爱心或按 ZL 键即可收藏";
@@ -1876,7 +1896,8 @@ static void draw_list(void) {
         int btn_w = 188, btn_h = 42;
         int btn_x = bx + (bw - btn_w) / 2, btn_y = by + 116;
         fill_round_rect_aa(screen, btn_x, btn_y, btn_w, btn_h, 21, C_ACCENT);
-        draw_text_centered(screen, font, 15, btn_x, btn_x + btn_w, btn_y + 12, C_ON_ACCENT, "重新扫描 SD 卡");
+        draw_text_centered(screen, font, 15, btn_x, btn_x + btn_w, btn_y + 12, C_ON_ACCENT,
+                           be_is_desktop() ? "选择音乐目录" : "重新扫描 SD 卡");
         rc_empty_rescan = (Rect){ btn_x, btn_y, btn_w, btn_h };
     } else {
         int i0 = (int)floorf(scroll_px / (float)L_ROW) - 1;
@@ -1884,6 +1905,7 @@ static void draw_list(void) {
         int i1 = (int)ceilf((scroll_px + (float)list_area_h()) / (float)L_ROW) + 1;
         if (i1 > nvisible) i1 = nvisible;
 
+        canvas_set_clip(screen, LCD_X + 4, L_TOP, LCD_X + LCD_W - 4, list_bot);
         for (int i = i0; i < i1; i++) {
             int idx = vis_at(i);
             if (idx < 0) break;
@@ -1959,49 +1981,99 @@ static void draw_list(void) {
             int thumb_y = L_TOP + 6 + (int)((scroll_px / ms) * (float)(track_h - thumb_h));
             fill_round_rect_aa(screen, LCD_X + LCD_W - 10, thumb_y, 4, thumb_h, 2, C_TXT3);
         }
+        canvas_reset_clip(screen);
     }
 
-    // 清理上下边缘溢出并绘制底部 Apple × M3 悬浮迷你灵动岛播控条
-    fill_rect(screen, LCD_X + 8, L_TOP - 6, LCD_W - 16, 6, C_SURFACE);
+    // 底部 Apple × M3 悬浮迷你灵动岛播控条（桌面竖屏集成实时同步歌词栏 + Material You 波浪条）
+    int desk_port = (portrait() && be_is_desktop());
+    int dock_h = desk_port ? 106 : 54;
     fill_round_rect_aa(screen, LCD_X + 4, list_bot - 2, LCD_W - 8, (LCD_Y + LCD_H) - (list_bot - 2) - 4, 24, C_SURFACE);
-    fill_round_rect_aa(screen, LCD_X + 12, list_bot + 4, LCD_W - 24, 54, 18, C_SURF_SUB);
-    rc_mini_bar = (Rect){ LCD_X + 12, list_bot + 4, LCD_W - 24, 54 };
+    fill_round_rect_aa(screen, LCD_X + 12, list_bot + 4, LCD_W - 24, dock_h, 18, C_SURF_SUB);
+    rc_mini_bar = (Rect){ LCD_X + 12, list_bot + 4, LCD_W - 24, dock_h };
 
     if (playing_idx >= 0) {
         const uint32_t* mimg = cover_mini ? cover_mini : poster_mini;
         if (mimg) blit_rgb_round(screen, LCD_X + 20, list_bot + 10, mimg, MINI_ART_SZ, MINI_ART_SZ, 10);
 
         double pos = audio_position(), dur = audio_duration();
-        if (dur > 0) {
-            float p = clampf((float)(pos / dur), 0.0f, 1.0f);
-            fill_round_rect_aa(screen, LCD_X + 70, list_bot + 52, LCD_W - 180, 3, 1, C_TRACK_BG);
-            int fw = (int)((LCD_W - 180) * p);
-            if (fw > 2) fill_round_rect_aa(screen, LCD_X + 70, list_bot + 52, fw, 3, 1, C_ACCENT);
-        }
+        float p = (dur > 0.0) ? clampf((float)(pos / dur), 0.0f, 1.0f) : 0.0f;
+        float mamp = (!audio_paused()) ? (wave_amp_cur * 0.65f) : 0.0f;
+        if (!audio_paused() && mamp < 0.4f) mamp = 2.8f;
 
-        draw_text_max(screen, font, 15, LCD_X + 72, list_bot + 11, C_TXT, p_title, LCD_W - 210);
-        if (lyr && lyr->n > 0) {
-            int act = lyr->unsynced
-                ? (dur > 0.0 && lyr->n > 1 ? (int)((pos / dur) * (double)(lyr->n - 1)) : 0)
-                : lyrics_index(lyr, pos);
-            if (act < 0) act = 0;
-            if (act >= lyr->n) act = lyr->n - 1;
-            draw_text_max(screen, font, 12.5f, LCD_X + 72, list_bot + 31, C_TONAL_TXT, lyr->lines[act].text, LCD_W - 210);
-        } else {
+        if (desk_port) {
+            draw_text_max(screen, font, 14.5f, LCD_X + 72, list_bot + 11, C_TXT, p_title, LCD_W - 210);
             char sub[320];
-            snprintf(sub, sizeof(sub), "%s · %s", audio_paused() ? "已暂停" : "正在播放",
-                     p_artist[0] ? p_artist : p_fmt);
-            draw_text_max(screen, font, 12.5f, LCD_X + 72, list_bot + 31, C_TXT2, sub, LCD_W - 210);
-        }
+            snprintf(sub, sizeof(sub), "%s · %s", audio_paused() ? "已暂停" : p_fmt,
+                     p_artist[0] ? p_artist : "未知艺术家");
+            draw_text_max(screen, font, 12.0f, LCD_X + 72, list_bot + 30, C_TXT2, sub, LCD_W - 210);
 
-        fill_round_rect_aa(screen, LCD_X + LCD_W - 114, list_bot + 16, 90, 30, 15, C_TONAL_BG);
-        draw_text_centered(screen, font, 12.5f, LCD_X + LCD_W - 114, LCD_X + LCD_W - 24, list_bot + 24,
-                           C_TONAL_TXT, "歌词全屏");
+            fill_round_rect_aa(screen, LCD_X + LCD_W - 114, list_bot + 16, 90, 30, 15, C_TONAL_BG);
+            draw_text_centered(screen, font, 12.5f, LCD_X + LCD_W - 114, LCD_X + LCD_W - 24, list_bot + 24,
+                               C_TONAL_TXT, "歌词全屏");
+
+            if (dur > 0.0) {
+                draw_m3_wavy_progress(screen, LCD_X + 22, LCD_X + LCD_W - 22, list_bot + 59, p,
+                                      wave_phase, mamp, 22.0f, 5, 4, 0, C_ACCENT, C_TRACK_BG);
+            } else {
+                fill_round_rect_aa(screen, LCD_X + 22, list_bot + 57, LCD_W - 44, 4, 2, C_TRACK_BG);
+            }
+
+            fill_round_rect_aa(screen, LCD_X + 20, list_bot + 69, LCD_W - 40, 34, 11,
+                               (lyr && lyr->n > 0) ? C_TONAL_BG : C_CARD);
+            if (lyr && lyr->n > 0) {
+                int act = lyr->unsynced
+                    ? (dur > 0.0 && lyr->n > 1 ? (int)((pos / dur) * (double)(lyr->n - 1)) : 0)
+                    : lyrics_index(lyr, pos);
+                if (act < 0) act = 0;
+                if (act >= lyr->n) act = lyr->n - 1;
+                fill_round_rect_aa(screen, LCD_X + 27, list_bot + 76, 4, 20, 2, C_ACCENT);
+                draw_text_max(screen, font, 14.0f, LCD_X + 38, list_bot + 78, C_TONAL_TXT,
+                              lyr->lines[act].text, LCD_W - 72);
+            } else {
+                draw_text_max(screen, font, 12.0f, LCD_X + 30, list_bot + 79, C_TXT3,
+                              lyrics_last_diag(), LCD_W - 60);
+            }
+        } else {
+            if (dur > 0.0) {
+                float sm_amp = (!audio_paused()) ? 1.8f : 0.0f;
+                draw_m3_wavy_progress(screen, LCD_X + 70, LCD_X + LCD_W - 110, list_bot + 53, p,
+                                      wave_phase, sm_amp, 20.0f, 4, 3, 0, C_ACCENT, C_TRACK_BG);
+            }
+
+            draw_text_max(screen, font, 15, LCD_X + 72, list_bot + 11, C_TXT, p_title, LCD_W - 210);
+            if (lyr && lyr->n > 0) {
+                int act = lyr->unsynced
+                    ? (dur > 0.0 && lyr->n > 1 ? (int)((pos / dur) * (double)(lyr->n - 1)) : 0)
+                    : lyrics_index(lyr, pos);
+                if (act < 0) act = 0;
+                if (act >= lyr->n) act = lyr->n - 1;
+                draw_text_max(screen, font, 12.5f, LCD_X + 72, list_bot + 31, C_TONAL_TXT, lyr->lines[act].text, LCD_W - 210);
+            } else {
+                char sub[320];
+                snprintf(sub, sizeof(sub), "%s · %s", audio_paused() ? "已暂停" : "正在播放",
+                         p_artist[0] ? p_artist : p_fmt);
+                draw_text_max(screen, font, 12.5f, LCD_X + 72, list_bot + 31, C_TXT2, sub, LCD_W - 210);
+            }
+
+            fill_round_rect_aa(screen, LCD_X + LCD_W - 114, list_bot + 16, 90, 30, 15, C_TONAL_BG);
+            draw_text_centered(screen, font, 12.5f, LCD_X + LCD_W - 114, LCD_X + LCD_W - 24, list_bot + 24,
+                               C_TONAL_TXT, "歌词全屏");
+        }
     } else {
-        const char* hint = ntracks == 0
-            ? "未发现音频 · 点击扫描按钮检索 SD 卡"
-            : "点歌曲或按 A 就地播放 · 点此或按 X 进入全屏歌词";
-        draw_text_centered(screen, font, 13.5f, LCD_X + 20, LCD_X + LCD_W - 20, list_bot + 23, C_TXT2, hint);
+        if (desk_port) {
+            const char* hint = ntracks == 0
+                ? "未发现音频 · 点上方「选目录」或拖入文件夹/曲目"
+                : "点歌曲就地播放 · 下栏实时显示歌词（也可直接拖入 .lrc）";
+            draw_text_centered(screen, font, 14.0f, LCD_X + 20, LCD_X + LCD_W - 20, list_bot + 30, C_TXT2, hint);
+            fill_round_rect_aa(screen, LCD_X + 20, list_bot + 69, LCD_W - 40, 34, 11, C_CARD);
+            draw_text_centered(screen, font, 12.5f, LCD_X + 28, LCD_X + LCD_W - 28, list_bot + 79,
+                               C_TXT3, "提示：按 F / X 或点此卡片可随时进入全屏歌词视图");
+        } else {
+            const char* hint = ntracks == 0
+                ? "未发现音频 · 点击扫描按钮检索 SD 卡"
+                : "点歌曲或按 A 就地播放 · 点此或按 X 进入全屏歌词";
+            draw_text_centered(screen, font, 13.5f, LCD_X + 20, LCD_X + LCD_W - 20, list_bot + 23, C_TXT2, hint);
+        }
     }
 
     draw_hardware_controls();
@@ -2068,20 +2140,17 @@ static void draw_lyric_or_spectrum(int x0, int x1, int ly_top, int ly_bot, int s
 }
 
 static void draw_lcd_progress(int py, double pos, double dur) {
-    int w = ui_px1 - ui_px0;
-    fill_round_rect_aa(screen, ui_px0, py, w, 8, 4, C_TRACK_BG);
-    int fillw = (int)((dur > 0 ? pos / dur : 0) * w);
-    if (fillw < 0) fillw = 0;
-    if (fillw > w) fillw = w;
-    if (fillw > 0) fill_round_rect_aa(screen, ui_px0, py, fillw, 8, 4, C_ACCENT);
-    fill_ellipse_aa(screen, ui_px0 + fillw, py + 4, 9, 9, C_ACCENT);
-    fill_ellipse_aa(screen, ui_px0 + fillw, py + 4, 4, 4, C_ON_ACCENT);
+    float frac = (dur > 0.0) ? clampf((float)(pos / dur), 0.0f, 1.0f) : 0.0f;
+    float amp = (playing_idx >= 0 && !audio_paused()) ? wave_amp_cur : (wave_amp_cur > 0.05f ? wave_amp_cur : 0.0f);
+    if (playing_idx >= 0 && !audio_paused() && amp < 0.5f) amp = 4.4f;
+    draw_m3_wavy_progress(screen, ui_px0, ui_px1, py + 4, frac,
+                          wave_phase, amp, 28.0f, 7, 6, 1, C_ACCENT, C_TRACK_BG);
 
     char t1[32], t2[32];
     fmt_time(pos, t1, sizeof(t1));
     fmt_time(dur, t2, sizeof(t2));
-    draw_text(screen, font, 13, ui_px0, py + 15, C_TXT2, t1);
-    draw_text_right(screen, font, 13, ui_px1, py + 15, C_TXT2, t2);
+    draw_text(screen, font, 13, ui_px0, py + 20, C_TXT2, t1);
+    draw_text_right(screen, font, 13, ui_px1, py + 20, C_TXT2, t2);
 }
 
 static void draw_player(void) {
@@ -2291,7 +2360,7 @@ static void draw_diag(void) {
     fill_round_rect_aa(screen, cx, cy, cw, ch, 28, C_SURFACE);
     stroke_round_rect_aa(screen, cx, cy, cw, ch, 28, 1, C_WHEEL_RING, 160);
 
-    draw_text(screen, font, 22, cx + 32, cy + 28, C_TONAL_TXT, "Sirène v1.2.3 系统与歌词诊断");
+    draw_text(screen, font, 22, cx + 32, cy + 28, C_TONAL_TXT, "Sirène v1.2.4 系统与歌词诊断");
     rc_diag_close = draw_m3_pill_fixed(cx + cw - 104, cy + 22, 76, 36, 14.0f, "关闭", 1, 0);
 
     char buf[1024];
@@ -2593,6 +2662,18 @@ int main(int argc, char** argv) {
         }
 
         audio_pump();
+
+        {
+            int wave_on = (playing_idx >= 0 && !audio_paused());
+            float target_amp = wave_on ? 4.4f : 0.0f;
+            float wk = (float)(g_dt * 8.0);
+            if (wk > 1.0f) wk = 1.0f;
+            wave_amp_cur += (target_amp - wave_amp_cur) * wk;
+            if (wave_on) {
+                wave_phase += (float)(g_dt * 4.5);
+                if (wave_phase > 628.3185f) wave_phase -= 628.3185f;
+            }
+        }
 
         if (fabsf(scroll_target - scroll_px) > 0.5f) {
             float k = (float)(g_dt * 22.0);
