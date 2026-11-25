@@ -218,7 +218,7 @@ static Bucket* get_bucket_ex(Font* f, int px, int bold) {
 #ifdef _WIN32
     HDC hdc = win_font_dc();
     if (hdc) {
-        int weight = bold ? FW_BOLD : FW_MEDIUM;
+        int weight = bold ? FW_BOLD : FW_REGULAR;
         b->hfont = CreateFontW(-px, 0, 0, 0, weight, FALSE, FALSE, FALSE,
                                DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
                                ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Microsoft YaHei UI");
@@ -340,17 +340,14 @@ static uint8_t lut_reg_light[256], lut_reg_dark[256], lut_bold_light[256], lut_b
 static int lut_ready = 0;
 static void ensure_luts(void) {
     if (lut_ready) return;
-    for (int i = 0; i < 256; i++) {
-        // Stem-strengthened crisp anti-aliased LUTs (sharp edges, fuller stroke body)
+    lut_reg_light[0] = lut_reg_dark[0] = lut_bold_light[0] = lut_bold_dark[0] = 0;
+    for (int i = 1; i < 256; i++) {
+        // Balanced sRGB anti-aliasing LUTs: crisp edges without stroke bloating or clipping
         float n = (float)i / 255.0f;
-        if (i < 6) {
-            lut_reg_light[i] = lut_reg_dark[i] = lut_bold_light[i] = lut_bold_dark[i] = 0;
-            continue;
-        }
-        float vrl = powf(n, 0.65f) * 255.0f * 1.12f + 0.5f;
-        float vrd = powf(n, 0.61f) * 255.0f * 1.15f + 0.5f;
-        float vbl = powf(n, 0.62f) * 255.0f * 1.10f + 0.5f;
-        float vbd = powf(n, 0.58f) * 255.0f * 1.12f + 0.5f;
+        float vrl = powf(n, 0.86f) * 255.0f + 0.5f;
+        float vrd = powf(n, 0.94f) * 255.0f + 0.5f;
+        float vbl = powf(n, 0.88f) * 255.0f + 0.5f;
+        float vbd = powf(n, 0.96f) * 255.0f + 0.5f;
         lut_reg_light[i]  = vrl > 255.0f ? 255 : (uint8_t)vrl;
         lut_reg_dark[i]   = vrd > 255.0f ? 255 : (uint8_t)vrd;
         lut_bold_light[i] = vbl > 255.0f ? 255 : (uint8_t)vbl;
@@ -481,6 +478,8 @@ void draw_text_right_bold(Canvas* c, Font* f, float px, int x1, int y, uint32_t 
 
 int text_width_max(Font* f, float px, const char* utf8, int max_w) {
     if (!f || !utf8 || !*utf8) return 0;
+    int full_w = text_width_ex(f, px, utf8, 0);
+    if (full_w <= max_w) return full_w;
     int ipx = (int)(px + 0.5f);
     if (ipx < 1) ipx = 1;
     Bucket* b = get_bucket_ex(f, ipx, 0);
@@ -507,6 +506,10 @@ static int draw_text_max_impl(Canvas* c, Font* f, float px, int x, int y, uint32
     int sx = (int)floorf((float)x * s + 0.5f);
     int sy = (int)floorf((float)y * s + 0.5f);
     int smax = (int)floorf((float)max_w * s + 0.5f);
+    if (text_width_ex(f, spx, utf8, bold) <= smax) {
+        draw_text_px_ex(c, f, spx, sx, sy, col, utf8, bold);
+        return 0;
+    }
     int ipx = (int)(spx + 0.5f);
     if (ipx < 1) ipx = 1;
     Bucket* b = get_bucket_ex(f, ipx, bold);
