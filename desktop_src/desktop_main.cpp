@@ -2363,11 +2363,10 @@ void draw_player_bar(int mx, int my) {
     constexpr int br = 16;
     g.rc_island = Rect{ bx, by, bw, bh };
 
-    fill_round_rect_shadow(s, bx, by + 4, bw, bh, br, theme_shadow(110));
-    const uint32_t bar_bg = mix_col(mix_col(COL(18, 22, 30, 255), COL(246, 249, 255, 255), g.light_t), g.C_HERO_L, 0.20f);
-    fill_frosted_round_rect(s, bx, by, bw, bh, br, bar_bg, static_cast<uint8_t>(188 + 22 * g.light_t), 4, glass_rim(88, 235));
-    stroke_round_rect_aa(s, bx, by, bw, bh, br, 1,
-                         mix_col(g.C_DIV, g.C_ACCENT, g.light_t < 0.6f ? 0.22f : 0.08f), lt ? 130 : 72);
+    fill_round_rect_shadow(s, bx, by + 4, bw, bh, br, theme_shadow(96));
+    const uint32_t bar_bg = mix_col(mix_col(COL(20, 25, 30, 255), COL(248, 250, 255, 255), g.light_t), g.C_HERO_L, 0.14f);
+    fill_frosted_round_rect(s, bx, by, bw, bh, br, bar_bg, static_cast<uint8_t>(104 + 48 * g.light_t), 12, glass_rim(64, 215));
+    stroke_round_rect_aa(s, bx, by, bw, bh, br, 1, COL(255, 255, 255, 255), lt ? 165 : 54);
 
     constexpr int cov_sz = 48;
     g.rc_bar_cov = Rect{ bx + 12, by + (bh - cov_sz) / 2, cov_sz, cov_sz };

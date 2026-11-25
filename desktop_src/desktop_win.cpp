@@ -843,7 +843,7 @@ int be_init(void) {
 
     HINSTANCE hInst = GetModuleHandleW(nullptr);
     HICON ico_big = static_cast<HICON>(LoadImageW(hInst, MAKEINTRESOURCEW(1), IMAGE_ICON,
-                                                  GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR));
+                                                  256, 256, LR_DEFAULTCOLOR));
     HICON ico_sm = static_cast<HICON>(LoadImageW(hInst, MAKEINTRESOURCEW(1), IMAGE_ICON,
                                                  GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
     if (!ico_big) ico_big = LoadIconW(hInst, MAKEINTRESOURCEW(1));
@@ -1342,15 +1342,10 @@ void be_set_media_state(int has_track, int playing, float frac, const char* titl
             MultiByteToWideChar(CP_UTF8, 0, tip, -1, wtip, 511);
             if (wtip[0]) g_win.taskbar3->SetThumbnailTooltip(g_win.hwnd, wtip);
         }
-        const int pct = ht ? static_cast<int>(std::clamp(frac, 0.0f, 1.0f) * 100.0f + 0.5f) : -1;
-        if (state_changed || pct != g_win.tb_pct) {
-            g_win.tb_pct = pct;
-            if (!ht) {
-                g_win.taskbar3->SetProgressState(g_win.hwnd, TBPF_NOPROGRESS);
-            } else {
-                g_win.taskbar3->SetProgressState(g_win.hwnd, pl ? TBPF_NORMAL : TBPF_PAUSED);
-                g_win.taskbar3->SetProgressValue(g_win.hwnd, static_cast<ULONGLONG>(pct), 100ULL);
-            }
+        (void)frac;
+        if (g_win.tb_pct != 0) {
+            g_win.tb_pct = 0;
+            g_win.taskbar3->SetProgressState(g_win.hwnd, TBPF_NOPROGRESS);
         }
     }
 }
