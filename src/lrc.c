@@ -165,9 +165,9 @@ static char* raw_bytes_to_utf8(const unsigned char* raw, size_t sz) {
     clean[clen] = 0;
 
     char* text = NULL;
-    if (is_valid_utf8(clean, clen)) {
+    if (is_valid_utf8(clean, clen) || looks_like_utf8_text(clean, clen)) {
         text = (char*)malloc(clen + 1);
-        if (text) { memcpy(text, clean, clen); text[clen] = 0; }
+        if (text) sanitize_utf8_text(clean, clen, text, clen + 1);
     } else {
         size_t cap = clen * 2 + 8;
         text = (char*)malloc(cap);
@@ -178,25 +178,157 @@ static char* raw_bytes_to_utf8(const unsigned char* raw, size_t sz) {
 }
 
 // 规范化歌词文本：解包 JSON "lyric":"..."、还原字面量 \n、替换全角【】与全角冒号
+static size_t append_utf8_cp(char* out, size_t cap, size_t j, uint32_t cp) {
+    if (cp == 0 || cp > 0x10FFFFu || (cp >= 0xD800u && cp <= 0xDFFFu)) return j;
+    if (cp == 0x00A0u) cp = ' ';
+    if (cp < 0x80u) {
+        if (j + 1 < cap) out[j++] = (char)cp;
+    } else if (cp < 0x800u) {
+        if (j + 2 < cap) {
+            out[j++] = (char)(0xC0u | (cp >> 6));
+            out[j++] = (char)(0x80u | (cp & 0x3Fu));
+        }
+    } else if (cp < 0x10000u) {
+        if (j + 3 < cap) {
+            out[j++] = (char)(0xE0u | (cp >> 12));
+            out[j++] = (char)(0x80u | ((cp >> 6) & 0x3Fu));
+            out[j++] = (char)(0x80u | (cp & 0x3Fu));
+        }
+    } else {
+        if (j + 4 < cap) {
+            out[j++] = (char)(0xF0u | (cp >> 18));
+            out[j++] = (char)(0x80u | ((cp >> 12) & 0x3Fu));
+            out[j++] = (char)(0x80u | ((cp >> 6) & 0x3Fu));
+            out[j++] = (char)(0x80u | (cp & 0x3Fu));
+        }
+    }
+    return j;
+}
+
+static int try_decode_html_entity(const char* p, size_t rem, char* out, size_t out_cap, size_t* io_j, size_t* out_step) {
+    if (!p || rem < 4 || p[0] != '&') return 0;
+    size_t j = *io_j;
+    if (rem >= 5 && !strncmp(p, "&amp;", 5))  { if (j + 1 < out_cap) out[j++] = '&';  *io_j = j; *out_step = 5; return 1; }
+    if (rem >= 4 && !strncmp(p, "&lt;", 4))   { if (j + 1 < out_cap) out[j++] = '<';  *io_j = j; *out_step = 4; return 1; }
+    if (rem >= 4 && !strncmp(p, "&gt;", 4))   { if (j + 1 < out_cap) out[j++] = '>';  *io_j = j; *out_step = 4; return 1; }
+    if (rem >= 6 && !strncmp(p, "&quot;", 6)) { if (j + 1 < out_cap) out[j++] = '"';  *io_j = j; *out_step = 6; return 1; }
+    if (rem >= 6 && !strncmp(p, "&apos;", 6)) { if (j + 1 < out_cap) out[j++] = '\''; *io_j = j; *out_step = 6; return 1; }
+    if (rem >= 6 && !strncmp(p, "&nbsp;", 6)) { if (j + 1 < out_cap) out[j++] = ' ';  *io_j = j; *out_step = 6; return 1; }
+    if (rem > 3 && p[1] == '#') {
+        char* endp = NULL;
+        unsigned long cpv = (p[2] == 'x' || p[2] == 'X')
+            ? strtoul(p + 3, &endp, 16)
+            : strtoul(p + 2, &endp, 10);
+        if (endp && *endp == ';' && endp > p + 2 && (size_t)(endp - p) < rem) {
+            *io_j = append_utf8_cp(out, out_cap, j, (uint32_t)cpv);
+            *out_step = (size_t)(endp - p) + 1;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static char* normalize_lrc_text(const char* src) {
     if (!src || !*src) return NULL;
     const char* p = src;
+    int json_container = 0;
     // 若是 JSON 歌词容器 {"lrc":{"lyric":"[00:..."}}，定位到第一个 [00: 或 "lyric"
     if (p[0] == '{' && strstr(p, "\"lyric\"")) {
         const char* lk = strstr(p, "\"lyric\"");
         const char* lb = strchr(lk + 7, '[');
-        if (lb) p = lb;
+        if (lb) { p = lb; json_container = 1; }
     }
     size_t slen = strlen(p);
-    char* out = (char*)malloc(slen + 8);
+    size_t out_cap = slen + 64;
+    char* out = (char*)malloc(out_cap);
     if (!out) return NULL;
     size_t j = 0;
     for (size_t i = 0; i < slen; ) {
-        // 跳过残留 UTF-8 BOM
+        // Handle inline JSON credit lines: {"t":0,"c":[{"tx":"作词: "},{"tx":"..."}]}
+        if ((i == 0 || p[i - 1] == '\n' || p[i - 1] == '\r') && p[i] == '{' && i + 8 < slen) {
+            const char* le = strpbrk(p + i, "\r\n");
+            size_t llen = le ? (size_t)(le - (p + i)) : (slen - i);
+            if (llen > 8 && p[i + llen - 1] == '}' && memchr(p + i, ':', llen)) {
+                char* tmp = (char*)malloc(llen + 1);
+                if (tmp) {
+                    memcpy(tmp, p + i, llen);
+                    tmp[llen] = 0;
+                    if (strstr(tmp, "\"c\"") && strstr(tmp, "\"tx\"")) {
+                        long ms = 0;
+                        const char* tk = strstr(tmp, "\"t\"");
+                        if (tk) {
+                            const char* col = strchr(tk + 3, ':');
+                            if (col) ms = strtol(col + 1, NULL, 10);
+                        }
+                        if (ms < 0) ms = 0;
+                        int mm = (int)(ms / 60000L);
+                        int ss = (int)((ms % 60000L) / 1000L);
+                        int cs = (int)((ms % 1000L) / 10L);
+                        char joined[512];
+                        size_t jlen = 0;
+                        const char* scan = tmp;
+                        while ((scan = strstr(scan, "\"tx\"")) != NULL) {
+                            const char* cq = strchr(scan + 4, '"');
+                            if (!cq) break;
+                            cq++;
+                            while (*cq && *cq != '"' && jlen + 4 < sizeof(joined)) {
+                                if (*cq == '\\' && cq[1]) {
+                                    cq++;
+                                    if (*cq == 'n' || *cq == 'r' || *cq == 't') joined[jlen++] = ' ';
+                                    else joined[jlen++] = *cq;
+                                    cq++;
+                                } else if (*cq == '&') {
+                                    size_t step = 0;
+                                    if (try_decode_html_entity(cq, strlen(cq), joined, sizeof(joined), &jlen, &step)) {
+                                        cq += step;
+                                    } else {
+                                        joined[jlen++] = *cq++;
+                                    }
+                                } else {
+                                    joined[jlen++] = *cq++;
+                                }
+                            }
+                            scan = (*cq == '"') ? (cq + 1) : cq;
+                        }
+                        joined[jlen] = 0;
+                        if (jlen > 0 && j + jlen + 20 < out_cap) {
+                            int nw = snprintf(out + j, out_cap - j, "[%02d:%02d.%02d]%s\n", mm, ss, cs, joined);
+                            if (nw > 0) j += (size_t)nw;
+                        }
+                        free(tmp);
+                        i += llen;
+                        while (i < slen && (p[i] == '\r' || p[i] == '\n')) i++;
+                        continue;
+                    }
+                    free(tmp);
+                }
+            }
+        }
+        // 跳过残留 UTF-8 BOM & 零宽字符
         if ((unsigned char)p[i] == 0xEF && i + 2 < slen &&
             (unsigned char)p[i + 1] == 0xBB && (unsigned char)p[i + 2] == 0xBF) {
             i += 3;
             continue;
+        }
+        if ((unsigned char)p[i] == 0xE2 && i + 2 < slen &&
+            (unsigned char)p[i + 1] == 0x80 &&
+            (unsigned char)p[i + 2] >= 0x8Bu && (unsigned char)p[i + 2] <= 0x8Fu) {
+            i += 3;
+            continue;
+        }
+        // UTF-8 NBSP (U+00A0) -> normal space
+        if ((unsigned char)p[i] == 0xC2 && i + 1 < slen && (unsigned char)p[i + 1] == 0xA0) {
+            out[j++] = ' ';
+            i += 2;
+            continue;
+        }
+        // Decode common HTML entities (&amp; &apos; &quot; &lt; &gt; &nbsp; &#NNN; &#xHH;)
+        if (p[i] == '&') {
+            size_t step = 0;
+            if (try_decode_html_entity(p + i, slen - i, out, out_cap, &j, &step)) {
+                i += step;
+                continue;
+            }
         }
         // 全角 【 -> [ , 】 -> ] , ： -> :
         if ((unsigned char)p[i] == 0xE3 && i + 2 < slen && (unsigned char)p[i + 1] == 0x80 &&
@@ -215,7 +347,7 @@ static char* normalize_lrc_text(const char* src) {
         if (p[i] == '\\' && i + 1 < slen) {
             if (p[i + 1] == 'n') { out[j++] = '\n'; i += 2; continue; }
             if (p[i + 1] == 'r') { out[j++] = '\r'; i += 2; continue; }
-            if (p[i + 1] == '"' && src[0] == '{') { break; }
+            if (p[i + 1] == '"' && json_container) { break; }
         }
         out[j++] = p[i++];
     }
@@ -305,8 +437,8 @@ static Lyrics* parse_lyrics_utf8(const char* raw_text, const char* source_name) 
                         memset(ln, 0, sizeof(*ln));
                         ln->t = times[i] - offset_sec + synced_count * 1e-6;
                         if (ln->t < 0) ln->t = 0;
-                        snprintf(ln->text, sizeof(ln->text), "%s", cp);
-                        snprintf(ln->orig, sizeof(ln->orig), "%s", cp);
+                        utf8_copy_safe(ln->text, sizeof(ln->text), cp, 0);
+                        utf8_copy_safe(ln->orig, sizeof(ln->orig), cp, 0);
                         synced_count++;
                     }
                 }
@@ -325,12 +457,14 @@ static Lyrics* parse_lyrics_utf8(const char* raw_text, const char* source_name) 
             if (w > 0 && fabs(l->lines[w - 1].t - l->lines[i].t) < 0.015) {
                 if (strcmp(l->lines[w - 1].text, l->lines[i].text) != 0) {
                     if (!l->lines[w - 1].orig[0])
-                        snprintf(l->lines[w - 1].orig, sizeof(l->lines[w - 1].orig), "%s", l->lines[w - 1].text);
+                        utf8_copy_safe(l->lines[w - 1].orig, sizeof(l->lines[w - 1].orig), l->lines[w - 1].text, 0);
                     if (!l->lines[w - 1].sub[0])
-                        snprintf(l->lines[w - 1].sub, sizeof(l->lines[w - 1].sub), "%s", l->lines[i].text);
-                    char merged[256];
-                    snprintf(merged, sizeof(merged), "%.120s · %.120s", l->lines[w - 1].orig, l->lines[w - 1].sub);
-                    memcpy(l->lines[w - 1].text, merged, sizeof(l->lines[w - 1].text));
+                        utf8_copy_safe(l->lines[w - 1].sub, sizeof(l->lines[w - 1].sub), l->lines[i].text, 0);
+                    char part1[124], part2[124], merged[256];
+                    utf8_copy_safe(part1, sizeof(part1), l->lines[w - 1].orig, 118);
+                    utf8_copy_safe(part2, sizeof(part2), l->lines[w - 1].sub, 118);
+                    snprintf(merged, sizeof(merged), "%s · %s", part1, part2);
+                    utf8_copy_safe(l->lines[w - 1].text, sizeof(l->lines[w - 1].text), merged, 0);
                 }
                 continue;
             }
@@ -354,10 +488,11 @@ static Lyrics* parse_lyrics_utf8(const char* raw_text, const char* source_name) 
             while (tl > 0 && (line[tl - 1] == ' ' || line[tl - 1] == '\t')) line[--tl] = 0;
             if (tl == 0) continue;
             if (line[0] == '[' && strchr(line, ']')) continue;
+            if (line[0] == '{' && strstr(line, "\"c\"")) continue;
             if (l->n >= MAX_LINES) break;
             LrcLine* ln = &l->lines[l->n++];
             ln->t = (double)l->n;
-            snprintf(ln->text, sizeof(ln->text), "%s", line);
+            utf8_copy_safe(ln->text, sizeof(ln->text), line, 0);
         }
         free(copy_for_plain);
     }
@@ -1203,7 +1338,7 @@ static int http_get_utf8(const char* host, const char* path_query, char** out_bu
     plat_utf8_to_wide(host, whost, 256);
     plat_utf8_to_wide(path_query, wpath, 2048);
 
-    HINTERNET hSes = pOpen(L"Sirene/1.2.8", 0, NULL, NULL, 0);
+    HINTERNET hSes = pOpen(L"Sirene/1.2.9", 0, NULL, NULL, 0);
     if (!hSes) return 0;
     if (pTimeouts) pTimeouts(hSes, 3000, 4000, 4000, 5000);
     HINTERNET hCon = pConn(hSes, whost, 443, 0);
@@ -1247,7 +1382,7 @@ static int http_get_utf8(const char* host, const char* path_query, char** out_bu
         close(pfd[1]);
         char* argv[] = {
             "curl", "-fsSL", "--max-time", "6",
-            "-A", "Sirene/1.2.8",
+            "-A", "Sirene/1.2.9",
             url, NULL
         };
         execvp("curl", argv);

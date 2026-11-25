@@ -3193,7 +3193,7 @@ static void draw_diag(void) {
     fill_round_rect_aa(screen, cx, cy, cw, ch, 28, C_SURFACE);
     stroke_round_rect_aa(screen, cx, cy, cw, ch, 28, 1, C_WHEEL_RING, 160);
 
-    draw_text(screen, font, 22, cx + 32, cy + 28, C_TONAL_TXT, "Sirène v1.2.8 系统与歌词诊断");
+    draw_text(screen, font, 22, cx + 32, cy + 28, C_TONAL_TXT, "Sirène v1.2.9 系统与歌词诊断");
     rc_diag_close = draw_m3_pill_fixed(cx + cw - 104, cy + 22, 76, 36, 14.0f, "关闭", 1, 0);
 
     char buf[1024];

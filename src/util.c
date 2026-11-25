@@ -120,11 +120,96 @@ size_t text_to_utf8_auto(const uint8_t* in, size_t n, char* out, size_t out_cap)
     if (z) n = (size_t)(z - in);
     if (is_valid_utf8(in, n)) {
         size_t cp = n < out_cap - 1 ? n : out_cap - 1;
+        while (cp > 0 && cp < n && (in[cp] & 0xC0u) == 0x80u) cp--;
         memcpy(out, in, cp);
         out[cp] = 0;
         return cp;
     }
+    if (looks_like_utf8_text(in, n)) {
+        return sanitize_utf8_text(in, n, out, out_cap);
+    }
     return gbk_to_utf8(in, n, out, out_cap);
+}
+
+void utf8_copy_safe(char* dst, size_t cap, const char* src, size_t max_bytes) {
+    if (!dst || cap == 0) return;
+    if (!src) { dst[0] = 0; return; }
+    size_t slen = strlen(src);
+    size_t lim = cap - 1;
+    if (max_bytes > 0 && max_bytes < lim) lim = max_bytes;
+    size_t n = (slen < lim) ? slen : lim;
+    while (n > 0 && n < slen && (((unsigned char)src[n]) & 0xC0u) == 0x80u) n--;
+    if (n > 0) memcpy(dst, src, n);
+    dst[n] = 0;
+}
+
+int looks_like_utf8_text(const uint8_t* s, size_t n) {
+    if (!s || n == 0) return 0;
+    size_t i = 0, valid_mb = 0, bad = 0;
+    while (i < n && s[i] != 0) {
+        uint8_t c = s[i];
+        if (c < 0x80u) { i++; continue; }
+        int len = 0;
+        uint32_t cp = 0;
+        if ((c & 0xE0u) == 0xC0u && c >= 0xC2u) { len = 2; cp = c & 0x1Fu; }
+        else if ((c & 0xF0u) == 0xE0u) { len = 3; cp = c & 0x0Fu; }
+        else if ((c & 0xF8u) == 0xF0u && c <= 0xF4u) { len = 4; cp = c & 0x07u; }
+        else { bad++; i++; continue; }
+        if (i + (size_t)len > n) { bad++; break; }
+        int ok = 1;
+        for (int k = 1; k < len; k++) {
+            if ((s[i + k] & 0xC0u) != 0x80u) { ok = 0; break; }
+            cp = (cp << 6) | (s[i + k] & 0x3Fu);
+        }
+        if (!ok || (len == 3 && cp < 0x800u) || (len == 4 && (cp < 0x10000u || cp > 0x10FFFFu)) ||
+            (cp >= 0xD800u && cp <= 0xDFFFu)) {
+            bad++; i++;
+        } else {
+            valid_mb++; i += (size_t)len;
+        }
+    }
+    return (valid_mb > 0 && bad * 8 <= valid_mb) ? 1 : 0;
+}
+
+size_t sanitize_utf8_text(const uint8_t* in, size_t n, char* out, size_t out_cap) {
+    if (!out || out_cap == 0) return 0;
+    size_t i = 0, pos = 0, lim = out_cap - 1;
+    while (i < n && in[i] != 0 && pos < lim) {
+        uint8_t c = in[i];
+        if (c < 0x80u) {
+            out[pos++] = (char)c;
+            i++;
+            continue;
+        }
+        int len = 0;
+        uint32_t cp = 0;
+        if ((c & 0xE0u) == 0xC0u && c >= 0xC2u) { len = 2; cp = c & 0x1Fu; }
+        else if ((c & 0xF0u) == 0xE0u) { len = 3; cp = c & 0x0Fu; }
+        else if ((c & 0xF8u) == 0xF0u && c <= 0xF4u) { len = 4; cp = c & 0x07u; }
+        else { i++; continue; }
+        if (i + (size_t)len > n) break;
+        int ok = 1;
+        for (int k = 1; k < len; k++) {
+            if ((in[i + k] & 0xC0u) != 0x80u) { ok = 0; break; }
+            cp = (cp << 6) | (in[i + k] & 0x3Fu);
+        }
+        if (!ok || (len == 3 && cp < 0x800u) || (len == 4 && (cp < 0x10000u || cp > 0x10FFFFu)) ||
+            (cp >= 0xD800u && cp <= 0xDFFFu)) {
+            i++;
+            continue;
+        }
+        if (cp == 0x00A0u) {
+            out[pos++] = ' ';
+        } else if (cp == 0xFEFFu || (cp >= 0x200Bu && cp <= 0x200Fu)) {
+            /* skip zero-width BOM/markers */
+        } else {
+            if (pos + (size_t)len > lim) break;
+            for (int k = 0; k < len; k++) out[pos++] = (char)in[i + k];
+        }
+        i += (size_t)len;
+    }
+    out[pos] = 0;
+    return pos;
 }
 
 int utf8_count(const char* s) {

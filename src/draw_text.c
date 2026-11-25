@@ -16,7 +16,7 @@
 
 #define GLYPH_CACHE_PER_SIZE 768
 #define GLYPH_HASH_CAP       1024  // 2 的幂，用于 O(1) 查找
-#define MAX_BUCKETS          96
+#define MAX_BUCKETS          256
 
 typedef struct {
     uint32_t cp;
@@ -41,6 +41,9 @@ typedef struct {
     HFONT hfont;
     HFONT hfont_en;
     HFONT hfont_jp;
+    HFONT hfont_kr;
+    HFONT hfont_sym;
+    HFONT hfont_emoji;
 #endif
 } Bucket;
 
@@ -78,11 +81,18 @@ static void bucket_rehash(Bucket* b) {
 
 static void raster_glyph_stb(Font* f, Bucket* b, Glyph* g, uint32_t cp) {
     g->cp = cp;
+    int gi = stbtt_FindGlyphIndex(&f->info, (int)cp);
+    if (gi == 0) {
+        g->adv = (cp == 0x20u || cp == 0x00A0u) ? ((float)b->px * 0.30f) : 0.0f;
+        g->x0 = g->y0 = g->bw = g->bh = 0;
+        g->bmp = NULL;
+        return;
+    }
     int advw, lsb;
-    stbtt_GetCodepointHMetrics(&f->info, (int)cp, &advw, &lsb);
+    stbtt_GetGlyphHMetrics(&f->info, gi, &advw, &lsb);
     g->adv = advw * b->scale;
     int ix0, iy0, ix1, iy1;
-    stbtt_GetCodepointBitmapBox(&f->info, (int)cp, b->scale, b->scale, &ix0, &iy0, &ix1, &iy1);
+    stbtt_GetGlyphBitmapBox(&f->info, gi, b->scale, b->scale, &ix0, &iy0, &ix1, &iy1);
     int stb_asc = (int)(f->ascent * b->scale + 0.5f);
     g->x0 = ix0;
     g->y0 = iy0 + (b->ascent - stb_asc);
@@ -91,7 +101,7 @@ static void raster_glyph_stb(Font* f, Bucket* b, Glyph* g, uint32_t cp) {
     if (g->bw > 0 && g->bh > 0) {
         g->bmp = (uint8_t*)malloc((size_t)g->bw * g->bh);
         if (g->bmp) {
-            stbtt_MakeCodepointBitmap(&f->info, g->bmp, g->bw, g->bh, g->bw, b->scale, b->scale, (int)cp);
+            stbtt_MakeGlyphBitmap(&f->info, g->bmp, g->bw, g->bh, g->bw, b->scale, b->scale, gi);
         }
     } else {
         g->bmp = NULL;
@@ -99,39 +109,178 @@ static void raster_glyph_stb(Font* f, Bucket* b, Glyph* g, uint32_t cp) {
 }
 
 #ifdef _WIN32
-static int raster_glyph_win(Bucket* b, Glyph* g, uint32_t cp) {
-    if (cp == 0 || cp > 0xFFFFu || !b->hfont) return 0;
-    HDC hdc = win_font_dc();
-    if (!hdc) return 0;
+static int is_latin_for_en(uint32_t cp) {
+    return (cp < 0x0080u) || (cp >= 0x00C0u && cp <= 0x024Fu);
+}
 
-    WCHAR wch = (WCHAR)cp;
-    HFONT use_font = (cp < 0x0250u && b->hfont_en) ? b->hfont_en : b->hfont;
-    HGDIOBJ old = SelectObject(hdc, use_font);
+static int win_font_has_utf16(HDC hdc, HFONT hf, const WCHAR* wbuf, int wlen) {
+    if (!hf) return 0;
+    SelectObject(hdc, hf);
+    WORD gi[4] = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF };
+    if (GetGlyphIndicesW(hdc, wbuf, wlen, gi, GGI_MARK_NONEXISTING_GLYPHS) == GDI_ERROR) return 0;
+    return gi[0] != 0xFFFF;
+}
 
-    WORD gi = 0xFFFF;
-    if (GetGlyphIndicesW(hdc, &wch, 1, &gi, GGI_MARK_NONEXISTING_GLYPHS) == GDI_ERROR || gi == 0xFFFF) {
-        int found = 0;
-        if (use_font != b->hfont && b->hfont) {
-            SelectObject(hdc, b->hfont);
-            if (GetGlyphIndicesW(hdc, &wch, 1, &gi, GGI_MARK_NONEXISTING_GLYPHS) != GDI_ERROR && gi != 0xFFFF) found = 1;
-        }
-        if (!found && b->hfont_jp) {
-            SelectObject(hdc, b->hfont_jp);
-            if (GetGlyphIndicesW(hdc, &wch, 1, &gi, GGI_MARK_NONEXISTING_GLYPHS) != GDI_ERROR && gi != 0xFFFF) found = 1;
-        }
-        if (!found) {
-            SelectObject(hdc, old);
-            return 0;
+static int raster_win_dib(HDC hdc, HFONT hf, int px, const WCHAR* wbuf, int wlen, Glyph* g, uint32_t cp) {
+    SelectObject(hdc, hf);
+    SIZE tsz = { 0, 0 };
+    if (!GetTextExtentPoint32W(hdc, wbuf, wlen, &tsz) || tsz.cx <= 0 || tsz.cy <= 0) return 0;
+    TEXTMETRICW tm;
+    memset(&tm, 0, sizeof(tm));
+    GetTextMetricsW(hdc, &tm);
+    int cw = tsz.cx + (px / 2) + 8;
+    int ch = (tm.tmHeight > tsz.cy ? tm.tmHeight : tsz.cy) + 6;
+    if (cw > 256) cw = 256;
+    if (ch > 256) ch = 256;
+    int pad_x = 2, pad_y = 2;
+
+    BITMAPINFO bi;
+    memset(&bi, 0, sizeof(bi));
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = cw;
+    bi.bmiHeader.biHeight = -ch;
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+
+    uint32_t* bits = NULL;
+    HBITMAP hbmp = CreateDIBSection(hdc, &bi, DIB_RGB_COLORS, (void**)&bits, NULL, 0);
+    if (!hbmp || !bits) {
+        if (hbmp) DeleteObject(hbmp);
+        return 0;
+    }
+    memset(bits, 0, (size_t)cw * (size_t)ch * 4u);
+    HGDIOBJ oldbmp = SelectObject(hdc, hbmp);
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, RGB(255, 255, 255));
+    ExtTextOutW(hdc, pad_x, pad_y, 0, NULL, wbuf, (UINT)wlen, NULL);
+    GdiFlush();
+
+    int minx = cw, miny = ch, maxx = -1, maxy = -1;
+    for (int y = 0; y < ch; y++) {
+        const uint32_t* row = bits + (size_t)y * cw;
+        for (int x = 0; x < cw; x++) {
+            uint32_t p = row[x];
+            uint32_t r = p & 0xFFu, gg = (p >> 8) & 0xFFu, bb = (p >> 16) & 0xFFu;
+            uint32_t lum = (r * 77u + gg * 150u + bb * 29u) >> 8;
+            if (lum > 0) {
+                if (x < minx) minx = x;
+                if (x > maxx) maxx = x;
+                if (y < miny) miny = y;
+                if (y > maxy) maxy = y;
+            }
         }
     }
 
+    g->cp = cp;
+    g->adv = (float)tsz.cx;
+    if (maxx >= minx && maxy >= miny) {
+        int bw = maxx - minx + 1;
+        int bh = maxy - miny + 1;
+        g->bw = bw;
+        g->bh = bh;
+        g->x0 = minx - pad_x;
+        g->y0 = (miny - pad_y) - tm.tmAscent;
+        g->bmp = (uint8_t*)malloc((size_t)bw * bh);
+        if (g->bmp) {
+            for (int y = 0; y < bh; y++) {
+                const uint32_t* sr = bits + (size_t)(miny + y) * cw + minx;
+                uint8_t* dr = g->bmp + (size_t)y * bw;
+                for (int x = 0; x < bw; x++) {
+                    uint32_t p = sr[x];
+                    uint32_t r = p & 0xFFu, gg = (p >> 8) & 0xFFu, bb = (p >> 16) & 0xFFu;
+                    uint32_t mx = r > gg ? r : gg;
+                    if (bb > mx) mx = bb;
+                    dr[x] = (uint8_t)(mx > 255u ? 255u : mx);
+                }
+            }
+        }
+    } else {
+        g->bw = g->bh = g->x0 = g->y0 = 0;
+        g->bmp = NULL;
+    }
+
+    SelectObject(hdc, oldbmp);
+    DeleteObject(hbmp);
+    return 1;
+}
+
+static int raster_glyph_win(Bucket* b, Glyph* g, uint32_t cp) {
+    if (cp == 0 || !b->hfont) return 0;
+    HDC hdc = win_font_dc();
+    if (!hdc) return 0;
+
+    WCHAR wbuf[2] = { 0, 0 };
+    int wlen = 1;
+    if (cp <= 0xFFFFu) {
+        wbuf[0] = (WCHAR)cp;
+    } else if (cp <= 0x10FFFFu) {
+        uint32_t u = cp - 0x10000u;
+        wbuf[0] = (WCHAR)(0xD800u + (u >> 10));
+        wbuf[1] = (WCHAR)(0xDC00u + (u & 0x3FFu));
+        wlen = 2;
+    } else {
+        return 0;
+    }
+
+    HFONT cands[7] = { NULL };
+    int nc = 0;
+    if (cp >= 0x1F000u || (cp >= 0x2600u && cp <= 0x27BFu) || (cp >= 0x2300u && cp <= 0x23FFu) || (cp >= 0x2B00u && cp <= 0x2BFFu)) {
+        cands[nc++] = b->hfont_emoji;
+        cands[nc++] = b->hfont_sym;
+        cands[nc++] = b->hfont_en;
+        cands[nc++] = b->hfont;
+    } else if ((cp >= 0xAC00u && cp <= 0xD7AFu) || (cp >= 0x1100u && cp <= 0x11FFu) || (cp >= 0x3130u && cp <= 0x318Fu)) {
+        cands[nc++] = b->hfont_kr;
+        cands[nc++] = b->hfont;
+    } else if ((cp >= 0x3040u && cp <= 0x30FFu) || (cp >= 0x31F0u && cp <= 0x31FFu)) {
+        cands[nc++] = b->hfont_jp;
+        cands[nc++] = b->hfont;
+    } else if (is_latin_for_en(cp)) {
+        cands[nc++] = b->hfont_en;
+        cands[nc++] = b->hfont;
+        cands[nc++] = b->hfont_sym;
+    } else {
+        cands[nc++] = b->hfont;
+        cands[nc++] = b->hfont_jp;
+        cands[nc++] = b->hfont_kr;
+        cands[nc++] = b->hfont_en;
+        cands[nc++] = b->hfont_sym;
+        cands[nc++] = b->hfont_emoji;
+    }
+
+    HGDIOBJ old = SelectObject(hdc, b->hfont);
+    HFONT chosen = NULL;
+    for (int i = 0; i < nc; i++) {
+        if (win_font_has_utf16(hdc, cands[i], wbuf, wlen)) {
+            chosen = cands[i];
+            break;
+        }
+    }
+    if (!chosen && cp > 0xFFFFu && b->hfont_emoji) {
+        chosen = b->hfont_emoji;
+    }
+    if (!chosen) {
+        SelectObject(hdc, old);
+        return 0;
+    }
+
+    if (cp > 0xFFFFu || chosen == b->hfont_emoji) {
+        int ok_dib = raster_win_dib(hdc, chosen, b->px, wbuf, wlen, g, cp);
+        SelectObject(hdc, old);
+        if (ok_dib) return 1;
+        return 0;
+    }
+
+    SelectObject(hdc, chosen);
     GLYPHMETRICS gm;
     MAT2 mat = { {0, 1}, {0, 0}, {0, 0}, {0, 1} };
     memset(&gm, 0, sizeof(gm));
     DWORD sz = GetGlyphOutlineW(hdc, (UINT)cp, GGO_GRAY8_BITMAP, &gm, 0, NULL, &mat);
     if (sz == GDI_ERROR) {
+        int ok_dib = raster_win_dib(hdc, chosen, b->px, wbuf, wlen, g, cp);
         SelectObject(hdc, old);
-        return 0;
+        return ok_dib;
     }
 
     g->cp = cp;
@@ -169,6 +318,19 @@ static int raster_glyph_win(Bucket* b, Glyph* g, uint32_t cp) {
 #endif
 
 static void raster_glyph(Font* f, Bucket* b, Glyph* g, uint32_t cp) {
+    if (cp == 0x200Bu || cp == 0x200Cu || cp == 0x200Du || cp == 0x200Eu || cp == 0x200Fu ||
+        cp == 0x2060u || cp == 0xFEFFu || cp == 0x00ADu ||
+        (cp >= 0xFE00u && cp <= 0xFE0Fu) || (cp >= 0xE0100u && cp <= 0xE01EFu) ||
+        (cp >= 0x0300u && cp <= 0x036Fu) || cp == 0x3099u || cp == 0x309Au) {
+        g->cp = cp;
+        g->bw = g->bh = g->x0 = g->y0 = 0;
+        g->adv = 0.0f;
+        g->bmp = NULL;
+        return;
+    }
+    if (cp == 0x00A0u || cp == 0x202Fu || cp == 0x205Fu || (cp >= 0x2002u && cp <= 0x200Au)) {
+        cp = 0x0020u;
+    }
 #ifdef _WIN32
     if (raster_glyph_win(b, g, cp)) return;
 #endif
@@ -182,6 +344,9 @@ static void bucket_destroy(Bucket* b) {
     if (b->hfont) DeleteObject(b->hfont);
     if (b->hfont_en) DeleteObject(b->hfont_en);
     if (b->hfont_jp) DeleteObject(b->hfont_jp);
+    if (b->hfont_kr) DeleteObject(b->hfont_kr);
+    if (b->hfont_sym) DeleteObject(b->hfont_sym);
+    if (b->hfont_emoji) DeleteObject(b->hfont_emoji);
 #endif
     free(b);
 }
@@ -224,15 +389,25 @@ static Bucket* get_bucket_ex(Font* f, int px, int bold) {
     HDC hdc = win_font_dc();
     if (hdc) {
         int weight = bold ? FW_BOLD : FW_REGULAR;
+        int en_weight = bold ? (px <= 20 ? FW_SEMIBOLD : FW_BOLD) : FW_REGULAR;
         b->hfont = CreateFontW(-px, 0, 0, 0, weight, FALSE, FALSE, FALSE,
                                DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
                                ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Microsoft YaHei UI");
-        b->hfont_en = CreateFontW(-px, 0, 0, 0, weight, FALSE, FALSE, FALSE,
+        b->hfont_en = CreateFontW(-px, 0, 0, 0, en_weight, FALSE, FALSE, FALSE,
                                   DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
                                   ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
         b->hfont_jp = CreateFontW(-px, 0, 0, 0, weight, FALSE, FALSE, FALSE,
                                   DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
                                   ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Yu Gothic UI");
+        b->hfont_kr = CreateFontW(-px, 0, 0, 0, weight, FALSE, FALSE, FALSE,
+                                  DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                  ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Malgun Gothic");
+        b->hfont_sym = CreateFontW(-px, 0, 0, 0, FW_REGULAR, FALSE, FALSE, FALSE,
+                                   DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                   ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Symbol");
+        b->hfont_emoji = CreateFontW(-px, 0, 0, 0, FW_REGULAR, FALSE, FALSE, FALSE,
+                                     DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                     ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Emoji");
         if (b->hfont) {
             HGDIOBJ old = SelectObject(hdc, b->hfont);
             TEXTMETRICW tm;
@@ -318,6 +493,31 @@ static inline uint32_t next_cp(const char** p) {
         }
     }
     *p = (const char*)s;
+    /* Compose Japanese NFD combining dakuten/handakuten (e.g., ふ + U+3099 -> ぶ) */
+    if ((s[0] == 0xE3u && s[1] == 0x82u && (s[2] == 0x99u || s[2] == 0x9Au))) {
+        uint32_t comb = (s[2] == 0x99u) ? 0x3099u : 0x309Au;
+        uint32_t nfc = 0;
+        if (comb == 0x3099u) {
+            if ((c >= 0x304Bu && c <= 0x3061u && (c & 1u)) || (c >= 0x3064u && c <= 0x3068u && (c & 1u) == 0) ||
+                (c >= 0x30ABu && c <= 0x30C1u && (c & 1u)) || (c >= 0x30C4u && c <= 0x30C8u && (c & 1u) == 0)) {
+                nfc = c + 1u;
+            } else if ((c >= 0x306Fu && c <= 0x307Bu && ((c - 0x306Fu) % 3u == 0)) ||
+                       (c >= 0x30CFu && c <= 0x30DBu && ((c - 0x30CFu) % 3u == 0))) {
+                nfc = c + 1u;
+            } else if (c == 0x3046u) nfc = 0x3094u;
+            else if (c == 0x30A6u) nfc = 0x30F4u;
+            else if (c == 0x309Du || c == 0x30FDu || c == 0x3031u) nfc = c + 1u;
+        } else {
+            if ((c >= 0x306Fu && c <= 0x307Bu && ((c - 0x306Fu) % 3u == 0)) ||
+                (c >= 0x30CFu && c <= 0x30DBu && ((c - 0x30CFu) % 3u == 0))) {
+                nfc = c + 2u;
+            }
+        }
+        if (nfc) {
+            *p = (const char*)(s + 3);
+            c = nfc;
+        }
+    }
     return c;
 }
 
@@ -523,7 +723,7 @@ static int draw_text_max_impl(Canvas* c, Font* f, float px, int x, int y, uint32
     Bucket* b = get_bucket_ex(f, ipx, bold);
     const char* ell = "\xE2\x80\xA6";
     int ellw = text_width_ex(f, spx, ell, bold);
-    char buf[256];
+    char buf[1024];
     const char* p = utf8;
     float w = 0.0f;
     while (*p) {
@@ -533,10 +733,13 @@ static int draw_text_max_impl(Canvas* c, Font* f, float px, int x, int y, uint32
         if (!g) continue;
         if (w + g->adv > (float)(smax - ellw)) {
             size_t n = (size_t)(save - utf8);
-            if (n >= sizeof(buf)) n = sizeof(buf) - 1;
+            if (n >= sizeof(buf)) {
+                n = sizeof(buf) - 1;
+                while (n > 0 && (((unsigned char)utf8[n]) & 0xC0u) == 0x80u) n--;
+            }
             memcpy(buf, utf8, n);
             buf[n] = 0;
-            char cat[264];
+            char cat[1036];
             snprintf(cat, sizeof(cat), "%s%s", buf, ell);
             draw_text_px_ex(c, f, spx, sx, sy, col, cat, bold);
             return 1;

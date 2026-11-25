@@ -3338,8 +3338,8 @@ void draw_immersive_view(int mx, int my) {
             const uint8_t sa = static_cast<uint8_t>(clampf(alpha * 222.0f, 4.0f, 255.0f));
             const uint32_t col_orig = with_alpha(COL(255, 255, 255, 255), oa);
             const uint32_t col_sub  = with_alpha(COL(240, 244, 252, 255), sa);
-            const float draw_opx = clampf(std::round(orig_px * wl.cur_scale * 2.0f) * 0.5f, orig_px, cur_orig_px + 2.0f);
-            const float draw_spx = clampf(std::round(sub_px * (1.0f + (wl.cur_scale - 1.0f) * 0.62f) * 2.0f) * 0.5f, sub_px, cur_sub_px + 1.0f);
+            const float draw_opx = clampf(std::round(orig_px * wl.cur_scale), orig_px, cur_orig_px + 2.0f);
+            const float draw_spx = clampf(std::round(sub_px * (1.0f + (wl.cur_scale - 1.0f) * 0.62f)), sub_px, cur_sub_px + 1.0f);
             const int y_nudge = static_cast<int>(std::round(wl.cur_lift));
 
             int cur_y = y + y_nudge;
@@ -3607,7 +3607,7 @@ void draw_settings_view(int mx, int my) {
     {
         constexpr int card_h = 126;
         draw_card_box(y, card_h);
-        draw_text_bold(s, f, 15.0f, cx0 + 20, y + 16, g.C_TXT, "Sir\xC3\xA8ne v1.2.8  ·  本地无损音频播放器");
+        draw_text_bold(s, f, 15.0f, cx0 + 20, y + 16, g.C_TXT, "Sir\xC3\xA8ne v1.2.9  ·  本地无损音频播放器");
         char adiag[256]{};
         audio_get_diag(adiag, sizeof(adiag));
         for (int i = 0; adiag[i]; ++i) {
@@ -3898,9 +3898,9 @@ void draw_plugins_view(int mx, int my) {
             y += 52;
         }
 
-        // Featured Playlists Shelf: Apple Music square covered cards
+        // Featured & Personal Playlists Shelf: show all personal/daily playlists + curated recommendations
         if (!g.plg_snap.playlists.empty()) {
-            draw_text_bold(s, f, 16.0f, lx, y, g.C_TXT, "推荐与收藏歌单");
+            draw_text_bold(s, f, 16.0f, lx, y, g.C_TXT, "我的歌单与精选推荐");
             y += 30;
             constexpr int pcard_w = 132;
             constexpr int pcard_h = 178;
@@ -3908,7 +3908,7 @@ void draw_plugins_view(int mx, int my) {
             const int pcols = std::max(2, (avail_w + pgap) / (pcard_w + pgap));
             int p_thumb_q = 0;
             const int np = static_cast<int>(g.plg_snap.playlists.size());
-            const int show_np = std::min(np, pcols * 2);
+            const int show_np = std::min(np, pcols * 6);
             const int prows = (show_np + pcols - 1) / pcols;
             for (int i = 0; i < show_np; ++i) {
                 auto& pl = g.plg_snap.playlists[i];
@@ -4102,7 +4102,7 @@ void draw_qr_modal(int mx, int my) {
         constexpr int tab_w = 264;
         const int tx0 = x + (mw - tab_w) / 2;
         fill_frosted_round_rect(s, tx0, content_y, tab_w, 32, 16, g.C_SURFACE, lt ? 148 : 118, 1, glass_rim(42, 185));
-        const char* t_names[2] = { "扫码登录", "Cookie 直连" };
+        const char* t_names[2] = { "扫码登录", "凭证 / ID 直连" };
         for (int ti = 0; ti < 2; ++ti) {
             Rect tr{ tx0 + 3 + ti * 129, content_y + 3, 129, 26 };
             g.rc_plg_qr_tab[ti] = tr;
@@ -4134,7 +4134,7 @@ void draw_qr_modal(int mx, int my) {
                              g.qr_cookie_focused ? g.C_ACCENT : g.C_DIV, g.qr_cookie_focused ? 220 : 120);
         if (g.qr_cookie_val.empty()) {
             draw_text_centered_bold(s, f, 12.5f, g.rc_plg_qr_input.x + 12, g.rc_plg_qr_input.x + g.rc_plg_qr_input.w - 12,
-                                    g.rc_plg_qr_input.y + 34, g.C_TXT3, "点击此处并按 Ctrl+V 粘贴 Cookie 凭证");
+                                    g.rc_plg_qr_input.y + 34, g.C_TXT3, "点击此处输入或 Ctrl+V 粘贴 Cookie / 用户 ID");
         } else {
             const size_t n = g.qr_cookie_val.size();
             std::string preview = (n > 76) ? (std::string("...") + g.qr_cookie_val.substr(n - 73)) : g.qr_cookie_val;
@@ -4249,11 +4249,15 @@ void handle_text_input_events() {
             if (act == 1) {
                 if (!g.cfg_edit_val.empty()) pop_utf8_cp(g.cfg_edit_val);
             } else if (act == 2) {
+                std::string saved_pid = g.cfg_edit_pid;
                 plugin_set_config(g.cfg_edit_pid, g.cfg_edit_key, g.cfg_edit_val);
                 g.cfg_editing = 0;
                 g.plg_list = plugin_list();
                 be_text_input(0);
-                show_toast("已保存扩展配置");
+                if (!saved_pid.empty() && saved_pid == g.active_plugin_id) {
+                    plugin_async_home(saved_pid);
+                }
+                show_toast("已保存扩展配置并刷新歌单");
             } else if (act == 3) {
                 g.cfg_editing = 0;
                 be_text_input(0);
@@ -4480,7 +4484,7 @@ void handle_input() {
                     if (!g.qr_cookie_val.empty()) {
                         plugin_login_with_cookie(qr.plugin_id, g.qr_cookie_val);
                     } else {
-                        show_toast("请先粘贴 Cookie 凭证");
+                        show_toast("请先输入用户 ID 或粘贴 Cookie 凭证");
                     }
                     return;
                 }

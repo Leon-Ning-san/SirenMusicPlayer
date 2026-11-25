@@ -75,6 +75,8 @@ PluginQrState g_qr;
 std::atomic<bool> g_quit{ false };
 std::atomic<int> g_active_jobs{ 0 };
 std::atomic<uint64_t> g_req_gen{ 1 };
+std::atomic<uint64_t> g_play_gen{ 1 };
+std::atomic<uint64_t> g_qr_gen{ 1 };
 
 std::string safe_id_str(const std::string& s) {
     std::string out;
@@ -546,11 +548,20 @@ HttpResp http_request_sync(const std::string& method, const std::string& url,
         pSetOpt(hReq, WINHTTP_OPTION_DISABLE_FEATURE, &dis, sizeof(dis));
     }
 
-    if (pAddHdr && !headers.empty()) {
+    if (pSetOpt) {
+        DWORD decomp = 3; // WINHTTP_DECOMPRESSION_FLAG_ALL
+        pSetOpt(hReq, 85, &decomp, sizeof(decomp));
+    }
+    if (pAddHdr) {
+        bool has_ae = false;
         std::string hblock;
         for (const auto& kv : headers) {
+            std::string lk = kv.first;
+            for (char& ch : lk) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            if (lk == "accept-encoding") has_ae = true;
             hblock += kv.first + ": " + kv.second + "\r\n";
         }
+        if (!has_ae) hblock += "Accept-Encoding: identity\r\n";
         std::wstring wh = utf8_to_wide(hblock);
         pAddHdr(hReq, wh.c_str(), static_cast<DWORD>(wh.size()), WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     }
@@ -618,7 +629,7 @@ HttpResp http_request_sync(const std::string& method, const std::string& url,
     if (has_body) write_file_bytes(tmp_body, body.data(), body.size());
 
     std::vector<std::string> args = {
-        "curl", "-sS"
+        "curl", "-sS", "--compressed"
     };
     if (follow_redirects) args.push_back("-L");
     args.insert(args.end(), { "--max-time", "20", "-D", tmp_hdr, "-o", tmp_out, "-X", method.empty() ? "GET" : method });
@@ -1209,11 +1220,74 @@ lua_State* create_sandboxed_vm(PluginEntry* entry, const std::string& script_pat
     return L;
 }
 
+std::string decode_entities_and_utf8(const std::string& raw, bool decode_entities) {
+    if (raw.empty()) return raw;
+    std::string u8;
+    if (is_valid_utf8(reinterpret_cast<const uint8_t*>(raw.data()), raw.size())) {
+        std::vector<char> clean(raw.size() + 4, 0);
+        size_t n = sanitize_utf8_text(reinterpret_cast<const uint8_t*>(raw.data()), raw.size(), clean.data(), clean.size());
+        u8.assign(clean.data(), n);
+    } else {
+        std::vector<char> conv(raw.size() * 3 + 8, 0);
+        size_t n = text_to_utf8_auto(reinterpret_cast<const uint8_t*>(raw.data()), raw.size(), conv.data(), conv.size());
+        u8.assign(conv.data(), n);
+    }
+    if (!decode_entities || u8.find('&') == std::string::npos) return u8;
+    std::string out;
+    out.reserve(u8.size());
+    for (size_t i = 0; i < u8.size(); ) {
+        if (u8[i] == '&') {
+            if (u8.compare(i, 5, "&amp;") == 0)  { out.push_back('&'); i += 5; continue; }
+            if (u8.compare(i, 4, "&lt;") == 0)   { out.push_back('<'); i += 4; continue; }
+            if (u8.compare(i, 4, "&gt;") == 0)   { out.push_back('>'); i += 4; continue; }
+            if (u8.compare(i, 6, "&quot;") == 0) { out.push_back('"'); i += 6; continue; }
+            if (u8.compare(i, 6, "&apos;") == 0) { out.push_back('\''); i += 6; continue; }
+            if (u8.compare(i, 6, "&nbsp;") == 0) { out.push_back(' '); i += 6; continue; }
+            if (i + 3 < u8.size() && u8[i + 1] == '#') {
+                auto sc = u8.find(';', i + 2);
+                if (sc != std::string::npos && sc - i <= 10) {
+                    const char* num = u8.c_str() + i + 2;
+                    char* endp = nullptr;
+                    unsigned long cp = (num[0] == 'x' || num[0] == 'X')
+                        ? std::strtoul(num + 1, &endp, 16)
+                        : std::strtoul(num, &endp, 10);
+                    if (endp == u8.c_str() + sc && cp > 0 && cp <= 0x10FFFFul && !(cp >= 0xD800ul && cp <= 0xDFFFul)) {
+                        if (cp == 0x00A0ul) cp = ' ';
+                        if (cp < 0x80ul) out.push_back(static_cast<char>(cp));
+                        else if (cp < 0x800ul) {
+                            out.push_back(static_cast<char>(0xC0u | (cp >> 6)));
+                            out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+                        } else if (cp < 0x10000ul) {
+                            out.push_back(static_cast<char>(0xE0u | (cp >> 12)));
+                            out.push_back(static_cast<char>(0x80u | ((cp >> 6) & 0x3Fu)));
+                            out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+                        } else {
+                            out.push_back(static_cast<char>(0xF0u | (cp >> 18)));
+                            out.push_back(static_cast<char>(0x80u | ((cp >> 12) & 0x3Fu)));
+                            out.push_back(static_cast<char>(0x80u | ((cp >> 6) & 0x3Fu)));
+                            out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+                        }
+                        i = sc + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push_back(u8[i++]);
+    }
+    return out;
+}
+
 std::string lua_str_field(lua_State* L, int tbl_idx, const char* k, const char* def = "") {
     lua_getfield(L, tbl_idx, k);
     std::string v = lua_isstring(L, -1) ? lua_tostring(L, -1) : def;
     lua_pop(L, 1);
     return v;
+}
+
+std::string lua_clean_field(lua_State* L, int tbl_idx, const char* k, const char* def = "") {
+    std::string v = lua_str_field(L, tbl_idx, k, def);
+    return decode_entities_and_utf8(v, true);
 }
 
 double lua_num_field(lua_State* L, int tbl_idx, const char* k, double def = 0.0) {
@@ -1233,9 +1307,9 @@ bool lua_bool_field(lua_State* L, int tbl_idx, const char* k, bool def = false) 
 void parse_track_from_lua(lua_State* L, int idx, const std::string& pid, OnlineTrack& t) {
     t.plugin_id = pid;
     t.id = lua_str_field(L, idx, "id");
-    t.title = lua_str_field(L, idx, "title", "未知歌曲");
-    t.artist = lua_str_field(L, idx, "artist");
-    t.album = lua_str_field(L, idx, "album");
+    t.title = lua_clean_field(L, idx, "title", "未知歌曲");
+    t.artist = lua_clean_field(L, idx, "artist");
+    t.album = lua_clean_field(L, idx, "album");
     t.cover_url = lua_str_field(L, idx, "cover_url");
     t.dur = lua_num_field(L, idx, "duration", 0.0);
     t.liked = lua_bool_field(L, idx, "liked", false);
@@ -1524,6 +1598,11 @@ void plugin_set_config(const std::string& plugin_id, const std::string& key, con
     for (auto* p : g_plugins) {
         if (p->info.id == plugin_id) {
             p->kv[key] = val;
+            if (key == "uid" || key == "user_id") {
+                p->kv.erase("__nickname");
+                p->info.logged_in = false;
+                p->info.nickname.clear();
+            }
             save_entry_kv(p);
             for (auto& cf : p->info.config_fields) if (cf.key == key) cf.value = val;
             break;
@@ -1676,8 +1755,8 @@ void plugin_async_home(const std::string& plugin_id) {
                             OnlinePlaylist pl;
                             pl.plugin_id = plugin_id;
                             pl.id = lua_str_field(L, it, "id");
-                            pl.name = lua_str_field(L, it, "name", "歌单");
-                            pl.description = lua_str_field(L, it, "description");
+                            pl.name = lua_clean_field(L, it, "name", "歌单");
+                            pl.description = lua_clean_field(L, it, "description");
                             pl.cover_url = lua_str_field(L, it, "cover_url");
                             pl.category = lua_str_field(L, it, "category", "recommend");
                             pl.track_count = static_cast<int>(lua_num_field(L, it, "track_count", 0.0));
@@ -1716,6 +1795,19 @@ void plugin_async_home(const std::string& plugin_id) {
         }
         if (!g_quit.load() && gen == g_req_gen.load()) {
             std::lock_guard<std::mutex> lk(g_mgr_mtx);
+            for (auto* p : g_plugins) {
+                if (p->info.id == plugin_id) {
+                    p->kv = local_ent.kv;
+                    auto it_nick = p->kv.find("__nickname");
+                    if (it_nick != p->kv.end() && !it_nick->second.empty()) {
+                        p->info.logged_in = true;
+                        p->info.nickname = it_nick->second;
+                        g_snap.plugins_updated = true;
+                    }
+                    save_entry_kv(p);
+                    break;
+                }
+            }
             g_snap.playlists = std::move(pls);
             if (!favs.empty()) {
                 g_snap.tracks = std::move(favs);
@@ -1789,6 +1881,7 @@ void plugin_async_playlist_tracks(const std::string& plugin_id, const std::strin
 
 void plugin_async_play_track(const std::string& plugin_id, const OnlineTrack& track, const std::string& quality) {
     if (plugin_id.empty() || track.id.empty()) return;
+    uint64_t pgen = ++g_play_gen;
     std::string spath;
     std::map<std::string, std::string> kv;
     {
@@ -1797,7 +1890,7 @@ void plugin_async_play_track(const std::string& plugin_id, const OnlineTrack& tr
         g_snap.is_busy = true;
     }
     ++g_active_jobs;
-    std::thread([plugin_id, spath, kv, track, quality]() {
+    std::thread([plugin_id, spath, kv, track, quality, pgen]() {
         PluginReadyPlay rp;
         rp.ready = true;
         rp.plugin_id = plugin_id;
@@ -1853,10 +1946,10 @@ void plugin_async_play_track(const std::string& plugin_id, const OnlineTrack& tr
                 lua_pushstring(L, track.id.c_str());
                 if (lua_pcall(L, 1, 1, 0) == LUA_OK) {
                     if (lua_isstring(L, -1)) {
-                        rp.lrc_orig = lua_tostring(L, -1);
+                        rp.lrc_orig = decode_entities_and_utf8(lua_tostring(L, -1), true);
                     } else if (lua_istable(L, -1)) {
-                        rp.lrc_orig = lua_str_field(L, -1, "lrc");
-                        rp.lrc_trans = lua_str_field(L, -1, "tlyric");
+                        rp.lrc_orig = decode_entities_and_utf8(lua_str_field(L, -1, "lrc"), true);
+                        rp.lrc_trans = decode_entities_and_utf8(lua_str_field(L, -1, "tlyric"), true);
                     }
                 }
                 lua_pop(L, 1);
@@ -1904,11 +1997,14 @@ void plugin_async_play_track(const std::string& plugin_id, const OnlineTrack& tr
             if (file_exists_nonempty(cov_path)) rp.cover_path = cov_path;
         }
 
-        if (!g_quit.load()) {
+        if (!g_quit.load() && pgen == g_play_gen.load()) {
             std::lock_guard<std::mutex> lk(g_mgr_mtx);
             g_snap.ready_play = std::move(rp);
             g_snap.is_busy = false;
             g_got_play = true;
+        } else if (!g_quit.load()) {
+            std::lock_guard<std::mutex> lk(g_mgr_mtx);
+            if (pgen == g_play_gen.load()) g_snap.is_busy = false;
         }
         --g_active_jobs;
     }).detach();
@@ -2012,6 +2108,7 @@ void plugin_async_playlist_thumb(const std::string& plugin_id, size_t playlist_i
 }
 
 void plugin_qr_start(const std::string& plugin_id, const std::string& mode) {
+    uint64_t qgen = ++g_qr_gen;
     std::string spath;
     std::map<std::string, std::string> kv;
     std::string use_mode = mode;
@@ -2028,7 +2125,7 @@ void plugin_qr_start(const std::string& plugin_id, const std::string& mode) {
         g_qr.message = "正在请求登录二维码...";
     }
     ++g_active_jobs;
-    std::thread([plugin_id, spath, kv, use_mode]() {
+    std::thread([plugin_id, spath, kv, use_mode, qgen]() {
         PluginEntry local_ent;
         local_ent.info.id = plugin_id;
         local_ent.info.path = spath;
@@ -2052,7 +2149,7 @@ void plugin_qr_start(const std::string& plugin_id, const std::string& mode) {
             }
             lua_close(L);
         }
-        if (!g_quit.load()) {
+        if (!g_quit.load() && qgen == g_qr_gen.load()) {
             std::lock_guard<std::mutex> lk(g_mgr_mtx);
             for (auto* p : g_plugins) if (p->info.id == plugin_id) { p->kv = local_ent.kv; save_entry_kv(p); break; }
             if (g_qr.active && g_qr.plugin_id == plugin_id) {
@@ -2074,15 +2171,20 @@ void plugin_qr_start(const std::string& plugin_id, const std::string& mode) {
 
 void plugin_login_with_cookie(const std::string& plugin_id, const std::string& cookie) {
     if (plugin_id.empty() || cookie.empty()) return;
+    uint64_t qgen = ++g_qr_gen;
     std::string spath;
     std::map<std::string, std::string> kv;
     {
         std::lock_guard<std::mutex> lk(g_mgr_mtx);
         if (!find_entry_copy_locked(plugin_id, &spath, &kv)) return;
         g_snap.is_busy = true;
+        if (g_qr.active && g_qr.plugin_id == plugin_id) {
+            g_qr.status = "loading";
+            g_qr.message = "正在验证并同步歌单...";
+        }
     }
     ++g_active_jobs;
-    std::thread([plugin_id, spath, kv, cookie]() {
+    std::thread([plugin_id, spath, kv, cookie, qgen]() {
         PluginEntry local_ent;
         local_ent.info.id = plugin_id;
         local_ent.info.path = spath;
@@ -2109,7 +2211,7 @@ void plugin_login_with_cookie(const std::string& plugin_id, const std::string& c
             }
             lua_close(L);
         }
-        if (!g_quit.load()) {
+        if (!g_quit.load() && qgen == g_qr_gen.load()) {
             std::lock_guard<std::mutex> lk(g_mgr_mtx);
             for (auto* p : g_plugins) {
                 if (p->info.id == plugin_id) {
@@ -2124,9 +2226,9 @@ void plugin_login_with_cookie(const std::string& plugin_id, const std::string& c
                     break;
                 }
             }
-            if (ok && g_qr.active && g_qr.plugin_id == plugin_id) {
-                g_qr.status = "ok";
-                g_qr.message = "登录成功！";
+            if (g_qr.active && g_qr.plugin_id == plugin_id && qgen == g_qr_gen.load()) {
+                g_qr.status = ok ? "ok" : "error";
+                g_qr.message = ok ? (!msg.empty() ? msg : "登录成功！") : (!msg.empty() ? msg : (!err.empty() ? err : "凭证校验失败"));
             }
             g_snap.is_busy = false;
             g_snap.status_toast = ok ? "扩展账号登录成功" : (!msg.empty() ? msg : (!err.empty() ? err : "凭证校验失败"));
@@ -2136,6 +2238,7 @@ void plugin_login_with_cookie(const std::string& plugin_id, const std::string& c
 }
 
 void plugin_qr_poll() {
+    uint64_t qgen = g_qr_gen.load();
     std::string pid, key, spath;
     std::map<std::string, std::string> kv;
     {
@@ -2146,7 +2249,7 @@ void plugin_qr_poll() {
         if (!find_entry_copy_locked(pid, &spath, &kv)) return;
     }
     ++g_active_jobs;
-    std::thread([pid, key, spath, kv]() {
+    std::thread([pid, key, spath, kv, qgen]() {
         PluginEntry local_ent;
         local_ent.info.id = pid;
         local_ent.info.path = spath;
@@ -2166,7 +2269,7 @@ void plugin_qr_poll() {
             }
             lua_close(L);
         }
-        if (!g_quit.load()) {
+        if (!g_quit.load() && qgen == g_qr_gen.load()) {
             std::lock_guard<std::mutex> lk(g_mgr_mtx);
             // Sync any KV entries saved by Lua login_qr_poll back into live plugin entry
             for (auto* p : g_plugins) {
@@ -2195,6 +2298,7 @@ void plugin_qr_poll() {
 }
 
 void plugin_qr_close() {
+    ++g_qr_gen;
     std::lock_guard<std::mutex> lk(g_mgr_mtx);
     g_qr = PluginQrState{};
 }
@@ -2228,8 +2332,10 @@ void plugin_logout(const std::string& plugin_id) {
         if (!g_quit.load()) {
             std::lock_guard<std::mutex> lk(g_mgr_mtx);
             for (auto* p : g_plugins) if (p->info.id == plugin_id) { p->kv = local_ent.kv; save_entry_kv(p); break; }
+            g_snap.plugins_updated = true;
         }
         --g_active_jobs;
+        if (!g_quit.load()) plugin_async_home(plugin_id);
     }).detach();
 }
 
