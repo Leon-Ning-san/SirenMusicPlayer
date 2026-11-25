@@ -118,6 +118,7 @@ int be_is_desktop(void) { return 0; }
 int be_wheel_delta(void) { return 0; }
 const char* be_poll_dropped_path(void) { return NULL; }
 int be_pick_folder(char* out, size_t cap) { (void)out; (void)cap; return 0; }
+int be_pick_image(char* out, size_t cap) { (void)out; (void)cap; return 0; }
 void be_text_input(int enable) { (void)enable; }
 int be_poll_text_char(char* utf8_out, size_t cap, int* action) { (void)utf8_out; (void)cap; (void)action; return 0; }
 int be_poll_hotkey(void) { return 0; }

@@ -37,6 +37,7 @@ int be_is_desktop(void);
 int be_wheel_delta(void);
 const char* be_poll_dropped_path(void);
 int be_pick_folder(char* out, size_t cap);
+int be_pick_image(char* out, size_t cap);
 void be_text_input(int enable);
 // 返回 1 表示收到文本或按键动作: action 0=普通字符(utf8_out), 1=退格, 2=回车, 3=ESC
 int be_poll_text_char(char* utf8_out, size_t cap, int* action);

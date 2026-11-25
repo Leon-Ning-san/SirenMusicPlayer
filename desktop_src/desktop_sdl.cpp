@@ -356,6 +356,7 @@ void be_input_update(void) {
                 if (k == SDLK_m) { g_sdl.hotkey = 'm'; break; }
                 if (k == SDLK_d) { g_sdl.hotkey = 'c'; break; }
                 if (k == SDLK_v) { g_sdl.hotkey = 'v'; break; }
+                if (k == SDLK_b) { g_sdl.hotkey = 'b'; break; }
             }
             if (k == SDLK_PAGEUP)   { g_sdl.wheel_frame += 3; break; }
             if (k == SDLK_PAGEDOWN) { g_sdl.wheel_frame -= 3; break; }
@@ -449,6 +450,27 @@ int be_pick_folder(char* out, size_t cap) {
         while (len > 0 && (out[len - 1] == '\n' || out[len - 1] == '\r' || out[len - 1] == '/'))
             out[--len] = 0;
         if (len == 0) out[0] = '/';
+    }
+    pclose(pp);
+    be_touch_reset();
+    return out[0] ? 1 : 0;
+}
+
+int be_pick_image(char* out, size_t cap) {
+    if (!out || cap == 0) return 0;
+    out[0] = 0;
+#ifdef __APPLE__
+    const char* cmd = "osascript -e 'POSIX path of (choose file with prompt \"\xE9\x80\x89\xE6\x8B\xA9 Sir\xC3\xA8ne \xE8\x83\x8C\xE6\x99\xAF\xE5\x9B\xBE\xE7\x89\x87\" of type {\"public.image\"})' 2>/dev/null";
+#else
+    const char* cmd =
+        "(zenity --file-selection --title=\"\xE9\x80\x89\xE6\x8B\xA9 Sir\xC3\xA8ne \xE8\x83\x8C\xE6\x99\xAF\xE5\x9B\xBE\xE7\x89\x87\" --file-filter=\"Images | *.png *.jpg *.jpeg *.bmp *.tga *.gif *.PNG *.JPG *.JPEG *.BMP *.TGA *.GIF\" 2>/dev/null "
+        "|| kdialog --getopenfilename \"$HOME\" \"*.png *.jpg *.jpeg *.bmp *.tga *.gif|Images\" --title \"\xE9\x80\x89\xE6\x8B\xA9 Sir\xC3\xA8ne \xE8\x83\x8C\xE6\x99\xAF\xE5\x9B\xBE\xE7\x89\x87\" 2>/dev/null)";
+#endif
+    FILE* pp = popen(cmd, "r");
+    if (!pp) return 0;
+    if (fgets(out, static_cast<int>(cap), pp)) {
+        size_t len = std::strlen(out);
+        while (len > 0 && (out[len - 1] == '\n' || out[len - 1] == '\r')) out[--len] = 0;
     }
     pclose(pp);
     be_touch_reset();

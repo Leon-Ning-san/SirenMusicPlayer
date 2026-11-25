@@ -6,6 +6,7 @@
 #include "draw.h"
 #include "util.h"
 #include "plat.h"
+#include "stb_image.h"
 
 #include <algorithm>
 #include <array>
@@ -196,6 +197,14 @@ struct AppState {
     std::array<float, BG_ART_W * BG_ART_H * 3> cur_bg_art{};
     std::array<float, BG_ART_W * BG_ART_H * 3> tgt_bg_art{};
     int bg_art_init = 0;
+
+    std::string bg_img_path;
+    int bg_img_raw_w = 0, bg_img_raw_h = 0;
+    float bg_img_avg_lum = 128.0f;
+    std::vector<uint32_t> bg_img_raw;
+    CanvasPtr bg_fit_lib, bg_fit_lyr, bg_out_cache;
+    int bg_out_w = 0, bg_out_h = 0, bg_out_imm = -1, bg_out_lt = -1;
+
     uint32_t seed_rng = 0x9E3779B9u;
 
     double dt = 1.0 / 60.0;
@@ -242,13 +251,13 @@ struct AppState {
     uint32_t C_TXT = 0, C_TXT2 = 0, C_TXT3 = 0, C_DIV = 0, C_TRACK_BG = 0, C_HEART = 0, C_PLAY_BTN = 0, C_PLAY_ICO = 0;
 
     Rect rc_menu_btn{}, rc_nav_all{}, rc_nav_fav{}, rc_nav_lyr{}, rc_nav_add{}, rc_nav_diag{};
-    Rect rc_nav_theme{}, rc_nav_view{}, rc_nav_rescan{};
-    Rect rc_search_box{}, rc_search_clear{}, rc_sort_btn{}, rc_fs_btn{}, rc_view_pill{}, rc_pal_btn{};
+    Rect rc_nav_bg{}, rc_nav_theme{}, rc_nav_view{}, rc_nav_rescan{};
+    Rect rc_search_box{}, rc_search_clear{}, rc_sort_btn{}, rc_fs_btn{}, rc_view_pill{}, rc_bg_btn{}, rc_bg_clear{};
     std::array<Rect, 5> rc_filt_chips{};
     Rect rc_dir_chip{};
     Rect rc_hero_card{}, rc_hero_cov{}, rc_hero_play{}, rc_hero_prog{};
     Rect rc_sb_track{}, rc_fab_import{};
-    Rect rc_back_lib{}, rc_lyr_theme{}, rc_lyr_fs{};
+    Rect rc_back_lib{}, rc_lyr_bg{}, rc_lyr_bg_clear{}, rc_lyr_theme{}, rc_lyr_fs{};
     Rect rc_island{}, rc_bar_cov{}, rc_bar_fav{}, rc_bar_prev{}, rc_bar_play{}, rc_bar_next{};
     Rect rc_bar_mode{}, rc_bar_lyr{}, rc_bar_vol_ico{}, rc_bar_vol_trk{}, rc_bar_prog{};
     int ui_px0 = 0, ui_px1 = 100, ui_py = 0;
@@ -544,8 +553,106 @@ void step_palette_and_ambient() {
 
 }
 
+void invalidate_bg_cache() {
+    g.bg_fit_lib.reset();
+    g.bg_fit_lyr.reset();
+    g.bg_out_cache.reset();
+    g.bg_out_w = g.bg_out_h = 0;
+    g.bg_out_imm = g.bg_out_lt = -1;
+}
+
+bool is_image_file(const char* path) {
+    if (!path || !*path) return false;
+    return ci_ends_with(path, ".png") || ci_ends_with(path, ".jpg") || ci_ends_with(path, ".jpeg") ||
+           ci_ends_with(path, ".bmp") || ci_ends_with(path, ".tga") || ci_ends_with(path, ".gif");
+}
+
+void render_wallpaper_backdrop(int is_immersive) {
+    if (!g.screen || !g.screen->px || g.bg_img_raw.empty()) return;
+    const int dw = g.screen->w, dh = g.screen->h;
+    if (dw <= 0 || dh <= 0) return;
+
+    if (!g.bg_fit_lib || g.bg_fit_lib->w != dw || g.bg_fit_lib->h != dh) {
+        const int sw = g.bg_img_raw_w, sh = g.bg_img_raw_h;
+        if (sw <= 0 || sh <= 0) return;
+        const float src_ar = static_cast<float>(sw) / static_cast<float>(sh);
+        const float dst_ar = static_cast<float>(dw) / static_cast<float>(dh);
+        int cx = 0, cy = 0, cw = sw, ch = sh;
+        if (src_ar > dst_ar) {
+            cw = std::clamp(static_cast<int>(static_cast<float>(sh) * dst_ar + 0.5f), 1, sw);
+            cx = (sw - cw) / 2;
+        } else {
+            ch = std::clamp(static_cast<int>(static_cast<float>(sw) / dst_ar + 0.5f), 1, sh);
+            cy = (sh - ch) / 2;
+        }
+        g.bg_fit_lib.reset(canvas_new(dw, dh));
+        if (!g.bg_fit_lib) return;
+        if (cx == 0 && cy == 0 && cw == sw && ch == sh) {
+            resample_bilinear(g.bg_img_raw.data(), sw, sh, g.bg_fit_lib->px, dw, dh);
+        } else {
+            std::vector<uint32_t> crop(static_cast<size_t>(cw) * ch);
+            for (int y = 0; y < ch; ++y) {
+                std::memcpy(crop.data() + static_cast<size_t>(y) * cw,
+                            g.bg_img_raw.data() + static_cast<size_t>(cy + y) * sw + cx,
+                            static_cast<size_t>(cw) * 4);
+            }
+            resample_bilinear(crop.data(), cw, ch, g.bg_fit_lib->px, dw, dh);
+        }
+        g.bg_fit_lyr.reset();
+        g.bg_out_cache.reset();
+        g.bg_out_imm = g.bg_out_lt = -1;
+    }
+
+    if (is_immersive && (!g.bg_fit_lyr || g.bg_fit_lyr->w != dw || g.bg_fit_lyr->h != dh)) {
+        g.bg_fit_lyr.reset(canvas_new(dw, dh));
+        if (g.bg_fit_lyr) {
+            std::memcpy(g.bg_fit_lyr->px, g.bg_fit_lib->px, static_cast<size_t>(dw) * dh * 4);
+            box_blur(g.bg_fit_lyr->px, dw, dh, std::clamp(dw / 140, 5, 12), 2);
+        }
+    }
+
+    const int imm_flag = is_immersive ? 1 : 0;
+    const int lt_q = std::clamp(static_cast<int>(g.light_t * 255.0f + 0.5f), 0, 255);
+    if (!g.bg_out_cache || g.bg_out_w != dw || g.bg_out_h != dh || g.bg_out_imm != imm_flag || g.bg_out_lt != lt_q) {
+        if (!g.bg_out_cache || g.bg_out_w != dw || g.bg_out_h != dh) {
+            g.bg_out_cache.reset(canvas_new(dw, dh));
+        }
+        const Canvas* src_c = (imm_flag && g.bg_fit_lyr) ? g.bg_fit_lyr.get() : g.bg_fit_lib.get();
+        if (!g.bg_out_cache || !g.bg_out_cache->px || !src_c || !src_c->px) return;
+
+        const float t = static_cast<float>(lt_q) / 255.0f;
+        const float u_bright = clampf((g.bg_img_avg_lum - 60.0f) / 160.0f, 0.0f, 1.0f);
+        const float u_dim    = clampf((180.0f - g.bg_img_avg_lum) / 130.0f, 0.0f, 1.0f);
+        const float scrim_dark  = imm_flag ? (0.34f + 0.34f * u_bright) : (0.20f + 0.38f * u_bright);
+        const float scrim_light = imm_flag ? (0.54f + 0.18f * u_dim)    : (0.46f + 0.20f * u_dim);
+        const float scrim_f = scrim_dark + (scrim_light - scrim_dark) * t;
+        const uint32_t ua = static_cast<uint32_t>(std::clamp(static_cast<int>(scrim_f * 256.0f + 0.5f), 0, 256));
+        const uint32_t na = 256u - ua;
+        const uint32_t scrim_col = mix_col(COL(10, 12, 18, 255), COL(238, 242, 248, 255), t);
+        const uint32_t sc_rb = (scrim_col & 0x00FF00FFu) * ua;
+        const uint32_t sc_g  = ((scrim_col >> 8) & 0xFFu) * ua;
+
+        const uint32_t* sp = src_c->px;
+        uint32_t* dp = g.bg_out_cache->px;
+        const size_t N = static_cast<size_t>(dw) * dh;
+        for (size_t i = 0; i < N; ++i) {
+            const uint32_t p = sp[i];
+            const uint32_t rb = (((p & 0x00FF00FFu) * na + sc_rb + 0x00800080u) >> 8) & 0x00FF00FFu;
+            const uint32_t gv = ((((p >> 8) & 0xFFu) * na + sc_g + 128u) & 0xFF00u);
+            dp[i] = 0xFF000000u | rb | gv;
+        }
+        g.bg_out_w = dw; g.bg_out_h = dh; g.bg_out_imm = imm_flag; g.bg_out_lt = lt_q;
+    }
+
+    std::memcpy(g.screen->px, g.bg_out_cache->px, static_cast<size_t>(dw) * dh * 4);
+}
+
 void draw_frosted_ambient_bg(int is_immersive) {
     if (!g.screen || !g.screen->px) return;
+    if (!g.bg_img_raw.empty()) {
+        render_wallpaper_backdrop(is_immersive);
+        return;
+    }
     if (!g.bg_art_init) update_target_cover_colors();
 
     const int dw = g.screen->w, dh = g.screen->h;
@@ -702,13 +809,82 @@ void draw_frosted_ambient_bg(int is_immersive) {
     }
 }
 
+bool load_bg_image(const char* raw_path) {
+    if (!raw_path || !*raw_path) return false;
+    std::string path(raw_path);
+    std::replace(path.begin(), path.end(), '\\', '/');
+
+    FILE* f = plat_fopen(path.c_str(), "rb");
+    if (!f) return false;
+    if (std::fseek(f, 0, SEEK_END) != 0) { std::fclose(f); return false; }
+    const long sz = std::ftell(f);
+    if (sz <= 0 || sz > 64L * 1024L * 1024L || std::fseek(f, 0, SEEK_SET) != 0) {
+        std::fclose(f);
+        return false;
+    }
+    std::vector<uint8_t> bytes(static_cast<size_t>(sz));
+    const size_t nread = std::fread(bytes.data(), 1, bytes.size(), f);
+    std::fclose(f);
+    if (nread != bytes.size()) return false;
+
+    int w = 0, h = 0, comp = 0;
+    unsigned char* img = stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), &w, &h, &comp, 4);
+    if (!img || w <= 0 || h <= 0 || w > 16384 || h > 16384) {
+        if (img) stbi_image_free(img);
+        return false;
+    }
+
+    std::vector<uint32_t> dec(static_cast<size_t>(w) * h);
+    for (size_t i = 0; i < dec.size(); ++i) {
+        const uint8_t r  = img[i * 4 + 0];
+        const uint8_t gr = img[i * 4 + 1];
+        const uint8_t b  = img[i * 4 + 2];
+        const uint8_t a  = img[i * 4 + 3];
+        if (a == 255) {
+            dec[i] = COL(r, gr, b, 255);
+        } else {
+            const uint32_t inv = 255u - a;
+            dec[i] = COL(static_cast<uint8_t>((r * a + 18u * inv) / 255u),
+                         static_cast<uint8_t>((gr * a + 22u * inv) / 255u),
+                         static_cast<uint8_t>((b * a + 30u * inv) / 255u), 255);
+        }
+    }
+    stbi_image_free(img);
+
+    if (w > 1600 || h > 1600) {
+        const float sc = 1600.0f / static_cast<float>(std::max(w, h));
+        const int nw = std::max(1, static_cast<int>(static_cast<float>(w) * sc + 0.5f));
+        const int nh = std::max(1, static_cast<int>(static_cast<float>(h) * sc + 0.5f));
+        std::vector<uint32_t> small(static_cast<size_t>(nw) * nh);
+        resample_bilinear(dec.data(), w, h, small.data(), nw, nh);
+        dec.swap(small);
+        w = nw; h = nh;
+    }
+
+    uint64_t lum_sum = 0;
+    for (size_t i = 0; i < dec.size(); ++i) {
+        const uint32_t c = dec[i];
+        lum_sum += (77u * (c & 0xFFu) + 150u * ((c >> 8) & 0xFFu) + 29u * ((c >> 16) & 0xFFu)) >> 8;
+    }
+    g.bg_img_avg_lum = dec.empty() ? 128.0f : static_cast<float>(lum_sum) / static_cast<float>(dec.size());
+    g.bg_img_path = std::move(path);
+    g.bg_img_raw_w = w;
+    g.bg_img_raw_h = h;
+    g.bg_img_raw = std::move(dec);
+    invalidate_bg_cache();
+    return true;
+}
+
 void load_settings() {
     char p[600]{};
     snprintf(p, sizeof(p), "%s/pc_settings.cfg", be_config_dir());
     FILE* f = plat_fopen(p, "r");
     if (!f) return;
-    char line[128]{};
+    char line[768]{};
+    std::string saved_bg;
     while (fgets(line, sizeof(line), f)) {
+        size_t len = std::strlen(line);
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) line[--len] = 0;
         if (std::strncmp(line, "vol=", 4) == 0) {
             const float v = static_cast<float>(std::atof(line + 4));
             if (v >= 0.0f && v <= 1.0f) { audio_set_volume(v); g.saved_vol = v > 0.01f ? v : 0.85f; }
@@ -726,9 +902,12 @@ void load_settings() {
             if (sm >= 0 && sm <= 3) g.sort_mode = sm;
         } else if (std::strncmp(line, "shortcut=", 9) == 0) {
             g.shortcut_done = std::atoi(line + 9) ? 1 : 0;
+        } else if (std::strncmp(line, "bg_img=", 7) == 0) {
+            saved_bg = line + 7;
         }
     }
     fclose(f);
+    if (!saved_bg.empty()) load_bg_image(saved_bg.c_str());
 }
 
 void save_settings() {
@@ -737,9 +916,30 @@ void save_settings() {
     snprintf(p, sizeof(p), "%s/pc_settings.cfg", be_config_dir());
     FILE* f = plat_fopen(p, "w");
     if (!f) return;
-    fprintf(f, "vol=%.3f\nmode=%d\nlight=%d\nview_grid=%d\nsort=%d\nshortcut=%d\n",
-            audio_volume(), g.play_mode, g.is_light, g.view_grid, g.sort_mode, g.shortcut_done);
+    fprintf(f, "vol=%.3f\nmode=%d\nlight=%d\nview_grid=%d\nsort=%d\nshortcut=%d\nbg_img=%s\n",
+            audio_volume(), g.play_mode, g.is_light, g.view_grid, g.sort_mode, g.shortcut_done,
+            g.bg_img_path.c_str());
     fclose(f);
+}
+
+void clear_bg_image() {
+    g.bg_img_path.clear();
+    g.bg_img_raw.clear();
+    g.bg_img_raw_w = g.bg_img_raw_h = 0;
+    invalidate_bg_cache();
+    save_settings();
+    show_toast("已恢复默认封面流光背景");
+}
+
+void pick_bg_image_action() {
+    char picked[600]{};
+    if (!be_pick_image(picked, sizeof(picked))) return;
+    if (load_bg_image(picked)) {
+        save_settings();
+        show_toast("已更换自定义背景图片");
+    } else {
+        show_toast("图片解码失败，请更换 PNG / JPG 图片");
+    }
 }
 
 void load_dirs_cfg() {
@@ -1093,6 +1293,18 @@ void icon_plus(Canvas* c, int cx, int cy, int r, uint32_t col) {
     fill_round_rect_aa(c, cx - r, cy - 1, r * 2, 3, 1, col);
     fill_round_rect_aa(c, cx - 1, cy - r, 3, r * 2, 1, col);
 }
+void icon_wallpaper(Canvas* c, int x, int y, int sz, uint32_t col) {
+    stroke_round_rect_aa(c, x, y + 1, sz, sz - 2, 4, 2, col, 225);
+    fill_ellipse_aa(c, x + sz - 5, y + 5, 2, 2, col);
+    fill_tri_aa(c, x + 2, y + sz - 3, x + (sz * 4) / 10, y + sz / 2, x + (sz * 7) / 10, y + sz - 3, col);
+    fill_tri_aa(c, x + (sz * 5) / 10, y + sz - 3, x + (sz * 7) / 10, y + (sz * 6) / 10, x + sz - 2, y + sz - 3, col);
+}
+void icon_close_x(Canvas* c, int cx, int cy, int r, uint32_t col) {
+    for (int i = -r; i <= r; ++i) {
+        fill_rect_a(c, cx + i, cy + i, 2, 2, col, 235);
+        fill_rect_a(c, cx + i, cy - i, 2, 2, col, 235);
+    }
+}
 
 void toggle_fav(int idx) {
     if (idx < 0 || idx >= static_cast<int>(g.tracks.size())) return;
@@ -1200,6 +1412,16 @@ void handle_dropped(const char* raw) {
             show_toast("\xE5\xB7\xB2\xE5\x8A\xA0\xE8\xBD\xBD\xE5\xA4\x96\xE9\x83\xA8 .lrc \xE6\xAD\x8C\xE8\xAF\x8D");
         } else {
             show_toast("\xE5\xA4\x96\xE9\x83\xA8 .lrc \xE8\xA7\xA3\xE6\x9E\x90\xE5\xA4\xB1\xE8\xB4\xA5");
+        }
+        return;
+    }
+
+    if (is_image_file(path.c_str())) {
+        if (load_bg_image(path.c_str())) {
+            save_settings();
+            show_toast("已更换自定义背景图片");
+        } else {
+            show_toast("图片解码失败，请更换 PNG / JPG 图片");
         }
         return;
     }
@@ -1339,12 +1561,12 @@ void pump_background_meta() {
 
 void reset_hit_rects() {
     g.rc_menu_btn = g.rc_nav_all = g.rc_nav_fav = g.rc_nav_lyr = g.rc_nav_add = g.rc_nav_diag = {};
-    g.rc_nav_theme = g.rc_nav_view = g.rc_nav_rescan = {};
-    g.rc_search_box = g.rc_search_clear = g.rc_sort_btn = g.rc_fs_btn = g.rc_view_pill = g.rc_pal_btn = {};
+    g.rc_nav_bg = g.rc_nav_theme = g.rc_nav_view = g.rc_nav_rescan = {};
+    g.rc_search_box = g.rc_search_clear = g.rc_sort_btn = g.rc_fs_btn = g.rc_view_pill = g.rc_bg_btn = g.rc_bg_clear = {};
     g.rc_filt_chips.fill(Rect{});
     g.rc_dir_chip = {};
     g.rc_hero_card = g.rc_hero_cov = g.rc_hero_play = g.rc_hero_prog = {};
-    g.rc_sb_track = g.rc_fab_import = g.rc_back_lib = g.rc_lyr_theme = g.rc_lyr_fs = {};
+    g.rc_sb_track = g.rc_fab_import = g.rc_back_lib = g.rc_lyr_bg = g.rc_lyr_bg_clear = g.rc_lyr_theme = g.rc_lyr_fs = {};
     g.rc_island = g.rc_bar_cov = g.rc_bar_fav = g.rc_bar_prev = g.rc_bar_play = g.rc_bar_next = {};
     g.rc_bar_mode = g.rc_bar_lyr = g.rc_bar_vol_ico = g.rc_bar_vol_trk = g.rc_bar_prog = {};
     g.grid_hits.clear();
@@ -1413,6 +1635,10 @@ void draw_nav_rail(int mx, int my) {
     g.rc_nav_diag  = Rect{ 12, bot_y - 46, RAIL_W - 24, 42 };
     g.rc_nav_theme = Rect{ 12, bot_y - 92, RAIL_W - 24, 42 };
     g.rc_nav_view  = Rect{ 12, bot_y - 138, RAIL_W - 24, 42 };
+    g.rc_nav_bg    = Rect{ 12, bot_y - 184, RAIL_W - 24, 42 };
+
+    if (in_rc(mx, my, g.rc_nav_bg)) fill_round_rect_aa(s, g.rc_nav_bg.x, g.rc_nav_bg.y, g.rc_nav_bg.w, g.rc_nav_bg.h, 14, g.C_GLASS_HOV);
+    icon_wallpaper(s, RAIL_W / 2 - 8, g.rc_nav_bg.y + 13, 16, !g.bg_img_raw.empty() ? g.C_ACCENT : g.C_TXT2);
 
     if (in_rc(mx, my, g.rc_nav_view)) fill_round_rect_aa(s, g.rc_nav_view.x, g.rc_nav_view.y, g.rc_nav_view.w, g.rc_nav_view.h, 14, g.C_GLASS_HOV);
     if (g.view_grid) icon_list_rows(s, RAIL_W / 2 - 8, g.rc_nav_view.y + 13, 16, g.C_TXT2);
@@ -1459,9 +1685,35 @@ void draw_library_header(int mx, int my) {
     }
     icon_expand(s, g.rc_fs_btn.x + 12, g.rc_fs_btn.y + 12, 16, g.C_TXT2);
 
+    const bool has_bg = !g.bg_img_raw.empty();
+    int right_anchor = g.rc_fs_btn.x;
+    if (has_bg) {
+        constexpr int cl_sz = 38;
+        g.rc_bg_clear = Rect{ right_anchor - 8 - cl_sz, 16, cl_sz, cl_sz };
+        const bool hov_cl = in_rc(mx, my, g.rc_bg_clear);
+        fill_frosted_round_rect(s, g.rc_bg_clear.x, g.rc_bg_clear.y, cl_sz, cl_sz, 19,
+                                g.C_SURFACE, hov_cl ? 190 : (lt ? 156 : 132), 2, glass_rim(56, 210));
+        stroke_round_rect_aa(s, g.rc_bg_clear.x, g.rc_bg_clear.y, cl_sz, cl_sz, 19, 1, g.C_DIV, col_a(g.C_DIV) + 12);
+        icon_close_x(s, g.rc_bg_clear.x + cl_sz / 2, g.rc_bg_clear.y + cl_sz / 2, 4, hov_cl ? g.C_HEART : g.C_TXT2);
+        right_anchor = g.rc_bg_clear.x;
+    }
+
+    const int bg_w = text_width_bold(f, 13.5f, "背景") + 42;
+    g.rc_bg_btn = Rect{ right_anchor - (has_bg ? 6 : 10) - bg_w, 16, bg_w, 38 };
+    {
+        const bool hov = in_rc(mx, my, g.rc_bg_btn);
+        fill_frosted_round_rect(s, g.rc_bg_btn.x, g.rc_bg_btn.y, bg_w, 38, 19,
+                                has_bg ? mix_col(g.C_SURFACE, g.C_ACCENT, 0.24f) : g.C_SURFACE,
+                                has_bg ? 196 : (hov ? 185 : (lt ? 156 : 132)), 2, glass_rim(56, 210));
+        stroke_round_rect_aa(s, g.rc_bg_btn.x, g.rc_bg_btn.y, bg_w, 38, 19, 1,
+                             has_bg ? g.C_ACCENT : g.C_DIV, has_bg ? 135 : (col_a(g.C_DIV) + 12));
+    }
+    icon_wallpaper(s, g.rc_bg_btn.x + 12, g.rc_bg_btn.y + 11, 16, has_bg ? g.C_ACCENT : g.C_TXT2);
+    draw_text_bold(s, f, 13.5f, g.rc_bg_btn.x + 33, 26, has_bg ? g.C_ACCENT : g.C_TXT2, "背景");
+
     const char* view_lbl = g.view_grid ? "网格视图" : "列表视图";
     const int vw = text_width_bold(f, 13.5f, view_lbl) + 28;
-    g.rc_view_pill = Rect{ g.rc_fs_btn.x - 10 - vw, 16, vw, 38 };
+    g.rc_view_pill = Rect{ g.rc_bg_btn.x - 10 - vw, 16, vw, 38 };
     {
         const bool hov = in_rc(mx, my, g.rc_view_pill);
         fill_frosted_round_rect(s, g.rc_view_pill.x, g.rc_view_pill.y, vw, 38, 19,
@@ -1484,7 +1736,7 @@ void draw_library_header(int mx, int my) {
 
     const int s_left = bx + bw + 16;
     const int s_right = g.rc_sort_btn.x - 16;
-    if (s_right - s_left >= 180) {
+    if (s_right - s_left >= 140) {
         const int sbox_w = std::min(430, s_right - s_left);
         const int sbox_x = s_left + (s_right - s_left - sbox_w) / 2;
         g.rc_search_box = Rect{ sbox_x, 14, sbox_w, 42 };
@@ -2012,6 +2264,24 @@ void draw_immersive_view(int mx, int my) {
                             glass_rim(hov_thm ? 96 : 64, 235));
     icon_theme_orb(s, g.rc_lyr_theme.x + 21, g.rc_lyr_theme.y + 21, 8, mix_col(g.C_TXT, g.C_ACCENT, g.light_t));
 
+    g.rc_lyr_bg = Rect{ g.W - 168, 18, 42, 42 };
+    const bool has_bg = !g.bg_img_raw.empty();
+    const bool hov_lbg = in_rc(mx, my, g.rc_lyr_bg);
+    fill_frosted_round_rect(s, g.rc_lyr_bg.x, g.rc_lyr_bg.y, 42, 42, 21,
+                            has_bg ? mix_col(g.C_SURFACE, g.C_ACCENT, 0.24f) : g.C_SURFACE,
+                            has_bg ? 194 : (hov_lbg ? 186 : static_cast<uint8_t>(138 + 34 * g.light_t)), 3,
+                            glass_rim((has_bg || hov_lbg) ? 96 : 64, 235));
+    icon_wallpaper(s, g.rc_lyr_bg.x + 13, g.rc_lyr_bg.y + 13, 16, has_bg ? g.C_ACCENT : g.C_TXT);
+
+    if (has_bg) {
+        g.rc_lyr_bg_clear = Rect{ g.W - 218, 18, 42, 42 };
+        const bool hov_lcl = in_rc(mx, my, g.rc_lyr_bg_clear);
+        fill_frosted_round_rect(s, g.rc_lyr_bg_clear.x, g.rc_lyr_bg_clear.y, 42, 42, 21,
+                                g.C_SURFACE, hov_lcl ? 190 : static_cast<uint8_t>(138 + 34 * g.light_t), 3,
+                                glass_rim(hov_lcl ? 96 : 64, 235));
+        icon_close_x(s, g.rc_lyr_bg_clear.x + 21, g.rc_lyr_bg_clear.y + 21, 4, hov_lcl ? g.C_HEART : g.C_TXT2);
+    }
+
     const int left_col_w = std::clamp(static_cast<int>(g.W * 0.40f), 340, 540);
     const int cov_sz = std::clamp(std::min(static_cast<int>(g.H * 0.44f), left_col_w - 72), 200, 430);
     const int cov_x = 36 + (left_col_w - cov_sz) / 2;
@@ -2249,14 +2519,16 @@ void update_hover_cursor(int mx, int my) {
                 in_rc(mx, my, g.rc_bar_cov) || in_rc(mx, my, g.rc_bar_vol_ico) || in_rc(mx, my, g.rc_bar_vol_trk) ||
                 in_rc(mx, my, g.rc_bar_prog);
     if (!hand && g.page == PAGE_LYRICS) {
-        if (in_rc(mx, my, g.rc_back_lib) || in_rc(mx, my, g.rc_lyr_theme) || in_rc(mx, my, g.rc_lyr_fs)) hand = true;
+        if (in_rc(mx, my, g.rc_back_lib) || in_rc(mx, my, g.rc_lyr_bg) || in_rc(mx, my, g.rc_lyr_bg_clear) ||
+            in_rc(mx, my, g.rc_lyr_theme) || in_rc(mx, my, g.rc_lyr_fs)) hand = true;
         for (const auto& lh : g.lyr_hits) if (!hand && in_rc(mx, my, lh.rc)) hand = true;
     } else if (!hand) {
         if (in_rc(mx, my, g.rc_fab_import) || in_rc(mx, my, g.rc_menu_btn) ||
             in_rc(mx, my, g.rc_nav_all) || in_rc(mx, my, g.rc_nav_fav) || in_rc(mx, my, g.rc_nav_lyr) ||
-            in_rc(mx, my, g.rc_nav_rescan) || in_rc(mx, my, g.rc_nav_view) || in_rc(mx, my, g.rc_nav_theme) ||
-            in_rc(mx, my, g.rc_nav_diag) || in_rc(mx, my, g.rc_search_box) || in_rc(mx, my, g.rc_sort_btn) ||
-            in_rc(mx, my, g.rc_view_pill) || in_rc(mx, my, g.rc_fs_btn) || in_rc(mx, my, g.rc_dir_chip) ||
+            in_rc(mx, my, g.rc_nav_rescan) || in_rc(mx, my, g.rc_nav_bg) || in_rc(mx, my, g.rc_nav_view) ||
+            in_rc(mx, my, g.rc_nav_theme) || in_rc(mx, my, g.rc_nav_diag) || in_rc(mx, my, g.rc_search_box) ||
+            in_rc(mx, my, g.rc_sort_btn) || in_rc(mx, my, g.rc_view_pill) || in_rc(mx, my, g.rc_bg_btn) ||
+            in_rc(mx, my, g.rc_bg_clear) || in_rc(mx, my, g.rc_fs_btn) || in_rc(mx, my, g.rc_dir_chip) ||
             in_rc(mx, my, g.rc_sb_track) || in_rc(mx, my, g.rc_hero_card)) {
             hand = true;
         }
@@ -2320,6 +2592,8 @@ void handle_input() {
             g.scroll_vel = 0.0f;
             save_settings();
         }
+    } else if (hk == 'b') {
+        pick_bg_image_action();
     }
 
     TouchInfo ti{};
@@ -2398,9 +2672,11 @@ void handle_input() {
         if (g.page == PAGE_LIBRARY && in_rc(ti.x, ti.y, g.rc_island)) return;
 
         if (g.page == PAGE_LYRICS) {
-            if (in_rc(ti.x, ti.y, g.rc_back_lib))  { capture_fade(); g.page = PAGE_LIBRARY; return; }
-            if (in_rc(ti.x, ti.y, g.rc_lyr_theme)) { toggle_theme_smooth(); return; }
-            if (in_rc(ti.x, ti.y, g.rc_lyr_fs))    { be_toggle_fullscreen(); return; }
+            if (in_rc(ti.x, ti.y, g.rc_back_lib))     { capture_fade(); g.page = PAGE_LIBRARY; return; }
+            if (in_rc(ti.x, ti.y, g.rc_lyr_bg_clear)) { clear_bg_image(); return; }
+            if (in_rc(ti.x, ti.y, g.rc_lyr_bg))       { pick_bg_image_action(); return; }
+            if (in_rc(ti.x, ti.y, g.rc_lyr_theme))    { toggle_theme_smooth(); return; }
+            if (in_rc(ti.x, ti.y, g.rc_lyr_fs))       { be_toggle_fullscreen(); return; }
             if (in_rect(ti.x, ti.y, g.ui_list_x0, g.ui_list_y0, g.ui_list_x1 - g.ui_list_x0, g.ui_list_y1 - g.ui_list_y0)) {
                 g.drag_mode = DRAG_LYRICS;
                 g.drag_start_x = ti.x;
@@ -2421,14 +2697,17 @@ void handle_input() {
         if (in_rc(ti.x, ti.y, g.rc_nav_fav)) { g.lib_tab = TAB_FAV; rebuild_visible(); g.scroll_px = g.scroll_target = 0.0f; return; }
         if (in_rc(ti.x, ti.y, g.rc_nav_lyr)) { capture_fade(); g.page = PAGE_LYRICS; return; }
         if (in_rc(ti.x, ti.y, g.rc_nav_rescan)) { scan_library(1); return; }
+        if (in_rc(ti.x, ti.y, g.rc_nav_bg)) { pick_bg_image_action(); return; }
         if (in_rc(ti.x, ti.y, g.rc_nav_view) || in_rc(ti.x, ti.y, g.rc_view_pill)) {
             capture_fade(); g.view_grid = !g.view_grid; g.scroll_px = g.scroll_target = 0.0f; save_settings(); return;
         }
         if (in_rc(ti.x, ti.y, g.rc_nav_theme)) { toggle_theme_smooth(); return; }
         if (in_rc(ti.x, ti.y, g.rc_nav_diag))  { g.show_diag = !g.show_diag; return; }
 
-        if (in_rc(ti.x, ti.y, g.rc_sort_btn)) { g.sort_mode = (g.sort_mode + 1) % 4; rebuild_visible(); save_settings(); return; }
-        if (in_rc(ti.x, ti.y, g.rc_fs_btn))   { be_toggle_fullscreen(); return; }
+        if (in_rc(ti.x, ti.y, g.rc_bg_clear))  { clear_bg_image(); return; }
+        if (in_rc(ti.x, ti.y, g.rc_bg_btn))    { pick_bg_image_action(); return; }
+        if (in_rc(ti.x, ti.y, g.rc_sort_btn))  { g.sort_mode = (g.sort_mode + 1) % 4; rebuild_visible(); save_settings(); return; }
+        if (in_rc(ti.x, ti.y, g.rc_fs_btn))    { be_toggle_fullscreen(); return; }
         if (in_rc(ti.x, ti.y, g.rc_dir_chip)) {
             if (g.lib_tab != TAB_DIR) { g.lib_tab = TAB_DIR; g.active_dir = 0; }
             else if (g.active_dir + 1 < static_cast<int>(g.scan_dirs.size())) ++g.active_dir;
@@ -2773,6 +3052,13 @@ int main(int argc, char** argv) {
 
         if (dump_mode) {
             if (dump_frame == 2) {
+                if (const char* dump_bg = std::getenv("SIRENE_DUMP_BG")) {
+                    if (std::strcmp(dump_bg, "none") == 0) {
+                        g.bg_img_path.clear(); g.bg_img_raw.clear(); invalidate_bg_cache();
+                    } else if (*dump_bg) {
+                        load_bg_image(dump_bg);
+                    }
+                }
                 g.is_light = 0; g.theme_pos = 0.0f; g.light_t = 0.0f;
                 g.view_grid = 1;
                 step_palette_and_ambient();

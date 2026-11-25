@@ -770,6 +770,7 @@ LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == 'M') { g_win.hotkey = 'm'; return 0; }
         if (wp == 'D') { g_win.hotkey = 'c'; return 0; }
         if (wp == 'V') { g_win.hotkey = 'v'; return 0; }
+        if (wp == 'B') { g_win.hotkey = 'b'; return 0; }
         if (wp == VK_PRIOR) { g_win.wheel_accum += 360; return 0; }
         if (wp == VK_NEXT)  { g_win.wheel_accum -= 360; return 0; }
         const uint64_t b = vk_to_btn(wp);
@@ -1101,6 +1102,28 @@ int be_pick_folder(char* out, size_t cap) {
     CoTaskMemFree(pidl);
     if (!ok) return 0;
     plat_wide_to_utf8(wdir, out, static_cast<int>(cap));
+    for (char* p = out; *p; ++p) if (*p == '\\') *p = '/';
+    be_touch_reset();
+    return out[0] ? 1 : 0;
+}
+
+int be_pick_image(char* out, size_t cap) {
+    if (!out || cap == 0) return 0;
+    out[0] = 0;
+    wchar_t wfile[600]{};
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = g_win.hwnd;
+    ofn.lpstrFilter = L"\x56FE\x7247\x6587\x4EF6 (*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.gif)\0*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.gif\0\x6240\x6709\x6587\x4EF6 (*.*)\0*.*\0";
+    ofn.lpstrFile = wfile;
+    ofn.nMaxFile = static_cast<DWORD>(sizeof(wfile) / sizeof(wfile[0]));
+    ofn.lpstrTitle = L"\x9009\x62E9 Sir\x00E8ne \x80CC\x666F\x56FE\x7247";
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
+    if (!GetOpenFileNameW(&ofn)) {
+        be_touch_reset();
+        return 0;
+    }
+    plat_wide_to_utf8(wfile, out, static_cast<int>(cap));
     for (char* p = out; *p; ++p) if (*p == '\\') *p = '/';
     be_touch_reset();
     return out[0] ? 1 : 0;
