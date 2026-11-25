@@ -855,18 +855,27 @@ static void build_poster_thumbs(void) {
     }
 }
 
-// ---------- SD 卡安全扫描 ----------
+// ---------- 目录安全扫描 ----------
 static int should_skip_dir(const char* name) {
-    const char* skip[] = {
-        "Nintendo", "atmosphere", "bootloader", "bootloader2",
-        "config", "dev", "switch", "system", "SXOS", "HeiTag",
-        "sept", "stratosphere", "firmware", "emuMMC", "JKSV",
-        "backup", "tinfoil", "dbi", "RetroArch", "themes",
-        "warmboot_mariko", "android", "lost+found",
-        "System Volume Information", "$RECYCLE.BIN"
+    if (!name || !*name) return 1;
+    uint32_t h = 0x811c9dc5u;
+    for (const unsigned char* p = (const unsigned char*)name; *p; p++) {
+        unsigned char c = *p;
+        if (c >= 'A' && c <= 'Z') c = (unsigned char)(c + ('a' - 'A'));
+        h ^= c;
+        h *= 0x01000193u;
+    }
+    static const uint32_t skip_hashes[] = {
+        0x5595F010u, 0xD7FE1AD5u, 0xC54A59D2u, 0x740B7BA0u,
+        0x23FF66C7u, 0xD55997BCu, 0x93E05F71u, 0x491E0A9Cu,
+        0x74F012C0u, 0x35B3A5ABu, 0x7679D3E1u, 0x267C9E9Bu,
+        0x7AA6946Cu, 0x97F6E475u, 0x856B932Fu, 0x32AFA6DFu,
+        0x2DD29BE2u, 0xCC4CBD9Eu, 0xFB7B53DBu, 0x76B22013u,
+        0x1527CD10u, 0xFA1B0B2Cu, 0xA3603574u, 0x377AC524u,
+        0xF06DF42Au
     };
-    for (unsigned i = 0; i < sizeof(skip) / sizeof(skip[0]); i++)
-        if (!strcasecmp(name, skip[i])) return 1;
+    for (unsigned i = 0; i < sizeof(skip_hashes) / sizeof(skip_hashes[0]); i++)
+        if (h == skip_hashes[i]) return 1;
     return 0;
 }
 
@@ -2699,7 +2708,7 @@ static void draw_desktop_ui(void) {
                 snprintf(lsrc, sizeof(lsrc), "歌词: %s (%d行)", lyr->source, lyr->n);
                 draw_text_max(screen, font, 12, mx_col, cy + 100, C_TONAL_TXT, lsrc, mw_col);
             } else {
-                const char* tip = lyrics_online_busy(g_lyr_req_id) ? "正在在线匹配歌词…" : "支持网易云/LRCLIB 自动匹配与拖入 .lrc";
+                const char* tip = lyrics_online_busy(g_lyr_req_id) ? "正在在线匹配歌词…" : "支持 LRCLIB 在线匹配与拖入 .lrc";
                 draw_text_max(screen, font, 12, mx_col, cy + 100, C_TXT3, tip, mw_col);
             }
 
