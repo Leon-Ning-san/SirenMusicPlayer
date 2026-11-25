@@ -3195,7 +3195,7 @@ void draw_settings_view(int mx, int my) {
     {
         constexpr int card_h = 126;
         draw_card_box(y, card_h);
-        draw_text_bold(s, f, 15.0f, cx0 + 20, y + 16, g.C_TXT, "Sir\xC3\xA8ne v1.2.6  ·  本地无损音频播放器");
+        draw_text_bold(s, f, 15.0f, cx0 + 20, y + 16, g.C_TXT, "Sir\xC3\xA8ne v1.2.7  ·  本地无损音频播放器");
         char adiag[256]{};
         audio_get_diag(adiag, sizeof(adiag));
         for (int i = 0; adiag[i]; ++i) {

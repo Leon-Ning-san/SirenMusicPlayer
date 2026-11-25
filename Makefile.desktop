@@ -98,8 +98,8 @@ macos-app: $(TARGET)
 	'  <key>CFBundleDisplayName</key><string>Sirène</string>' \
 	'  <key>CFBundleIdentifier</key><string>app.sirene.player</string>' \
 	'  <key>CFBundleIconFile</key><string>Sirene</string>' \
-	'  <key>CFBundleVersion</key><string>1.2.6</string>' \
-	'  <key>CFBundleShortVersionString</key><string>1.2.6</string>' \
+	'  <key>CFBundleVersion</key><string>1.2.7</string>' \
+	'  <key>CFBundleShortVersionString</key><string>1.2.7</string>' \
 	'  <key>CFBundleExecutable</key><string>Sirene</string>' \
 	'  <key>NSHighResolutionCapable</key><true/>' \
 	'</dict></plist>' > Sirène.app/Contents/Info.plist
