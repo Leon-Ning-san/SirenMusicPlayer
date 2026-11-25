@@ -315,7 +315,7 @@ struct AppState {
     Rect rc_sb_track{};
     Rect rc_back_lib{}, rc_lyr_bg{}, rc_lyr_bg_clear{}, rc_lyr_theme{}, rc_lyr_fs{};
     Rect rc_island{}, rc_bar_cov{}, rc_bar_fav{}, rc_bar_prev{}, rc_bar_play{}, rc_bar_next{};
-    Rect rc_bar_mode{}, rc_bar_lyr{}, rc_bar_vol_ico{}, rc_bar_vol_trk{}, rc_bar_prog{};
+    Rect rc_bar_mode{}, rc_bar_lyr{}, rc_bar_save{}, rc_bar_vol_ico{}, rc_bar_vol_trk{}, rc_bar_prog{};
     Rect rc_set_back{}, rc_plg_back{}, rc_plg_qr_close{};
     Rect rc_plg_search{}, rc_plg_search_clr{};
     Rect rc_plg_qr_tab[2]{}, rc_plg_qr_input{}, rc_plg_qr_submit{}, rc_plg_qr_refresh{};
@@ -332,7 +332,12 @@ struct AppState {
     int playing_online = 0;
     int online_play_pos = -1;
     double online_dur = 0.0;
+    bool online_can_save = false;
+    bool online_is_trial = false;
+    bool online_saved_ok = false;
+    long online_audio_bytes = 0;
     std::string online_play_id, online_play_pid;
+    std::string online_audio_path, online_lrc_orig, online_lrc_trans;
     int plg_subtab = 0;
     float plg_content_h = 600.0f;
     float qr_poll_timer = 0.0f;
@@ -1677,6 +1682,29 @@ void icon_plug(Canvas* c, int x, int y, int sz, uint32_t col) {
     fill_round_rect_aa(c, x + (sz * 2) / 3 - 1, y + 1, 2, 4, 1, col);
     fill_round_rect_aa(c, x + sz / 2 - 1, y + sz - 4, 2, 4, 1, col);
 }
+void icon_save_down(Canvas* c, int cx, int cy, int r, uint32_t col, bool saved) {
+    if (saved) {
+        const int x0 = cx - r / 2, y0 = cy;
+        const int xm = cx - 1,     ym = cy + r / 2 - 1;
+        const int x1 = cx + r / 2 + 1, y1 = cy - r / 2 + 1;
+        auto draw_seg = [&](int ax, int ay, int bx, int by) {
+            const int steps = std::max({ 1, std::abs(bx - ax), std::abs(by - ay) });
+            for (int k = 0; k <= steps; ++k) {
+                const int px = ax + ((bx - ax) * k) / steps;
+                const int py = ay + ((by - ay) * k) / steps;
+                fill_ellipse_aa(c, px, py, 1, 1, col);
+            }
+        };
+        draw_seg(x0, y0, xm, ym);
+        draw_seg(xm, ym, x1, y1);
+        return;
+    }
+    fill_round_rect_aa(c, cx - 1, cy - r + 2, 3, r, 1, col);
+    fill_tri_aa(c, cx - r / 2 - 1, cy - 1, cx + r / 2 + 2, cy - 1, cx, cy + r / 2 - 1, col);
+    fill_round_rect_aa(c, cx - r / 2 - 1, cy + r / 2 + 1, r + 3, 2, 1, col);
+    fill_round_rect_aa(c, cx - r / 2 - 1, cy + r / 2 - 2, 2, 4, 1, col);
+    fill_round_rect_aa(c, cx + r / 2,     cy + r / 2 - 2, 2, 4, 1, col);
+}
 
 void toggle_fav(int idx) {
     if (idx < 0 || idx >= static_cast<int>(g.tracks.size())) return;
@@ -1700,6 +1728,124 @@ inline double active_track_dur() {
 inline double active_track_pos() {
     if (!has_active_track()) return 0.0;
     return (g.scrub_drag == 1) ? g.scrub_sec : audio_position();
+}
+
+bool can_save_active_online() {
+    if (!g.playing_online || !g.online_can_save || g.online_is_trial || g.online_audio_bytes <= 4096) return false;
+    const double adur = audio_duration();
+    if (g.online_dur > 45.0 && adur > 0.5 && adur < g.online_dur * 0.65) return false;
+    return true;
+}
+
+std::string sanitize_local_filename(const std::string& raw) {
+    std::string s;
+    s.reserve(raw.size());
+    for (unsigned char c : raw) {
+        if (c < 0x20 || c == '/' || c == '\\' || c == ':' || c == '*' ||
+            c == '?' || c == '"' || c == '<' || c == '>' || c == '|') {
+            s.push_back('_');
+        } else {
+            s.push_back(static_cast<char>(c));
+        }
+    }
+    while (!s.empty() && (s.front() == ' ' || s.front() == '.')) s.erase(s.begin());
+    while (!s.empty() && (s.back() == ' ' || s.back() == '.')) s.pop_back();
+    if (s.size() > 120) {
+        size_t n = 120;
+        while (n > 0 && (static_cast<unsigned char>(s[n]) & 0xC0u) == 0x80u) --n;
+        s.resize(n);
+    }
+    return s;
+}
+
+void save_current_online_track() {
+    if (!can_save_active_online()) {
+        show_toast("仅完整可播曲目支持保存");
+        return;
+    }
+    if (g.scan_dirs.empty()) {
+        char defs[4][600]{};
+        const int nd = be_default_music_dirs(defs, 4);
+        for (int i = 0; i < nd; ++i) {
+            if (defs[i][0]) {
+                plat_mkdir_p(defs[i]);
+                add_scan_dir(defs[i]);
+                break;
+            }
+        }
+    }
+    if (g.scan_dirs.empty()) {
+        show_toast("请先在曲库设置中添加本地目录");
+        return;
+    }
+    std::string dst_dir = g.scan_dirs[0];
+    while (dst_dir.size() > 1 && (dst_dir.back() == '/' || dst_dir.back() == '\\')) dst_dir.pop_back();
+    plat_mkdir_p(dst_dir.c_str());
+
+    std::string ext = ".mp3";
+    const size_t dot = g.online_audio_path.find_last_of('.');
+    if (dot != std::string::npos && dot + 1 < g.online_audio_path.size()) {
+        std::string cand = g.online_audio_path.substr(dot);
+        if (cand.size() <= 6) ext = cand;
+    }
+    std::string base_raw = g.p_title.empty() ? g.online_play_id : g.p_title;
+    if (!g.p_artist.empty()) base_raw = g.p_artist + " - " + base_raw;
+    std::string stem = sanitize_local_filename(base_raw);
+    if (stem.empty()) stem = sanitize_local_filename(g.online_play_id);
+    if (stem.empty()) stem = "track";
+
+    std::string dst_audio = dst_dir + "/" + stem + ext;
+    FILE* fin = plat_fopen(g.online_audio_path.c_str(), "rb");
+    if (!fin) { show_toast("无法读取已缓冲音频"); return; }
+    FILE* fout = plat_fopen(dst_audio.c_str(), "wb");
+    if (!fout) { std::fclose(fin); show_toast("写入本地目录失败"); return; }
+    std::vector<char> buf(65536);
+    bool copy_ok = true;
+    for (;;) {
+        size_t rd = std::fread(buf.data(), 1, buf.size(), fin);
+        if (rd > 0 && std::fwrite(buf.data(), 1, rd, fout) != rd) { copy_ok = false; break; }
+        if (rd < buf.size()) break;
+    }
+    std::fclose(fin);
+    std::fclose(fout);
+    if (!copy_ok) { show_toast("保存音频文件失败"); return; }
+
+    if (!g.online_lrc_orig.empty()) {
+        std::string dst_lrc = dst_dir + "/" + stem + ".lrc";
+        FILE* fl = plat_fopen(dst_lrc.c_str(), "wb");
+        if (fl) {
+            std::string combined = g.online_lrc_orig;
+            if (!g.online_lrc_trans.empty()) combined += "\n" + g.online_lrc_trans;
+            std::fwrite(combined.data(), 1, combined.size(), fl);
+            std::fclose(fl);
+        }
+    }
+
+    int existing = -1;
+    for (int i = 0; i < static_cast<int>(g.tracks.size()); ++i) {
+        if (ascii_icmp(g.tracks[i].path, dst_audio) == 0) { existing = i; break; }
+    }
+    if (existing < 0 && static_cast<int>(g.tracks.size()) < MAX_TRACKS) {
+        Track nt;
+        nt.path = dst_audio;
+        nt.title = !g.p_title.empty() ? g.p_title : stem;
+        nt.artist = g.p_artist;
+        nt.album = g.p_album;
+        std::snprintf(nt.fmt, sizeof(nt.fmt), "%s", g.p_fmt[0] ? g.p_fmt : "AUDIO");
+        nt.dur = active_track_dur();
+        nt.dir_idx = 0;
+        nt.meta_state = (nt.dur > 0.5) ? 2 : 1;
+        if (g.cover_ready && !g.cover_src.empty()) {
+            nt.thumb.resize(static_cast<size_t>(THUMB_SZ) * THUMB_SZ);
+            resample_cover_square(g.cover_src.data(), COVER_SRC_SZ, COVER_SRC_SZ, nt.thumb.data(), THUMB_SZ, 1);
+        }
+        g.tracks.push_back(std::move(nt));
+    } else if (existing >= 0) {
+        g.tracks[existing].meta_state = 0;
+    }
+    rebuild_visible();
+    g.online_saved_ok = true;
+    show_toast("已保存至本地音乐目录并入库");
 }
 
 void play_online_step(int dir, bool manual) {
@@ -1745,6 +1891,20 @@ void play_online_ready(const PluginReadyPlay& rp) {
     g.playing_idx = -1;
     g.playing_online = 1;
     g.online_dur = rp.track.dur;
+    g.online_can_save = rp.can_save;
+    g.online_is_trial = rp.is_trial;
+    g.online_saved_ok = false;
+    g.online_audio_bytes = 0;
+    if (!rp.audio_path.empty()) {
+        if (FILE* sf = plat_fopen(rp.audio_path.c_str(), "rb")) {
+            std::fseek(sf, 0, SEEK_END);
+            g.online_audio_bytes = std::ftell(sf);
+            std::fclose(sf);
+        }
+    }
+    g.online_audio_path = rp.audio_path;
+    g.online_lrc_orig = rp.lrc_orig;
+    g.online_lrc_trans = rp.lrc_trans;
     g.online_play_id = rp.track.id;
     g.online_play_pid = rp.track.plugin_id;
     audio_play(rp.audio_path.c_str());
@@ -1812,6 +1972,13 @@ void load_track(int idx) {
     if (idx < 0 || idx >= static_cast<int>(g.tracks.size())) return;
     g.playing_online = 0;
     g.online_dur = 0.0;
+    g.online_can_save = false;
+    g.online_is_trial = false;
+    g.online_saved_ok = false;
+    g.online_audio_bytes = 0;
+    g.online_audio_path.clear();
+    g.online_lrc_orig.clear();
+    g.online_lrc_trans.clear();
     g.online_play_id.clear();
     g.online_play_pid.clear();
     g.scrub_drag = 0; g.scrub_sec = 0.0;
@@ -2089,7 +2256,7 @@ void reset_hit_rects() {
     g.banner_next_idx.fill(-1);
     g.rc_sb_track = g.rc_back_lib = g.rc_lyr_bg = g.rc_lyr_bg_clear = g.rc_lyr_theme = g.rc_lyr_fs = {};
     g.rc_island = g.rc_bar_cov = g.rc_bar_fav = g.rc_bar_prev = g.rc_bar_play = g.rc_bar_next = {};
-    g.rc_bar_mode = g.rc_bar_lyr = g.rc_bar_vol_ico = g.rc_bar_vol_trk = g.rc_bar_prog = {};
+    g.rc_bar_mode = g.rc_bar_lyr = g.rc_bar_save = g.rc_bar_vol_ico = g.rc_bar_vol_trk = g.rc_bar_prog = {};
     g.rc_set_back = g.rc_plg_back = g.rc_plg_qr_close = {};
     g.rc_plg_search = g.rc_plg_search_clr = {};
     g.rc_plg_qr_tab[0] = g.rc_plg_qr_tab[1] = {};
@@ -2990,11 +3157,24 @@ void draw_player_bar(int mx, int my) {
                             g.C_SURFACE, in_rc(mx, my, g.rc_bar_mode) ? 176 : 128, 1, glass_rim(44, 185));
     draw_text_centered_bold(s, f, 12.0f, g.rc_bar_mode.x, g.rc_bar_mode.x + 44, g.rc_bar_mode.y + 7, g.C_TXT2, mode_lbl);
 
+    int right_ctrl_x = g.rc_bar_mode.x;
+    if (can_save_active_online()) {
+        g.rc_bar_save = Rect{ g.rc_bar_mode.x - 6 - 30, cy - 15, 30, 30 };
+        const bool hov_sv = in_rc(mx, my, g.rc_bar_save);
+        fill_frosted_round_rect(s, g.rc_bar_save.x, g.rc_bar_save.y, 30, 30, 15,
+                                g.online_saved_ok ? mix_col(g.C_SURFACE, g.C_ACCENT, 0.25f) : g.C_SURFACE,
+                                g.online_saved_ok ? 192 : (hov_sv ? 184 : 128), 1,
+                                glass_rim(g.online_saved_ok ? 86 : 44, g.online_saved_ok ? 220 : 185));
+        icon_save_down(s, g.rc_bar_save.x + 15, g.rc_bar_save.y + 15, 6,
+                       (g.online_saved_ok || hov_sv) ? g.C_ACCENT : g.C_TXT2, g.online_saved_ok);
+        right_ctrl_x = g.rc_bar_save.x;
+    }
+
     const int center_right = std::max(g.rc_bar_next.x + g.rc_bar_next.w + 12,
                                       g.ui_px1 + (show_times ? 46 : 12));
-    if (g.rc_bar_mode.x - center_right >= 92) {
+    if (right_ctrl_x - center_right >= 92) {
         constexpr int vol_w = 64;
-        g.ui_vx1 = g.rc_bar_mode.x - 10;
+        g.ui_vx1 = right_ctrl_x - 10;
         g.ui_vx0 = g.ui_vx1 - vol_w;
         g.rc_bar_vol_trk = Rect{ g.ui_vx0 - 6, cy - 15, vol_w + 12, 30 };
         g.rc_bar_vol_ico = Rect{ g.ui_vx0 - 30, cy - 15, 24, 30 };
@@ -3064,6 +3244,17 @@ void draw_immersive_view(int mx, int my) {
                                 imm_surface, hov_lcl ? 190 : 142, 3,
                                 hov_lcl ? imm_rim_hov : imm_rim_norm);
         icon_close_x(s, g.rc_lyr_bg_clear.x + 20, g.rc_lyr_bg_clear.y + 20, 4, hov_lcl ? g.C_HEART : imm_txt2);
+    }
+    if (can_save_active_online()) {
+        const int svx = (has_bg ? g.W - 258 : g.W - 210);
+        g.rc_bar_save = Rect{ svx, 18, 40, 40 };
+        const bool hov_sv = in_rc(mx, my, g.rc_bar_save);
+        fill_frosted_round_rect(s, g.rc_bar_save.x, g.rc_bar_save.y, 40, 40, 20,
+                                g.online_saved_ok ? mix_col(imm_surface, imm_accent, 0.28f) : imm_surface,
+                                g.online_saved_ok ? 194 : (hov_sv ? 186 : 142), 3,
+                                (g.online_saved_ok || hov_sv) ? imm_rim_hov : imm_rim_norm);
+        icon_save_down(s, g.rc_bar_save.x + 20, g.rc_bar_save.y + 20, 7,
+                       (g.online_saved_ok || hov_sv) ? imm_accent : imm_txt, g.online_saved_ok);
     }
 
     // Centered, tightly capped two-column layout eliminating excess right-side whitespace
@@ -3607,7 +3798,7 @@ void draw_settings_view(int mx, int my) {
     {
         constexpr int card_h = 126;
         draw_card_box(y, card_h);
-        draw_text_bold(s, f, 15.0f, cx0 + 20, y + 16, g.C_TXT, "Sir\xC3\xA8ne v1.2.9  ·  本地无损音频播放器");
+        draw_text_bold(s, f, 15.0f, cx0 + 20, y + 16, g.C_TXT, "Sir\xC3\xA8ne v1.2.10  ·  本地无损音频播放器");
         char adiag[256]{};
         audio_get_diag(adiag, sizeof(adiag));
         for (int i = 0; adiag[i]; ++i) {
@@ -4332,9 +4523,9 @@ void update_hover_cursor(int mx, int my) {
         return;
     }
     bool hand = in_rc(mx, my, g.rc_bar_fav) || in_rc(mx, my, g.rc_bar_prev) || in_rc(mx, my, g.rc_bar_play) ||
-                in_rc(mx, my, g.rc_bar_next) || in_rc(mx, my, g.rc_bar_mode) || in_rc(mx, my, g.rc_bar_lyr) ||
-                in_rc(mx, my, g.rc_bar_cov) || in_rc(mx, my, g.rc_bar_vol_ico) || in_rc(mx, my, g.rc_bar_vol_trk) ||
-                in_rc(mx, my, g.rc_bar_prog);
+                in_rc(mx, my, g.rc_bar_next) || in_rc(mx, my, g.rc_bar_save) || in_rc(mx, my, g.rc_bar_mode) ||
+                in_rc(mx, my, g.rc_bar_lyr) || in_rc(mx, my, g.rc_bar_cov) || in_rc(mx, my, g.rc_bar_vol_ico) ||
+                in_rc(mx, my, g.rc_bar_vol_trk) || in_rc(mx, my, g.rc_bar_prog);
     if (!hand && g.page == PAGE_LYRICS) {
         if (in_rc(mx, my, g.rc_back_lib) || in_rc(mx, my, g.rc_lyr_bg) || in_rc(mx, my, g.rc_lyr_bg_clear) ||
             in_rc(mx, my, g.rc_lyr_theme) || in_rc(mx, my, g.rc_lyr_fs)) hand = true;
@@ -4574,6 +4765,7 @@ void handle_input() {
             else if (!g.tracks.empty()) load_track(pick_next(g.playing_idx, 1));
             return;
         }
+        if (in_rc(ti.x, ti.y, g.rc_bar_save)) { save_current_online_track(); return; }
         if (in_rc(ti.x, ti.y, g.rc_bar_mode)) {
             g.play_mode = (g.play_mode + 1) % 3;
             save_settings();

@@ -1,4 +1,4 @@
-name: Multi-Platform Release Build (v1.2.9)
+name: Multi-Platform Release Build (v1.2.10)
 
 on:
   push:
@@ -38,12 +38,12 @@ jobs:
           g++ -std=c++17 -O3 -fno-math-errno -Wall -Wextra -Isrc -Ideps -Idesktop_deps/lua -Idesktop_deps/qr -c desktop_src/desktop_win.cpp -o desktop_src/desktop_win.o
           g++ src/audio.o src/decode.o src/draw.o src/draw_text.o src/lrc.o src/meta.o src/util.o \
             desktop_src/desktop_lua.o desktop_src/desktop_main.o desktop_src/desktop_plugin.o desktop_src/desktop_win.o desktop_src/desktop_blobs.o desktop_src/sirene_res.o \
-            -o Sirene-v1.2.9-Windows-x64.exe \
+            -o Sirene-v1.2.10-Windows-x64.exe \
             -static -static-libgcc -static-libstdc++ -mwindows -lgdi32 -luser32 -lshell32 -lole32 -lcomdlg32 -lwinmm -luuid -lm
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x64
-          path: Sirene-v1.2.9-Windows-x64.exe
+          path: Sirene-v1.2.10-Windows-x64.exe
 
   build-linux:
     runs-on: ubuntu-latest
@@ -65,11 +65,11 @@ jobs:
           wait "$SPID" || true
           mkdir -p dist-linux
           cp Sirene icon.jpg README.md dist-linux/
-          tar -czvf Sirene-v1.2.9-Linux-x86_64.tar.gz -C dist-linux .
+          tar -czvf Sirene-v1.2.10-Linux-x86_64.tar.gz -C dist-linux .
       - uses: actions/upload-artifact@v4
         with:
           name: linux-x86_64
-          path: Sirene-v1.2.9-Linux-x86_64.tar.gz
+          path: Sirene-v1.2.10-Linux-x86_64.tar.gz
 
   build-macos:
     runs-on: macos-latest
@@ -97,11 +97,11 @@ jobs:
           kill -0 "$SPID"
           kill -TERM "$SPID"
           wait "$SPID" || true
-          zip -ry Sirene-v1.2.9-macOS-arm64.zip Sirène.app
+          zip -ry Sirene-v1.2.10-macOS-arm64.zip Sirène.app
       - uses: actions/upload-artifact@v4
         with:
           name: macos-arm64
-          path: Sirene-v1.2.9-macOS-arm64.zip
+          path: Sirene-v1.2.10-macOS-arm64.zip
 
   build-switch:
     runs-on: ubuntu-latest
@@ -115,11 +115,11 @@ jobs:
           export DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
           export PATH="$DEVKITPRO/tools/bin:$DEVKITPRO/devkitA64/bin:$PATH"
           make clean && make -j$(nproc)
-          mv PureMusic.nro Sirene-v1.2.9-Switch.nro
+          mv PureMusic.nro Sirene-v1.2.10-Switch.nro
       - uses: actions/upload-artifact@v4
         with:
           name: switch-nro
-          path: Sirene-v1.2.9-Switch.nro
+          path: Sirene-v1.2.10-Switch.nro
 
   publish-to-release:
     needs: [ build-windows, build-linux, build-macos, build-switch ]
@@ -128,34 +128,31 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-      - name: Upload all platform packages to Release v1.2.9
+      - name: Upload all platform packages to Release v1.2.10
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           NOTES=$(cat <<'EOF'
-          Sirène v1.2.9 跨平台现代 UI 重构与学习研究版（Windows / Linux / macOS / Switch Homebrew .nro）。
+          Sirène v1.2.10 跨平台现代 UI 重构与学习研究版（Windows / Linux / macOS / Switch Homebrew .nro）。
 
-          ### v1.2.9 核心更新
-          - **彻底修复在线播放与多语种字体乱码问题**：
-            - **Unicode 多字体回退与 Emoji / 组合假名支持**：Windows 文本管线新增 `Malgun Gothic`（韩语）、`Segoe UI Symbol` / `Segoe UI Emoji` 与 UTF-16 代理对 DIB 栅格化，全面支持 Emoji（如 `🎵`/`✨`）、NFD 日文组合假名自动合成（`たぶん`→`たぶん`）、不间断空格（NBSP）规整与零宽变体选择符屏蔽，消除在线歌曲与榜单中的豆腐方块与错位；字体桶容量扩充至 256，修正超 256 字节截断切分 UTF-8 与 `Segoe UI` / 微软雅黑混排基线观感。
-            - **在线文本与双语歌词深度清洗**：修复 `lrc.c` 将个别坏字节 UTF-8 误判为 GBK 导致整段中文变乱码的问题；自动解析 JSON 歌词制作信息行、转义 HTML 实体（`&apos;` / `&amp;` / `&#x...;` 等）并按 UTF-8 字符边界安全截断双语拼接行；HTTP 客户端显式处理压缩与响应转码。
-          - **扩展个人歌单浏览与账号/UID 直连升级**：
-            - 扩展认证弹窗支持 **扫码登录 / 凭证 Cookie / 用户 UID 与主页链接直连**（并增加异步请求并发时序保护与配置保存自动刷新），扩充歌单展示行数并将个人歌单与推荐置于最前。
-          - **Switch Homebrew `.nro` 独立构建**：保留完整的 `Sirene-v1.2.9-Switch.nro` 纯开源自制工具链构建产物。
+          ### v1.2.10 核心更新
+          - **Unicode 多语种排版与歌词解码强化**：延续并强化 Windows 多字体回退链、NFD 组合假名合并与双语歌词边界安全解码。
+          - **播放体验与稳定性维护优化**：优化播放状态判断、扩展凭证竞态保护以及界面交互细节。
+          - **Switch Homebrew `.nro` 独立构建**：保留完整的 `Sirene-v1.2.10-Switch.nro` 纯开源自制工具链构建产物。
 
           > **学习研究与免责声明（Switch 与桌面端通用）**：本项目为纯个人技术学习与开源研究作品（非商业用途），主仓库**不包含**任何第三方音乐平台私有域名/协议，也与任何硬件厂商、游戏机厂商或第三方公司无任何官方关联，不包含任何非授权系统修改或绕过机制；Switch `.nro` 仅基于 `libnx` / `SDL2` / `dr_libs` 等纯开源自制工具链构建，仅用于合法本地音频学习测试。一切下载、编译与运行风险均由使用者自行承担，与原作者无关（详见 `DISCLAIMER.md`）。
           EOF
           )
           NOTES="$(printf '%s' "$NOTES" | sed 's/^          //')"
-          if ! gh release view v1.2.9 --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            gh release create v1.2.9 --repo "${{ github.repository }}" --title "Sirène v1.2.9 (Unicode & Online Lyrics Fix · User Playlists · Switch .nro)" --notes "$NOTES"
+          if ! gh release view v1.2.10 --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create v1.2.10 --repo "${{ github.repository }}" --title "Sirène v1.2.10 (Cross-Platform Study Edition · Switch .nro)" --notes "$NOTES"
           else
-            gh release edit v1.2.9 --repo "${{ github.repository }}" --notes "$NOTES"
+            gh release edit v1.2.10 --repo "${{ github.repository }}" --notes "$NOTES"
           fi
-          gh release upload v1.2.9 \
-            artifacts/windows-x64/Sirene-v1.2.9-Windows-x64.exe \
-            artifacts/linux-x86_64/Sirene-v1.2.9-Linux-x86_64.tar.gz \
-            artifacts/macos-arm64/Sirene-v1.2.9-macOS-arm64.zip \
-            artifacts/switch-nro/Sirene-v1.2.9-Switch.nro \
+          gh release upload v1.2.10 \
+            artifacts/windows-x64/Sirene-v1.2.10-Windows-x64.exe \
+            artifacts/linux-x86_64/Sirene-v1.2.10-Linux-x86_64.tar.gz \
+            artifacts/macos-arm64/Sirene-v1.2.10-macOS-arm64.zip \
+            artifacts/switch-nro/Sirene-v1.2.10-Switch.nro \
             --repo "${{ github.repository }}" \
             --clobber

@@ -28,6 +28,7 @@ struct PluginInfo {
     bool valid = false;
     bool supports_login = false;
     bool supports_cookie_login = false;
+    bool supports_save = false;
     std::string cookie_hint;
     std::vector<PluginQrMode> qr_modes;
     bool logged_in = false;
@@ -86,6 +87,8 @@ struct PluginReadyPlay {
     std::string lrc_orig;
     std::string lrc_trans;
     std::string error;
+    bool is_trial = false;
+    bool can_save = false;
 };
 
 void plugin_init(const char* config_dir);

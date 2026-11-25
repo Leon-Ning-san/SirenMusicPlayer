@@ -154,13 +154,17 @@ bool write_file_bytes(const std::string& path, const char* data, size_t len) {
     return ok;
 }
 
-bool file_exists_nonempty(const std::string& path) {
+long file_size_bytes(const std::string& path) {
     FILE* f = plat_fopen(path.c_str(), "rb");
-    if (!f) return false;
+    if (!f) return -1;
     std::fseek(f, 0, SEEK_END);
     long sz = std::ftell(f);
     std::fclose(f);
-    return sz > 0;
+    return sz;
+}
+
+bool file_exists_nonempty(const std::string& path) {
+    return file_size_bytes(path) > 0;
 }
 
 void ensure_dir_recursive(const char* dir) {
@@ -1365,6 +1369,7 @@ void inspect_plugin_entry(PluginEntry* entry) {
     entry->info.description = lua_str_field(L, t, "description");
     entry->info.supports_login = lua_bool_field(L, t, "supports_login", false);
     entry->info.supports_cookie_login = lua_bool_field(L, t, "supports_cookie_login", false);
+    entry->info.supports_save = lua_bool_field(L, t, "supports_cache_save", false);
     entry->info.cookie_hint = lua_str_field(L, t, "cookie_hint", "粘贴凭证 Cookie");
 
     entry->info.qr_modes.clear();
@@ -1884,13 +1889,16 @@ void plugin_async_play_track(const std::string& plugin_id, const OnlineTrack& tr
     uint64_t pgen = ++g_play_gen;
     std::string spath;
     std::map<std::string, std::string> kv;
+    bool ent_supports_save = false;
     {
         std::lock_guard<std::mutex> lk(g_mgr_mtx);
-        if (!find_entry_copy_locked(plugin_id, &spath, &kv)) return;
+        PluginEntry* ent = find_entry_copy_locked(plugin_id, &spath, &kv);
+        if (!ent) return;
+        ent_supports_save = ent->info.supports_save;
         g_snap.is_busy = true;
     }
     ++g_active_jobs;
-    std::thread([plugin_id, spath, kv, track, quality, pgen]() {
+    std::thread([plugin_id, spath, kv, track, quality, pgen, ent_supports_save]() {
         PluginReadyPlay rp;
         rp.ready = true;
         rp.plugin_id = plugin_id;
@@ -1917,6 +1925,8 @@ void plugin_async_play_track(const std::string& plugin_id, const OnlineTrack& tr
                     } else if (lua_istable(L, -1)) {
                         int rt = lua_gettop(L);
                         play_url = lua_str_field(L, rt, "url");
+                        rp.is_trial = lua_bool_field(L, rt, "trial", false);
+                        if (!rp.is_trial && !lua_bool_field(L, rt, "full", true)) rp.is_trial = true;
                         std::string f = lua_str_field(L, rt, "fmt");
                         if (!f.empty()) {
                             std::snprintf(rp.track.fmt, sizeof(rp.track.fmt), "%s", f.c_str());
@@ -1971,10 +1981,15 @@ void plugin_async_play_track(const std::string& plugin_id, const OnlineTrack& tr
                 else if (play_url.find(".wav") != std::string::npos) ext = "wav";
             }
             std::string cache_path = g_stream_dir + "/" + safe_id_str(plugin_id) + "_" + hash_hex_str(track.id + "_" + quality) + "." + ext;
-            if (!file_exists_nonempty(cache_path)) {
+            long cached_sz = file_size_bytes(cache_path);
+            bool need_dl = (cached_sz <= 0) || (!rp.is_trial && track.dur > 90.0 && cached_sz < 1000000L);
+            if (need_dl) {
                 HttpResp dl = http_request_sync("GET", play_url, hdrs, "");
                 if (dl.ok && !dl.body.empty()) {
                     write_file_bytes(cache_path, dl.body.data(), dl.body.size());
+                    rp.ok = true;
+                    rp.audio_path = cache_path;
+                } else if (cached_sz > 0) {
                     rp.ok = true;
                     rp.audio_path = cache_path;
                 } else {
@@ -1984,6 +1999,9 @@ void plugin_async_play_track(const std::string& plugin_id, const OnlineTrack& tr
             } else {
                 rp.ok = true;
                 rp.audio_path = cache_path;
+            }
+            if (rp.ok && !rp.is_trial && ent_supports_save) {
+                rp.can_save = true;
             }
         }
 
