@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <memory>
 #include <string>
 #include <vector>
@@ -35,8 +36,12 @@ constexpr int MAX_THUMBS    = 240;
 constexpr int THUMB_SZ      = 200;
 constexpr int MINI_ART_SZ   = 54;
 constexpr int COVER_SRC_SZ  = 360;
-constexpr int ROW_H         = 54;
-constexpr int RAIL_W        = 76;
+constexpr int ROW_H         = 56;
+constexpr int HEADER_H      = 84;
+constexpr int BANNER_H      = 188;
+constexpr int SECTION_H     = 44;
+constexpr int PLAYER_H      = 68;
+constexpr int PLAYER_MARGIN = 14;
 constexpr int BG_ART_W      = 48;
 constexpr int BG_ART_H      = 27;
 constexpr int MAX_GRID_HITS = 96;
@@ -135,7 +140,7 @@ struct Track {
     int cached_dur_w = -1;
 };
 
-enum { DRAG_NONE = 0, DRAG_ISLAND_PROG = 1, DRAG_HERO_PROG = 2, DRAG_VOL = 3, DRAG_SB = 4, DRAG_LIST = 5, DRAG_LYRICS = 6 };
+enum { DRAG_NONE = 0, DRAG_ISLAND_PROG = 1, DRAG_VOL = 2, DRAG_SB = 3, DRAG_LIST = 4, DRAG_LYRICS = 5 };
 
 struct WrappedLyrLine {
     std::vector<std::string> o_lines;
@@ -146,8 +151,17 @@ struct WrappedLyrLine {
 
 struct GridHit { Rect card{}; Rect fav{}; int track_idx = 0; };
 struct LyrHit  { Rect rc{}; double t = 0.0; };
+struct DirHit  { Rect rc{}; int dir_idx = 0; };
 
-enum { PAGE_LIBRARY = 0, PAGE_LYRICS = 1 };
+enum {
+    SET_LIGHT = 1, SET_ACCENT_FOLLOW = 2, SET_BG_PICK = 3, SET_BG_CLEAR = 4,
+    SET_VIEW = 5, SET_MODE = 6, SET_ADD_DIR = 7, SET_RESCAN = 8,
+    SET_RM_DIR = 9, SET_VOL_TRK = 10, SET_BACK = 11,
+    SET_THEME_LIGHT = 12, SET_THEME_DARK = 13, SET_PLAY_MODE = 14, SET_DIR_REMOVE = 15
+};
+struct SetHit  { Rect rc{}; int id = 0; int arg = 0; };
+
+enum { PAGE_LIBRARY = 0, PAGE_LYRICS = 1, PAGE_SETTINGS = 2 };
 enum { TAB_ALL = 0, TAB_FAV = 1, TAB_DIR = 2 };
 enum { FMT_FILT_ALL = 0, FMT_FILT_FAV = 1, FMT_FILT_LOSSLESS = 2, FMT_FILT_MP3 = 3, FMT_FILT_OTHER = 4 };
 enum { MODE_LOOP_ALL = 0, MODE_LOOP_ONE = 1, MODE_SHUFFLE = 2 };
@@ -171,7 +185,8 @@ struct AppState {
     int fmt_filter = FMT_FILT_ALL;
     int view_grid = 1;
     int sort_mode = PC_SORT_DEFAULT;
-    int show_diag = 0;
+    int accent_follow = 1;
+    float accent_sw_t = 1.0f;
     int search_focused = 0;
     std::string search_q;
 
@@ -222,12 +237,12 @@ struct AppState {
     int   fade_armed = 0;
 
     float scroll_px = 0.0f, scroll_target = 0.0f;
+    float set_content_h = 820.0f;
     float lyr_cam_y = 0.0f;
     int   lyr_cam_valid = 0;
     float lyr_manual_timer = 0.0f;
     float wave_phase = 0.0f, ambient_t = 0.0f, scallop_rot = 0.0f;
-    float island_exp = 0.0f;
-    float rail_pill_y = 92.0f;
+    float rail_pill_y = 66.0f;
     std::array<float, 28> bars{};
     int ui_cursor_hand = 0;
     int probe_cursor = 0;
@@ -259,27 +274,33 @@ struct AppState {
     uint32_t C_ACCENT = 0, C_ON_ACCENT = 0, C_HERO_L = 0, C_HERO_R = 0;
     uint32_t C_TXT = 0, C_TXT2 = 0, C_TXT3 = 0, C_DIV = 0, C_TRACK_BG = 0, C_HEART = 0, C_PLAY_BTN = 0, C_PLAY_ICO = 0;
 
-    Rect rc_menu_btn{}, rc_nav_all{}, rc_nav_fav{}, rc_nav_lyr{}, rc_nav_add{}, rc_nav_diag{};
-    Rect rc_nav_bg{}, rc_nav_theme{}, rc_nav_view{}, rc_nav_rescan{};
+    Rect rc_menu_btn{}, rc_nav_all{}, rc_nav_fav{}, rc_nav_lyr{}, rc_nav_add{}, rc_nav_set{};
+    Rect rc_nav_bg{}, rc_nav_theme{}, rc_nav_rescan{};
     Rect rc_search_box{}, rc_search_clear{}, rc_sort_btn{}, rc_fs_btn{}, rc_view_pill{}, rc_bg_btn{}, rc_bg_clear{};
     std::array<Rect, 5> rc_filt_chips{};
     Rect rc_dir_chip{};
-    Rect rc_hero_card{}, rc_hero_cov{}, rc_hero_play{}, rc_hero_prog{};
-    Rect rc_sb_track{}, rc_fab_import{};
+    Rect rc_hero_card{}, rc_hero_cov{}, rc_hero_play{};
+    std::array<Rect, 3> rc_banner_next{};
+    std::array<int, 3> banner_next_idx{ -1, -1, -1 };
+    Rect rc_sb_track{};
     Rect rc_back_lib{}, rc_lyr_bg{}, rc_lyr_bg_clear{}, rc_lyr_theme{}, rc_lyr_fs{};
     Rect rc_island{}, rc_bar_cov{}, rc_bar_fav{}, rc_bar_prev{}, rc_bar_play{}, rc_bar_next{};
     Rect rc_bar_mode{}, rc_bar_lyr{}, rc_bar_vol_ico{}, rc_bar_vol_trk{}, rc_bar_prog{};
+    Rect rc_set_back{};
     int ui_px0 = 0, ui_px1 = 100, ui_py = 0;
-    int ui_hpx0 = 0, ui_hpx1 = 100;
     int ui_vx0 = 0, ui_vx1 = 100;
     int ui_list_x0 = 0, ui_list_x1 = 0, ui_list_y0 = 0, ui_list_y1 = 0;
 
-    int grid_cols = 4, grid_w = 1000, grid_gap = 18, card_w = 180, card_h = 240, hero_w = 378;
+    int grid_cols = 5, grid_w = 1000, grid_gap = 18, card_w = 168, card_h = 220;
     std::vector<GridHit> grid_hits;
     std::vector<LyrHit> lyr_hits;
+    std::vector<DirHit> rc_dir_rows;
+    std::vector<SetHit> set_hits;
 };
 
 AppState g;
+
+inline int side_w() { return g.W >= 1000 ? 220 : 76; }
 
 inline uint8_t theme_shadow(uint8_t dark_a) {
     return static_cast<uint8_t>(static_cast<float>(dark_a) * (1.0f - 0.58f * g.light_t));
@@ -517,8 +538,12 @@ void step_palette_and_ambient() {
         acc_b = (g.cur_qf[0][2] + g.cur_qf[1][2] + g.cur_qf[2][2] + g.cur_qf[3][2]) * 0.25f;
     }
 
-    const uint32_t d_accent = boost_pastel_accent(acc_r, acc_g, acc_b, 0);
-    const uint32_t l_accent = boost_pastel_accent(acc_r, acc_g, acc_b, 1);
+    const uint32_t d_accent = g.accent_follow
+                              ? boost_pastel_accent(acc_r, acc_g, acc_b, 0)
+                              : boost_pastel_accent(72.0f, 140.0f, 255.0f, 0);
+    const uint32_t l_accent = g.accent_follow
+                              ? boost_pastel_accent(acc_r, acc_g, acc_b, 1)
+                              : boost_pastel_accent(72.0f, 140.0f, 255.0f, 1);
     g.C_ACCENT = mix_col(d_accent, l_accent, t_ui);
 
     const uint32_t d_base   = COL(12, 14, 18, 255);
@@ -911,6 +936,9 @@ void load_settings() {
             if (sm >= 0 && sm <= 3) g.sort_mode = sm;
         } else if (std::strncmp(line, "shortcut=", 9) == 0) {
             g.shortcut_done = std::atoi(line + 9) ? 1 : 0;
+        } else if (std::strncmp(line, "accent_follow=", 14) == 0) {
+            g.accent_follow = std::atoi(line + 14) ? 1 : 0;
+            g.accent_sw_t = g.accent_follow ? 1.0f : 0.0f;
         } else if (std::strncmp(line, "bg_img=", 7) == 0) {
             saved_bg = line + 7;
         }
@@ -925,9 +953,9 @@ void save_settings() {
     snprintf(p, sizeof(p), "%s/pc_settings.cfg", be_config_dir());
     FILE* f = plat_fopen(p, "w");
     if (!f) return;
-    fprintf(f, "vol=%.3f\nmode=%d\nlight=%d\nview_grid=%d\nsort=%d\nshortcut=%d\nbg_img=%s\n",
+    fprintf(f, "vol=%.3f\nmode=%d\nlight=%d\nview_grid=%d\nsort=%d\nshortcut=%d\naccent_follow=%d\nbg_img=%s\n",
             audio_volume(), g.play_mode, g.is_light, g.view_grid, g.sort_mode, g.shortcut_done,
-            g.bg_img_path.c_str());
+            g.accent_follow, g.bg_img_path.c_str());
     fclose(f);
 }
 
@@ -1335,6 +1363,21 @@ void icon_close_x(Canvas* c, int cx, int cy, int r, uint32_t col) {
         fill_rect_a(c, cx + i, cy - i, 2, 2, col, 235);
     }
 }
+void icon_folder(Canvas* c, int x, int y, int sz, uint32_t col) {
+    fill_round_rect_aa(c, x, y + 1, std::max(5, sz * 4 / 10), 4, 2, col);
+    stroke_round_rect_aa(c, x, y + 3, sz, sz - 4, 3, 2, col, 225);
+}
+void icon_gear(Canvas* c, int cx, int cy, int r, uint32_t col) {
+    stroke_circle_aa(c, cx, cy, std::max(3, r - 2), 2, col, 230);
+    fill_ellipse_aa(c, cx, cy, std::max(2, r / 3), std::max(2, r / 3), col);
+    for (int k = 0; k < 4; ++k) {
+        const float ang = static_cast<float>(k) * (kPi * 0.25f);
+        const int dx = static_cast<int>(std::cos(ang) * static_cast<float>(r) + 0.5f);
+        const int dy = static_cast<int>(std::sin(ang) * static_cast<float>(r) + 0.5f);
+        fill_rect_a(c, cx + dx - 1, cy + dy - 1, 2, 2, col, 230);
+        fill_rect_a(c, cx - dx - 1, cy - dy - 1, 2, 2, col, 230);
+    }
+}
 
 void toggle_fav(int idx) {
     if (idx < 0 || idx >= static_cast<int>(g.tracks.size())) return;
@@ -1525,38 +1568,37 @@ std::vector<std::string> wrap_utf8_lines(const char* s, float px, int max_w, int
     return out;
 }
 
-void calc_grid_metrics(int& out_cols, int& out_gap, int& out_cw, int& out_ch, int& out_herow) {
-    const int avail = std::max(320, g.W - RAIL_W - 26 * 2 - 22);
-    const int gap = g.W >= 1440 ? 20 : 16;
-    const int cols = std::clamp((avail + gap) / (218 + gap), 2, 6);
+void calc_grid_metrics(int& out_cols, int& out_gap, int& out_cw, int& out_ch) {
+    const int avail = std::max(320, g.W - side_w() - 26 * 2 - 20);
+    constexpr int gap = 18;
+    const int cols = std::clamp((avail + gap) / (168 + gap), 2, 8);
     const int cw = (avail - gap * (cols - 1)) / cols;
-    const int ch = cw + 64;
-    const int herow = cols >= 3 ? (cw * 2 + gap) : avail;
-    out_cols = cols; out_gap = gap; out_cw = cw; out_ch = ch; out_herow = herow;
+    const int ch = cw + 52;
+    out_cols = cols; out_gap = gap; out_cw = cw; out_ch = ch;
     g.grid_cols = cols; g.grid_gap = gap; g.grid_w = avail;
-    g.card_w = cw; g.card_h = ch; g.hero_w = herow;
+    g.card_w = cw; g.card_h = ch;
 }
 
-int list_vis_h() { return std::max(120, g.H - 114 - 16); }
+int list_vis_h() { return std::max(120, g.H - HEADER_H - 8); }
+
+constexpr int ITEMS_TOP_OFF = 4 + BANNER_H + 14 + SECTION_H + 6;
+constexpr int DOCK_CLEAR    = PLAYER_H + PLAYER_MARGIN * 2 + 14;
 
 float max_scroll_px() {
-    constexpr int dock_clear = 98;
-    const int nvis = static_cast<int>(g.vis_idx.size());
     const int vh = list_vis_h();
+    if (g.page == PAGE_SETTINGS) {
+        const float ch = g.set_content_h + static_cast<float>(DOCK_CLEAR);
+        return ch > static_cast<float>(vh) ? (ch - static_cast<float>(vh)) : 0.0f;
+    }
+    const int nvis = static_cast<int>(g.vis_idx.size());
     if (g.view_grid) {
-        int cols, gap, cw, ch, herow;
-        calc_grid_metrics(cols, gap, cw, ch, herow);
-        int rows = 1;
-        if (cols >= 3) {
-            const int rem = nvis - (cols - 2);
-            if (rem > 0) rows += (rem + cols - 1) / cols;
-        } else if (nvis > 0) {
-            rows += (nvis + cols - 1) / cols;
-        }
-        const int content_h = 8 + rows * ch + (rows > 0 ? (rows - 1) * gap : 0) + dock_clear;
+        int cols, gap, cw, ch;
+        calc_grid_metrics(cols, gap, cw, ch);
+        const int rows = (nvis > 0) ? ((nvis + cols - 1) / cols) : 0;
+        const int content_h = ITEMS_TOP_OFF + rows * ch + (rows > 0 ? (rows - 1) * gap : 0) + DOCK_CLEAR;
         return content_h > vh ? static_cast<float>(content_h - vh) : 0.0f;
     }
-    const int content_h = 34 + nvis * ROW_H + dock_clear;
+    const int content_h = ITEMS_TOP_OFF + 32 + nvis * ROW_H + DOCK_CLEAR;
     return content_h > vh ? static_cast<float>(content_h - vh) : 0.0f;
 }
 
@@ -1565,18 +1607,16 @@ void pump_background_meta() {
     if (nvis <= 0) return;
     int loaded = 0;
     int first_row = 0;
+    const float list_scr = std::max(0.0f, g.scroll_px - static_cast<float>(ITEMS_TOP_OFF));
     if (g.view_grid) {
-        int cols, gap, cw, ch, herow;
-        calc_grid_metrics(cols, gap, cw, ch, herow);
-        const int row = static_cast<int>(g.scroll_px / static_cast<float>(ch + gap));
-        if (row <= 0) first_row = 0;
-        else if (cols >= 3) first_row = (cols - 2) + (row - 1) * cols;
-        else first_row = (row - 1) * cols;
-        first_row = std::max(0, first_row);
+        int cols, gap, cw, ch;
+        calc_grid_metrics(cols, gap, cw, ch);
+        const int row = std::max(0, static_cast<int>(list_scr / static_cast<float>(ch + gap)));
+        first_row = row * cols;
     } else {
-        first_row = std::max(0, static_cast<int>(g.scroll_px / static_cast<float>(ROW_H)));
+        first_row = std::max(0, static_cast<int>(list_scr / static_cast<float>(ROW_H)));
     }
-    const int win = g.view_grid ? 18 : 16;
+    const int win = g.view_grid ? 20 : 16;
     for (int p = first_row; p < nvis && p < first_row + win && loaded < 1; ++p) {
         const int idx = g.vis_idx[p];
         if (g.tracks[idx].meta_state == 0) { ensure_track_meta(idx, 1); ++loaded; }
@@ -1590,17 +1630,22 @@ void pump_background_meta() {
 }
 
 void reset_hit_rects() {
-    g.rc_menu_btn = g.rc_nav_all = g.rc_nav_fav = g.rc_nav_lyr = g.rc_nav_add = g.rc_nav_diag = {};
-    g.rc_nav_bg = g.rc_nav_theme = g.rc_nav_view = g.rc_nav_rescan = {};
+    g.rc_menu_btn = g.rc_nav_all = g.rc_nav_fav = g.rc_nav_lyr = g.rc_nav_add = g.rc_nav_set = {};
+    g.rc_nav_bg = g.rc_nav_theme = g.rc_nav_rescan = {};
     g.rc_search_box = g.rc_search_clear = g.rc_sort_btn = g.rc_fs_btn = g.rc_view_pill = g.rc_bg_btn = g.rc_bg_clear = {};
     g.rc_filt_chips.fill(Rect{});
     g.rc_dir_chip = {};
-    g.rc_hero_card = g.rc_hero_cov = g.rc_hero_play = g.rc_hero_prog = {};
-    g.rc_sb_track = g.rc_fab_import = g.rc_back_lib = g.rc_lyr_bg = g.rc_lyr_bg_clear = g.rc_lyr_theme = g.rc_lyr_fs = {};
+    g.rc_hero_card = g.rc_hero_cov = g.rc_hero_play = {};
+    g.rc_banner_next.fill(Rect{});
+    g.banner_next_idx.fill(-1);
+    g.rc_sb_track = g.rc_back_lib = g.rc_lyr_bg = g.rc_lyr_bg_clear = g.rc_lyr_theme = g.rc_lyr_fs = {};
     g.rc_island = g.rc_bar_cov = g.rc_bar_fav = g.rc_bar_prev = g.rc_bar_play = g.rc_bar_next = {};
     g.rc_bar_mode = g.rc_bar_lyr = g.rc_bar_vol_ico = g.rc_bar_vol_trk = g.rc_bar_prog = {};
+    g.rc_set_back = {};
     g.grid_hits.clear();
     g.lyr_hits.clear();
+    g.rc_dir_rows.clear();
+    g.set_hits.clear();
 }
 
 inline uint8_t glass_rim(uint8_t dark_a = 48, uint8_t light_a = 205) {
@@ -1611,279 +1656,368 @@ void draw_nav_rail(int mx, int my) {
     Canvas* s = g.screen.get();
     Font* f = g.font.get();
     const bool lt = g.light_t > 0.5f;
-    fill_frosted_round_rect(s, 0, 0, RAIL_W, g.H, 0, g.C_RAIL, lt ? 172 : 160, 3, 0);
-    fill_rect_a(s, RAIL_W - 1, 0, 1, g.H, g.C_DIV, col_a(g.C_DIV) + 14);
+    const int sw = side_w();
+    const bool wide = (sw > 120);
 
-    const int top_y = 18;
-    g.rc_menu_btn = Rect{ 16, top_y, 44, 44 };
-    if (in_rc(mx, my, g.rc_menu_btn)) fill_round_rect_aa(s, 14, top_y - 2, 48, 48, 16, g.C_GLASS_HOV);
-    if (!g.poster_ico.empty()) {
-        fill_round_rect_shadow(s, 19, top_y + 3, 38, 38, 14, theme_shadow(70));
-        blit_rgb_round_fit(s, 18, top_y + 2, 40, 40, g.poster_ico.data(), 40, 40, 14);
-        stroke_round_rect_aa(s, 18, top_y + 2, 40, 40, 14, 1, g.C_ACCENT, 130);
+    fill_frosted_round_rect(s, 0, 0, sw, g.H, 0, g.C_RAIL, lt ? 182 : 172, 3, 0);
+    fill_rect_a(s, sw - 1, 0, 1, g.H, g.C_DIV, col_a(g.C_DIV) + 16);
+
+    if (wide) {
+        g.rc_search_box = Rect{ 14, 16, sw - 28, 36 };
+        const bool s_hov = in_rc(mx, my, g.rc_search_box);
+        fill_frosted_round_rect(s, g.rc_search_box.x, g.rc_search_box.y, g.rc_search_box.w, g.rc_search_box.h, 18,
+                                g.C_SURFACE, g.search_focused ? 205 : (s_hov ? 185 : (lt ? 168 : 138)), 2,
+                                g.search_focused ? glass_rim(96, 230) : glass_rim(52, 205));
+        stroke_round_rect_aa(s, g.rc_search_box.x, g.rc_search_box.y, g.rc_search_box.w, g.rc_search_box.h, 18,
+                             g.search_focused ? 2 : 1, g.search_focused ? g.C_ACCENT : g.C_DIV,
+                             g.search_focused ? 210 : (col_a(g.C_DIV) + 14));
+        icon_search(s, g.rc_search_box.x + 17, g.rc_search_box.y + 17, 5,
+                    g.search_focused ? g.C_ACCENT : g.C_TXT3);
+        const int tmax = g.rc_search_box.w - 64;
+        if (!g.search_q.empty()) {
+            draw_text_max_bold(s, f, 13.0f, g.rc_search_box.x + 31, g.rc_search_box.y + 10,
+                               g.C_TXT, g.search_q.c_str(), tmax);
+            g.rc_search_clear = Rect{ g.rc_search_box.x + g.rc_search_box.w - 30, g.rc_search_box.y + 3, 28, 30 };
+            fill_round_rect_aa(s, g.rc_search_clear.x + 3, g.rc_search_clear.y + 3, 24, 24, 12,
+                               in_rc(mx, my, g.rc_search_clear) ? g.C_GLASS_ACT : g.C_GLASS);
+            draw_text_centered_bold(s, f, 12.5f, g.rc_search_clear.x, g.rc_search_clear.x + 28,
+                                    g.rc_search_clear.y + 7, g.C_TXT2, "x");
+        } else {
+            draw_text_max_bold(s, f, 12.5f, g.rc_search_box.x + 31, g.rc_search_box.y + 10,
+                               g.C_TXT3, "搜索歌曲、歌手...", tmax);
+        }
     } else {
-        fill_round_rect_aa(s, 18, top_y + 2, 40, 40, 14, g.C_ACCENT);
-        icon_menu(s, 28, top_y + 16, 20, g.C_ON_ACCENT);
+        g.rc_search_box = Rect{ 16, 16, sw - 32, 36 };
+        const bool s_act = g.search_focused || !g.search_q.empty();
+        fill_frosted_round_rect(s, g.rc_search_box.x, g.rc_search_box.y, g.rc_search_box.w, g.rc_search_box.h, 18,
+                                s_act ? mix_col(g.C_SURFACE, g.C_ACCENT, 0.25f) : g.C_SURFACE,
+                                in_rc(mx, my, g.rc_search_box) ? 185 : (lt ? 164 : 138), 2, glass_rim(54, 205));
+        icon_search(s, sw / 2 - 1, 33, 6, s_act ? g.C_ACCENT : g.C_TXT2);
     }
 
-    int active_slot = 0;
-    if (g.page == PAGE_LYRICS) active_slot = 2;
+    int active_slot = -1;
+    if (g.page == PAGE_SETTINGS) active_slot = 4;
+    else if (g.page == PAGE_LYRICS) active_slot = 2;
+    else if (g.lib_tab == TAB_ALL) active_slot = 0;
     else if (g.lib_tab == TAB_FAV) active_slot = 1;
 
-    constexpr int nav_y0 = 88;
-    constexpr int nav_step = 68;
-    const float tgt_pill_y = static_cast<float>(nav_y0 + active_slot * nav_step);
-    const float kp = 1.0f - std::exp(-16.0f * static_cast<float>(g.dt));
-    g.rail_pill_y += (tgt_pill_y - g.rail_pill_y) * kp;
+    constexpr int nav_y0 = 66;
+    const int nav_step = wide ? 42 : 48;
+    const int pill_h = wide ? 36 : 38;
+    if (active_slot >= 0) {
+        const float tgt_pill_y = static_cast<float>(nav_y0 + active_slot * nav_step);
+        const float kp = 1.0f - std::exp(-16.0f * static_cast<float>(g.dt));
+        g.rail_pill_y += (tgt_pill_y - g.rail_pill_y) * kp;
+        const int py = static_cast<int>(g.rail_pill_y + 0.5f);
+        fill_frosted_round_rect(s, 12, py, sw - 24, pill_h, 10,
+                                mix_col(g.C_SURFACE, g.C_ACCENT, 0.30f), 192, 2, glass_rim(58, 205));
+        stroke_round_rect_aa(s, 12, py, sw - 24, pill_h, 10, 1, g.C_ACCENT, 125);
+    }
 
-    fill_frosted_round_rect(s, 12, static_cast<int>(g.rail_pill_y + 0.5f), RAIL_W - 24, 34, 17,
-                            mix_col(g.C_SURFACE, g.C_ACCENT, 0.34f), 192, 2, glass_rim(62, 210));
-    stroke_round_rect_aa(s, 12, static_cast<int>(g.rail_pill_y + 0.5f), RAIL_W - 24, 34, 17, 1, g.C_ACCENT, 130);
-
-    const char* labels[4] = { "曲库", "喜欢", "歌词", "刷新" };
-    Rect* nav_rcs[4] = { &g.rc_nav_all, &g.rc_nav_fav, &g.rc_nav_lyr, &g.rc_nav_rescan };
-    for (int i = 0; i < 4; ++i) {
+    const char* labels_wide[5]  = { "为你推荐", "我喜欢的", "歌词", "刷新曲库", "设置" };
+    const char* labels_short[5] = { "推荐", "喜欢", "歌词", "刷新", "设置" };
+    Rect* nav_rcs[5] = { &g.rc_nav_all, &g.rc_nav_fav, &g.rc_nav_lyr, &g.rc_nav_rescan, &g.rc_nav_set };
+    for (int i = 0; i < 5; ++i) {
         const int iy = nav_y0 + i * nav_step;
-        *nav_rcs[i] = Rect{ 6, iy - 6, RAIL_W - 12, 60 };
+        *nav_rcs[i] = Rect{ 12, iy, sw - 24, pill_h };
         const int is_act = (i == active_slot);
         const int is_hov = in_rc(mx, my, *nav_rcs[i]);
         if (is_hov && !is_act) {
-            fill_round_rect_aa(s, 12, iy, RAIL_W - 24, 34, 17, g.C_GLASS_HOV);
+            fill_round_rect_aa(s, 12, iy, sw - 24, pill_h, 10, g.C_GLASS_HOV);
         }
         const uint32_t icol = is_act ? g.C_ACCENT : (is_hov ? g.C_TXT : g.C_TXT2);
-        const int cx = RAIL_W / 2;
-        const int cy = iy + 17;
-        if (i == 0) icon_library_grid(s, cx - 9, cy - 9, 18, icol);
-        else if (i == 1) icon_heart_ex(s, cx - 9, cy - 8, 18, is_act ? g.C_HEART : icol, is_act);
-        else if (i == 2) icon_lyrics_waves(s, cx - 9, cy - 9, 18, icol);
-        else icon_refresh(s, cx, cy, 8, icol);
-        draw_text_centered_bold(s, f, 13.0f, 4, RAIL_W - 4, iy + 37,
-                                is_act ? g.C_ACCENT : g.C_TXT2, labels[i]);
+        const int cy = iy + (wide ? 18 : 14);
+        const int ix = wide ? 24 : (sw / 2 - 8);
+        if (i == 0) icon_library_grid(s, ix, cy - 8, 16, icol);
+        else if (i == 1) icon_heart_ex(s, ix, cy - 7, 16, is_act ? g.C_HEART : icol, is_act);
+        else if (i == 2) icon_lyrics_waves(s, ix, cy - 8, 16, icol);
+        else if (i == 3) icon_refresh(s, ix + 8, cy, 7, icol);
+        else icon_gear(s, ix + 8, cy, 7, icol);
+
+        if (wide) {
+            draw_text_max_bold(s, f, 14.0f, 50, iy + 9,
+                               is_act ? g.C_ACCENT : (is_hov ? g.C_TXT : g.C_TXT2),
+                               labels_wide[i], sw - 64);
+        } else {
+            draw_text_centered_bold(s, f, 11.5f, 8, sw - 8, iy + 24,
+                                    is_act ? g.C_ACCENT : g.C_TXT2, labels_short[i]);
+        }
     }
 
-    const int bot_y = g.H - 20;
-    g.rc_nav_diag  = Rect{ 12, bot_y - 46, RAIL_W - 24, 42 };
-    g.rc_nav_theme = Rect{ 12, bot_y - 92, RAIL_W - 24, 42 };
-    g.rc_nav_view  = Rect{ 12, bot_y - 138, RAIL_W - 24, 42 };
-    g.rc_nav_bg    = Rect{ 12, bot_y - 184, RAIL_W - 24, 42 };
+    const int div_y = nav_y0 + 5 * nav_step + 8;
+    fill_rect_a(s, 14, div_y, sw - 28, 1, g.C_DIV, col_a(g.C_DIV) + 12);
 
-    if (in_rc(mx, my, g.rc_nav_bg)) fill_round_rect_aa(s, g.rc_nav_bg.x, g.rc_nav_bg.y, g.rc_nav_bg.w, g.rc_nav_bg.h, 14, g.C_GLASS_HOV);
-    icon_wallpaper(s, RAIL_W / 2 - 8, g.rc_nav_bg.y + 13, 16, !g.bg_img_raw.empty() ? g.C_ACCENT : g.C_TXT2);
+    const int bot_top = wide ? (g.H - 60) : (g.H - 104);
+    if (wide) {
+        draw_text_bold(s, f, 12.0f, 18, div_y + 12, g.C_TXT3, "我的目录");
+        g.rc_nav_add = Rect{ sw - 38, div_y + 6, 26, 26 };
+        if (in_rc(mx, my, g.rc_nav_add)) {
+            fill_round_rect_aa(s, g.rc_nav_add.x, g.rc_nav_add.y, 26, 26, 13, g.C_GLASS_HOV);
+        }
+        icon_plus(s, g.rc_nav_add.x + 13, g.rc_nav_add.y + 13, 5,
+                  in_rc(mx, my, g.rc_nav_add) ? g.C_ACCENT : g.C_TXT2);
 
-    if (in_rc(mx, my, g.rc_nav_view)) fill_round_rect_aa(s, g.rc_nav_view.x, g.rc_nav_view.y, g.rc_nav_view.w, g.rc_nav_view.h, 14, g.C_GLASS_HOV);
-    if (g.view_grid) icon_list_rows(s, RAIL_W / 2 - 8, g.rc_nav_view.y + 13, 16, g.C_TXT2);
-    else             icon_library_grid(s, RAIL_W / 2 - 8, g.rc_nav_view.y + 13, 16, g.C_TXT2);
+        int dy = div_y + 38;
+        const int n_dirs = static_cast<int>(g.scan_dirs.size());
+        if (n_dirs == 0 && dy + 28 < bot_top) {
+            draw_text_bold(s, f, 12.5f, 18, dy + 6, g.C_TXT3, "点击 + 添加音乐目录");
+        }
+        for (int di = 0; di < n_dirs && dy + 32 <= bot_top - 6; ++di) {
+            Rect r{ 12, dy, sw - 24, 32 };
+            const bool is_act = (g.page == PAGE_LIBRARY && g.lib_tab == TAB_DIR && g.active_dir == di);
+            const bool is_hov = in_rc(mx, my, r);
+            if (is_act) {
+                fill_frosted_round_rect(s, r.x, r.y, r.w, r.h, 10,
+                                        mix_col(g.C_SURFACE, g.C_ACCENT, 0.28f), 186, 1, glass_rim(54, 200));
+                stroke_round_rect_aa(s, r.x, r.y, r.w, r.h, 10, 1, g.C_ACCENT, 115);
+            } else if (is_hov) {
+                fill_round_rect_aa(s, r.x, r.y, r.w, r.h, 10, g.C_GLASS_HOV);
+            }
+            const uint32_t dc = is_act ? g.C_ACCENT : (is_hov ? g.C_TXT : g.C_TXT2);
+            icon_folder(s, r.x + 10, r.y + 9, 14, dc);
+            std::string dname = basename_str(g.scan_dirs[di]);
+            if (dname.empty()) dname = g.scan_dirs[di];
+            draw_text_max_bold(s, f, 13.0f, r.x + 30, r.y + 8, dc, dname.c_str(), r.w - 38);
+            g.rc_dir_rows.push_back(DirHit{ r, di });
+            dy += 34;
+        }
 
-    if (in_rc(mx, my, g.rc_nav_theme)) fill_round_rect_aa(s, g.rc_nav_theme.x, g.rc_nav_theme.y, g.rc_nav_theme.w, g.rc_nav_theme.h, 14, g.C_GLASS_HOV);
-    icon_theme_orb(s, RAIL_W / 2, g.rc_nav_theme.y + 21, 8, mix_col(g.C_TXT2, g.C_ACCENT, g.light_t));
+        fill_rect_a(s, 14, bot_top, sw - 28, 1, g.C_DIV, col_a(g.C_DIV) + 12);
+        const int half_w = (sw - 32) / 2;
+        g.rc_nav_theme = Rect{ 12, g.H - 50, half_w, 36 };
+        g.rc_nav_bg    = Rect{ 12 + half_w + 8, g.H - 50, half_w, 36 };
 
-    if (in_rc(mx, my, g.rc_nav_diag)) fill_round_rect_aa(s, g.rc_nav_diag.x, g.rc_nav_diag.y, g.rc_nav_diag.w, g.rc_nav_diag.h, 14, g.C_GLASS_HOV);
-    icon_info_dot(s, RAIL_W / 2, g.rc_nav_diag.y + 21, 8, g.show_diag ? g.C_ACCENT : g.C_TXT2);
+        fill_frosted_round_rect(s, g.rc_nav_theme.x, g.rc_nav_theme.y, half_w, 36, 10,
+                                g.C_SURFACE, in_rc(mx, my, g.rc_nav_theme) ? 185 : (lt ? 156 : 132), 1, glass_rim(48, 195));
+        icon_theme_orb(s, g.rc_nav_theme.x + 18, g.rc_nav_theme.y + 18, 7, mix_col(g.C_TXT2, g.C_ACCENT, g.light_t));
+        draw_text_bold(s, f, 12.5f, g.rc_nav_theme.x + 32, g.rc_nav_theme.y + 10, g.C_TXT2, lt ? "浅色" : "深色");
+
+        const bool has_bg = !g.bg_img_raw.empty();
+        fill_frosted_round_rect(s, g.rc_nav_bg.x, g.rc_nav_bg.y, half_w, 36, 10,
+                                has_bg ? mix_col(g.C_SURFACE, g.C_ACCENT, 0.22f) : g.C_SURFACE,
+                                in_rc(mx, my, g.rc_nav_bg) ? 185 : (lt ? 156 : 132), 1, glass_rim(48, 195));
+        icon_wallpaper(s, g.rc_nav_bg.x + 12, g.rc_nav_bg.y + 10, 15, has_bg ? g.C_ACCENT : g.C_TXT2);
+        draw_text_bold(s, f, 12.5f, g.rc_nav_bg.x + 32, g.rc_nav_bg.y + 10,
+                       has_bg ? g.C_ACCENT : g.C_TXT2, "壁纸");
+    } else {
+        if (div_y + 44 <= bot_top) {
+            g.rc_nav_add = Rect{ 14, div_y + 10, sw - 28, 36 };
+            if (in_rc(mx, my, g.rc_nav_add)) {
+                fill_round_rect_aa(s, g.rc_nav_add.x, g.rc_nav_add.y, g.rc_nav_add.w, 36, 10, g.C_GLASS_HOV);
+            }
+            icon_plus(s, sw / 2, g.rc_nav_add.y + 18, 6,
+                      in_rc(mx, my, g.rc_nav_add) ? g.C_ACCENT : g.C_TXT2);
+        }
+        fill_rect_a(s, 14, bot_top, sw - 28, 1, g.C_DIV, col_a(g.C_DIV) + 12);
+        g.rc_nav_bg    = Rect{ 14, g.H - 96, sw - 28, 38 };
+        g.rc_nav_theme = Rect{ 14, g.H - 52, sw - 28, 38 };
+        if (in_rc(mx, my, g.rc_nav_bg)) fill_round_rect_aa(s, g.rc_nav_bg.x, g.rc_nav_bg.y, g.rc_nav_bg.w, 38, 10, g.C_GLASS_HOV);
+        icon_wallpaper(s, sw / 2 - 8, g.rc_nav_bg.y + 11, 16, !g.bg_img_raw.empty() ? g.C_ACCENT : g.C_TXT2);
+        if (in_rc(mx, my, g.rc_nav_theme)) fill_round_rect_aa(s, g.rc_nav_theme.x, g.rc_nav_theme.y, g.rc_nav_theme.w, 38, 10, g.C_GLASS_HOV);
+        icon_theme_orb(s, sw / 2, g.rc_nav_theme.y + 19, 8, mix_col(g.C_TXT2, g.C_ACCENT, g.light_t));
+    }
 }
 
 void draw_library_header(int mx, int my) {
     Canvas* s = g.screen.get();
     Font* f = g.font.get();
-    const int lx = RAIL_W + 26;
+    const int lx = side_w() + 26;
     const int rx = g.W - 26;
     const bool lt = g.light_t > 0.5f;
 
-    std::string title = "音乐库";
-    if (g.lib_tab == TAB_FAV) title = "我喜欢的";
+    std::time_t now_t = std::time(nullptr);
+    std::tm tm_now{};
+#ifdef _WIN32
+    localtime_s(&tm_now, &now_t);
+#else
+    localtime_r(&now_t, &tm_now);
+#endif
+    static const char* wdays[7] = { "星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六" };
+    const int wd = (tm_now.tm_wday >= 0 && tm_now.tm_wday < 7) ? tm_now.tm_wday : 0;
+    char date_buf[64]{};
+    snprintf(date_buf, sizeof(date_buf), "%d月%d日  %s", tm_now.tm_mon + 1, tm_now.tm_mday, wdays[wd]);
+    draw_text_bold(s, f, 12.5f, lx, 15, g.C_TXT3, date_buf);
+
+    const char* greet = "晚上好";
+    if (tm_now.tm_hour >= 5 && tm_now.tm_hour < 12) greet = "早上好";
+    else if (tm_now.tm_hour >= 12 && tm_now.tm_hour < 14) greet = "中午好";
+    else if (tm_now.tm_hour >= 14 && tm_now.tm_hour < 19) greet = "下午好";
+
+    std::string heading = greet;
+    if (g.lib_tab == TAB_FAV) heading = "我喜欢的";
     else if (g.lib_tab == TAB_DIR && g.active_dir >= 0 && g.active_dir < static_cast<int>(g.scan_dirs.size())) {
-        title = basename_str(g.scan_dirs[g.active_dir]);
+        heading = basename_str(g.scan_dirs[g.active_dir]);
+        if (heading.empty()) heading = "音乐目录";
     }
+    const int title_max_w = std::max(120, rx - lx - 330);
+    draw_text_max_bold(s, f, 25.0f, lx, 36, g.C_TXT, heading.c_str(), title_max_w);
 
-    draw_text_max_bold(s, f, 25.5f, lx, 16, g.C_TXT, title.c_str(), 184);
-    const int tw = std::min(184, text_width_bold(f, 25.5f, title.c_str()));
-
-    char badge[48]{};
-    snprintf(badge, sizeof(badge), "%d 首歌曲", static_cast<int>(g.vis_idx.size()));
-    const int bw = text_width_bold(f, 13.0f, badge) + 24;
-    const int bx = lx + tw + 12;
-    fill_frosted_round_rect(s, bx, 21, bw, 28, 14, mix_col(g.C_SURFACE, g.C_ACCENT, 0.28f), 196, 2, glass_rim(54, 195));
-    stroke_round_rect_aa(s, bx, 21, bw, 28, 14, 1, g.C_ACCENT, 105);
-    draw_text_centered_bold(s, f, 13.0f, bx, bx + bw, 27, g.C_ACCENT, badge);
-
-    constexpr int fs_sz = 40;
-    g.rc_fs_btn = Rect{ rx - fs_sz, 15, fs_sz, fs_sz };
+    constexpr int ty = 24;
+    constexpr int bh = 36;
+    g.rc_fs_btn = Rect{ rx - bh, ty, bh, bh };
     {
         const bool hov = in_rc(mx, my, g.rc_fs_btn);
-        fill_frosted_round_rect(s, g.rc_fs_btn.x, g.rc_fs_btn.y, fs_sz, fs_sz, 14,
-                                g.C_SURFACE, hov ? 185 : (lt ? 156 : 132), 2, glass_rim(56, 210));
-        stroke_round_rect_aa(s, g.rc_fs_btn.x, g.rc_fs_btn.y, fs_sz, fs_sz, 14, 1, g.C_DIV, col_a(g.C_DIV) + 12);
+        fill_frosted_round_rect(s, g.rc_fs_btn.x, g.rc_fs_btn.y, bh, bh, 18,
+                                g.C_SURFACE, hov ? 188 : (lt ? 156 : 132), 2, glass_rim(56, 210));
+        stroke_round_rect_aa(s, g.rc_fs_btn.x, g.rc_fs_btn.y, bh, bh, 18, 1, g.C_DIV, col_a(g.C_DIV) + 12);
     }
-    icon_expand(s, g.rc_fs_btn.x + 12, g.rc_fs_btn.y + 12, 16, g.C_TXT2);
+    icon_expand(s, g.rc_fs_btn.x + 10, g.rc_fs_btn.y + 10, 16, g.C_TXT2);
 
     const bool has_bg = !g.bg_img_raw.empty();
     int right_anchor = g.rc_fs_btn.x;
     if (has_bg) {
-        constexpr int cl_sz = 38;
-        g.rc_bg_clear = Rect{ right_anchor - 8 - cl_sz, 16, cl_sz, cl_sz };
+        g.rc_bg_clear = Rect{ right_anchor - 8 - bh, ty, bh, bh };
         const bool hov_cl = in_rc(mx, my, g.rc_bg_clear);
-        fill_frosted_round_rect(s, g.rc_bg_clear.x, g.rc_bg_clear.y, cl_sz, cl_sz, 19,
+        fill_frosted_round_rect(s, g.rc_bg_clear.x, g.rc_bg_clear.y, bh, bh, 18,
                                 g.C_SURFACE, hov_cl ? 190 : (lt ? 156 : 132), 2, glass_rim(56, 210));
-        stroke_round_rect_aa(s, g.rc_bg_clear.x, g.rc_bg_clear.y, cl_sz, cl_sz, 19, 1, g.C_DIV, col_a(g.C_DIV) + 12);
-        icon_close_x(s, g.rc_bg_clear.x + cl_sz / 2, g.rc_bg_clear.y + cl_sz / 2, 4, hov_cl ? g.C_HEART : g.C_TXT2);
+        stroke_round_rect_aa(s, g.rc_bg_clear.x, g.rc_bg_clear.y, bh, bh, 18, 1, g.C_DIV, col_a(g.C_DIV) + 12);
+        icon_close_x(s, g.rc_bg_clear.x + bh / 2, g.rc_bg_clear.y + bh / 2, 4, hov_cl ? g.C_HEART : g.C_TXT2);
         right_anchor = g.rc_bg_clear.x;
     }
 
-    const int bg_w = text_width_bold(f, 13.5f, "背景") + 42;
-    g.rc_bg_btn = Rect{ right_anchor - (has_bg ? 6 : 10) - bg_w, 16, bg_w, 38 };
+    const int bg_w = text_width_bold(f, 13.0f, "背景") + 38;
+    g.rc_bg_btn = Rect{ right_anchor - (has_bg ? 6 : 8) - bg_w, ty, bg_w, bh };
     {
         const bool hov = in_rc(mx, my, g.rc_bg_btn);
-        fill_frosted_round_rect(s, g.rc_bg_btn.x, g.rc_bg_btn.y, bg_w, 38, 19,
+        fill_frosted_round_rect(s, g.rc_bg_btn.x, g.rc_bg_btn.y, bg_w, bh, 18,
                                 has_bg ? mix_col(g.C_SURFACE, g.C_ACCENT, 0.24f) : g.C_SURFACE,
-                                has_bg ? 196 : (hov ? 185 : (lt ? 156 : 132)), 2, glass_rim(56, 210));
-        stroke_round_rect_aa(s, g.rc_bg_btn.x, g.rc_bg_btn.y, bg_w, 38, 19, 1,
+                                has_bg ? 196 : (hov ? 188 : (lt ? 156 : 132)), 2, glass_rim(56, 210));
+        stroke_round_rect_aa(s, g.rc_bg_btn.x, g.rc_bg_btn.y, bg_w, bh, 18, 1,
                              has_bg ? g.C_ACCENT : g.C_DIV, has_bg ? 135 : (col_a(g.C_DIV) + 12));
     }
-    icon_wallpaper(s, g.rc_bg_btn.x + 12, g.rc_bg_btn.y + 11, 16, has_bg ? g.C_ACCENT : g.C_TXT2);
-    draw_text_bold(s, f, 13.5f, g.rc_bg_btn.x + 33, 26, has_bg ? g.C_ACCENT : g.C_TXT2, "背景");
+    icon_wallpaper(s, g.rc_bg_btn.x + 11, g.rc_bg_btn.y + 10, 16, has_bg ? g.C_ACCENT : g.C_TXT2);
+    draw_text_bold(s, f, 13.0f, g.rc_bg_btn.x + 31, ty + 9, has_bg ? g.C_ACCENT : g.C_TXT2, "背景");
 
-    const char* view_lbl = g.view_grid ? "网格视图" : "列表视图";
-    const int vw = text_width_bold(f, 13.5f, view_lbl) + 28;
-    g.rc_view_pill = Rect{ g.rc_bg_btn.x - 10 - vw, 16, vw, 38 };
+    g.rc_view_pill = Rect{ g.rc_bg_btn.x - 8 - bh, ty, bh, bh };
     {
         const bool hov = in_rc(mx, my, g.rc_view_pill);
-        fill_frosted_round_rect(s, g.rc_view_pill.x, g.rc_view_pill.y, vw, 38, 19,
-                                g.C_SURFACE, hov ? 185 : (lt ? 156 : 132), 2, glass_rim(56, 210));
-        stroke_round_rect_aa(s, g.rc_view_pill.x, g.rc_view_pill.y, vw, 38, 19, 1, g.C_DIV, col_a(g.C_DIV) + 12);
+        fill_frosted_round_rect(s, g.rc_view_pill.x, g.rc_view_pill.y, bh, bh, 18,
+                                g.C_SURFACE, hov ? 188 : (lt ? 156 : 132), 2, glass_rim(56, 210));
+        stroke_round_rect_aa(s, g.rc_view_pill.x, g.rc_view_pill.y, bh, bh, 18, 1, g.C_DIV, col_a(g.C_DIV) + 12);
     }
-    draw_text_centered_bold(s, f, 13.5f, g.rc_view_pill.x, g.rc_view_pill.x + vw, 26, g.C_TXT2, view_lbl);
+    if (g.view_grid) icon_list_rows(s, g.rc_view_pill.x + 10, g.rc_view_pill.y + 10, 16, g.C_TXT2);
+    else             icon_library_grid(s, g.rc_view_pill.x + 10, g.rc_view_pill.y + 10, 16, g.C_TXT2);
 
     const char* sort_lbls[4] = { "排序: 默认", "排序: 歌名", "排序: 歌手", "排序: 专辑" };
     const char* slbl = sort_lbls[g.sort_mode & 3];
-    const int sw = text_width_bold(f, 13.5f, slbl) + 28;
-    g.rc_sort_btn = Rect{ g.rc_view_pill.x - 10 - sw, 16, sw, 38 };
+    const int sw_btn = text_width_bold(f, 13.0f, slbl) + 24;
+    g.rc_sort_btn = Rect{ g.rc_view_pill.x - 8 - sw_btn, ty, sw_btn, bh };
     {
         const bool hov = in_rc(mx, my, g.rc_sort_btn);
-        fill_frosted_round_rect(s, g.rc_sort_btn.x, g.rc_sort_btn.y, sw, 38, 19,
-                                g.C_SURFACE, hov ? 185 : (lt ? 156 : 132), 2, glass_rim(56, 210));
-        stroke_round_rect_aa(s, g.rc_sort_btn.x, g.rc_sort_btn.y, sw, 38, 19, 1, g.C_DIV, col_a(g.C_DIV) + 12);
+        fill_frosted_round_rect(s, g.rc_sort_btn.x, g.rc_sort_btn.y, sw_btn, bh, 18,
+                                g.C_SURFACE, hov ? 188 : (lt ? 156 : 132), 2, glass_rim(56, 210));
+        stroke_round_rect_aa(s, g.rc_sort_btn.x, g.rc_sort_btn.y, sw_btn, bh, 18, 1, g.C_DIV, col_a(g.C_DIV) + 12);
     }
-    draw_text_centered_bold(s, f, 13.5f, g.rc_sort_btn.x, g.rc_sort_btn.x + sw, 26, g.C_TXT2, slbl);
-
-    const int s_left = bx + bw + 16;
-    const int s_right = g.rc_sort_btn.x - 16;
-    if (s_right - s_left >= 140) {
-        const int sbox_w = std::min(430, s_right - s_left);
-        const int sbox_x = s_left + (s_right - s_left - sbox_w) / 2;
-        g.rc_search_box = Rect{ sbox_x, 14, sbox_w, 42 };
-        fill_frosted_round_rect(s, g.rc_search_box.x, g.rc_search_box.y, g.rc_search_box.w, g.rc_search_box.h, 21,
-                                g.C_SURFACE, g.search_focused ? 205 : (lt ? 168 : 142), 2,
-                                g.search_focused ? glass_rim(100, 235) : glass_rim(58, 210));
-        stroke_round_rect_aa(s, g.rc_search_box.x, g.rc_search_box.y, g.rc_search_box.w, g.rc_search_box.h, 21,
-                             g.search_focused ? 2 : 1, g.search_focused ? g.C_ACCENT : g.C_DIV,
-                             g.search_focused ? 215 : (col_a(g.C_DIV) + 18));
-        icon_search(s, g.rc_search_box.x + 20, g.rc_search_box.y + 20, 6,
-                    g.search_focused ? g.C_ACCENT : g.C_TXT3);
-        const int text_max = g.rc_search_box.w - 76;
-        if (!g.search_q.empty()) {
-            draw_text_max_bold(s, f, 14.5f, g.rc_search_box.x + 38, g.rc_search_box.y + 12,
-                               g.C_TXT, g.search_q.c_str(), text_max);
-            g.rc_search_clear = Rect{ g.rc_search_box.x + g.rc_search_box.w - 38, g.rc_search_box.y + 3, 36, 36 };
-            fill_round_rect_aa(s, g.rc_search_clear.x + 4, g.rc_search_clear.y + 4, 28, 28, 14,
-                               in_rc(mx, my, g.rc_search_clear) ? g.C_GLASS_ACT : g.C_GLASS);
-            draw_text_centered_bold(s, f, 14.5f, g.rc_search_clear.x, g.rc_search_clear.x + 36,
-                                    g.rc_search_clear.y + 9, g.C_TXT2, "x");
-        } else {
-            draw_text_max_bold(s, f, 13.5f, g.rc_search_box.x + 38, g.rc_search_box.y + 12,
-                               g.C_TXT3, "搜索歌曲、歌手、专辑...", text_max);
-        }
-    }
-
-    constexpr int cy = 66;
-    int cx = lx;
-    const char* chips[5] = { "全部", "已喜欢", "FLAC 无损", "MP3", "其他格式" };
-    for (int i = 0; i < 5; ++i) {
-        const int cw = text_width_bold(f, 13.5f, chips[i]) + (g.fmt_filter == i ? 38 : 28);
-        g.rc_filt_chips[i] = Rect{ cx, cy, cw, 36 };
-        const bool act = (g.fmt_filter == i);
-        const bool hov = in_rc(mx, my, g.rc_filt_chips[i]);
-        if (act) {
-            fill_frosted_round_rect(s, cx, cy, cw, 36, 18, mix_col(g.C_SURFACE, g.C_ACCENT, 0.32f), 202, 1, glass_rim(66, 215));
-            stroke_round_rect_aa(s, cx, cy, cw, 36, 18, 1, g.C_ACCENT, 145);
-            fill_ellipse_aa(s, cx + 14, cy + 18, 4, 4, g.C_ACCENT);
-            draw_text_bold(s, f, 13.5f, cx + 24, cy + 9, g.C_ACCENT, chips[i]);
-        } else {
-            fill_frosted_round_rect(s, cx, cy, cw, 36, 18, g.C_SURFACE, hov ? 185 : (lt ? 156 : 130), 1, glass_rim(50, 200));
-            stroke_round_rect_aa(s, cx, cy, cw, 36, 18, 1, g.C_DIV, col_a(g.C_DIV) + 12);
-            draw_text_centered_bold(s, f, 13.5f, cx, cx + cw, cy + 9, hov ? g.C_TXT : g.C_TXT2, chips[i]);
-        }
-        cx += cw + 10;
-    }
-
-    if (!g.scan_dirs.empty()) {
-        std::string dlabel = "全部目录";
-        if (g.lib_tab == TAB_DIR && g.active_dir >= 0 && g.active_dir < static_cast<int>(g.scan_dirs.size())) {
-            dlabel = "目录: " + basename_str(g.scan_dirs[g.active_dir]);
-        }
-        const int dw = text_width_bold(f, 13.5f, dlabel.c_str()) + 28;
-        if (rx - dw > cx + 10) {
-            g.rc_dir_chip = Rect{ rx - dw, cy, dw, 36 };
-            const bool act = (g.lib_tab == TAB_DIR);
-            const bool hov = in_rc(mx, my, g.rc_dir_chip);
-            fill_frosted_round_rect(s, g.rc_dir_chip.x, g.rc_dir_chip.y, dw, 36, 18,
-                                    act ? mix_col(g.C_SURFACE, g.C_ACCENT, 0.28f) : g.C_SURFACE,
-                                    act ? 202 : (hov ? 185 : (lt ? 156 : 130)), 1, glass_rim(52, 205));
-            stroke_round_rect_aa(s, g.rc_dir_chip.x, g.rc_dir_chip.y, dw, 36, 18, 1, act ? g.C_ACCENT : g.C_DIV, act ? 145 : (col_a(g.C_DIV) + 12));
-            draw_text_centered_bold(s, f, 13.5f, g.rc_dir_chip.x, g.rc_dir_chip.x + dw, cy + 9,
-                                    act ? g.C_ACCENT : g.C_TXT2, dlabel.c_str());
-        }
-    }
+    draw_text_centered_bold(s, f, 13.0f, g.rc_sort_btn.x, g.rc_sort_btn.x + sw_btn, ty + 9, g.C_TXT2, slbl);
 }
 
-void draw_hero_card(Rect hero, int mx, int my) {
-    if (hero.w < 240 || hero.h < 150) return;
+void draw_banner(Rect ban, int mx, int my) {
+    if (ban.w < 240 || ban.h < 120) return;
     Canvas* s = g.screen.get();
     Font* f = g.font.get();
     const bool lt = g.light_t > 0.5f;
-    g.rc_hero_card = hero;
-    constexpr int r = 24;
-    fill_round_rect_shadow(s, hero.x, hero.y + 4, hero.w, hero.h, r, theme_shadow(84));
-    fill_frosted_round_rect(s, hero.x, hero.y, hero.w, hero.h, r, g.C_HERO_L, lt ? 168 : 150, 2, glass_rim(62, 215));
+    g.rc_hero_card = ban;
+    constexpr int r = 18;
 
-    const int split_x = hero.x + static_cast<int>(hero.w * 0.65f);
-    const float wave_amp = clampf(static_cast<float>(hero.h) * 0.032f, 6.0f, 10.0f);
-    fill_m3_wave_panel_right(s, hero.x, hero.y, hero.w, hero.h, r,
-                             split_x, wave_amp, 56.0f, g.wave_phase * 0.55f,
-                             g.C_HERO_R, static_cast<uint8_t>(182 + 12 * g.light_t));
-    stroke_round_rect_aa(s, hero.x, hero.y, hero.w, hero.h, r, 1, g.C_ACCENT, 88);
+    fill_round_rect_shadow(s, ban.x, ban.y + 4, ban.w, ban.h, r, theme_shadow(76));
+    fill_frosted_round_rect(s, ban.x, ban.y, ban.w, ban.h, r, g.C_HERO_L, lt ? 204 : 194, 2, glass_rim(58, 210));
+
+    canvas_set_clip(s, ban.x + r, ban.y, ban.x + ban.w - r, ban.y + ban.h);
+    const int x0 = ban.x + r;
+    const int x1 = ban.x + ban.w - r;
+    constexpr int strips = 48;
+    for (int i = 0; i < strips; ++i) {
+        const float u = static_cast<float>(i + 1) / static_cast<float>(strips);
+        const float sm = u * u * (3.0f - 2.0f * u);
+        const int sx0 = x0 + ((x1 - x0) * i) / strips;
+        const int sx1 = x0 + ((x1 - x0) * (i + 1)) / strips;
+        const uint8_t a = static_cast<uint8_t>(sm * (lt ? 78.0f : 86.0f));
+        if (a > 0 && sx1 > sx0) fill_rect_a(s, sx0, ban.y, sx1 - sx0, ban.h, g.C_HERO_R, a);
+    }
+    canvas_reset_clip(s);
+    stroke_round_rect_aa(s, ban.x, ban.y, ban.w, ban.h, r, 1, mix_col(g.C_DIV, g.C_ACCENT, 0.32f), lt ? 135 : 70);
 
     int show_idx = g.playing_idx;
     if (show_idx < 0 && !g.vis_idx.empty()) show_idx = g.vis_idx[0];
-
     const bool paused = audio_paused() || g.playing_idx < 0;
-    const double dur = g.playing_idx >= 0 ? audio_duration() : (show_idx >= 0 ? g.tracks[show_idx].dur : 0.0);
-    const double pos = g.playing_idx >= 0 ? (g.scrub_drag ? g.scrub_sec : audio_position()) : 0.0;
-    const float frac = (dur > 0.1) ? clampf(static_cast<float>(pos / dur), 0.0f, 1.0f) : 0.0f;
 
-    const int right_mid_x = split_x + (hero.x + hero.w - split_x) / 2;
-    const int star_cy = hero.y + hero.h / 2 - 12;
-    const int star_r = std::clamp(hero.h / 5, 28, 46);
-    g.rc_hero_play = Rect{ right_mid_x - star_r - 8, star_cy - star_r - 8, (star_r + 8) * 2, (star_r + 8) * 2 };
+    const int lx = ban.x + 26;
+    const int show_mid = (ban.w >= 680) ? 1 : 0;
+    const int left_max_w = std::max(140, show_mid ? static_cast<int>(ban.w * 0.36f) : (ban.w - 240));
+
+    const char* eyebrow = (g.playing_idx >= 0 && !paused) ? "正在播放" : (g.playing_idx >= 0 ? "已暂停" : "每日精选 · 随时聆听");
+    draw_text_max_bold(s, f, 12.5f, lx, ban.y + 22, g.C_ACCENT, eyebrow, left_max_w);
+
+    const char* ttl = g.playing_idx >= 0 ? g.p_title.c_str()
+                                         : (show_idx >= 0 ? g.tracks[show_idx].title.c_str() : "添加音乐目录开始聆听");
+    std::string sub_str;
+    if (g.playing_idx >= 0) {
+        sub_str = !g.p_artist.empty() ? g.p_artist : "本地音乐";
+        if (!g.p_album.empty()) { sub_str += " · "; sub_str += g.p_album; }
+    } else if (show_idx >= 0) {
+        sub_str = !g.tracks[show_idx].artist.empty() ? g.tracks[show_idx].artist : "本地音乐";
+        if (!g.tracks[show_idx].album.empty()) { sub_str += " · "; sub_str += g.tracks[show_idx].album; }
+    } else {
+        sub_str = "支持 FLAC / WAV / MP3 / OGG / OPUS / M4A";
+    }
+    draw_text_max_bold(s, f, 23.0f, lx, ban.y + 46, g.C_TXT, ttl, left_max_w);
+    draw_text_max_bold(s, f, 13.0f, lx, ban.y + 80, g.C_TXT2, sub_str.c_str(), left_max_w);
+
+    g.rc_hero_play = Rect{ lx, ban.y + 118, 108, 38 };
     const bool hov_play = in_rc(mx, my, g.rc_hero_play);
-    const int draw_r = hov_play ? star_r + 3 : star_r;
-    fill_m3_scallop(s, right_mid_x, star_cy, draw_r, 10, g.scallop_rot,
-                    hov_play ? mix_col(g.C_ACCENT, COL(255, 255, 255, 255), 0.16f) : g.C_ACCENT);
-    if (!paused && g.playing_idx >= 0) icon_pause(s, right_mid_x, star_cy, static_cast<int>(draw_r * 0.34f), g.C_ON_ACCENT);
-    else                               icon_play(s, right_mid_x + 2, star_cy, static_cast<int>(draw_r * 0.36f), g.C_ON_ACCENT);
+    fill_round_rect_shadow_fast(s, g.rc_hero_play.x, g.rc_hero_play.y + 2, g.rc_hero_play.w, g.rc_hero_play.h, 19, theme_shadow(78));
+    fill_round_rect_aa(s, g.rc_hero_play.x, g.rc_hero_play.y, g.rc_hero_play.w, g.rc_hero_play.h, 19,
+                       hov_play ? mix_col(g.C_ACCENT, COL(255, 255, 255, 255), 0.14f) : g.C_ACCENT);
+    if (!paused && g.playing_idx >= 0) {
+        icon_pause(s, g.rc_hero_play.x + 28, g.rc_hero_play.y + 19, 10, g.C_ON_ACCENT);
+    } else {
+        icon_play(s, g.rc_hero_play.x + 29, g.rc_hero_play.y + 19, 10, g.C_ON_ACCENT);
+    }
+    draw_text_bold(s, f, 14.0f, g.rc_hero_play.x + 48, g.rc_hero_play.y + 10, g.C_ON_ACCENT,
+                   (!paused && g.playing_idx >= 0) ? "暂停" : "播放");
 
-    const char* action_lbl = (g.playing_idx >= 0 && !paused) ? "点击暂停" : (g.playing_idx >= 0 ? "继续播放" : "开始聆听");
-    draw_text_centered_bold(s, f, 14.0f, split_x + 6, hero.x + hero.w - 6, star_cy + star_r + 12, g.C_ACCENT, action_lbl);
+    const int nvis = static_cast<int>(g.vis_idx.size());
+    if (show_mid && nvis > 0) {
+        const int mid_x = ban.x + static_cast<int>(ban.w * 0.42f);
+        const int cov_left = ban.x + ban.w - 208;
+        const int mid_w = std::max(120, cov_left - mid_x - 20);
+        int start_pos = 0;
+        if (g.playing_idx >= 0) {
+            for (int p = 0; p < nvis; ++p) {
+                if (g.vis_idx[p] == g.playing_idx) { start_pos = (p + 1) % nvis; break; }
+            }
+        }
+        const int cnt = std::min(3, nvis);
+        for (int i = 0; i < cnt; ++i) {
+            const int ti = g.vis_idx[(start_pos + i) % nvis];
+            g.banner_next_idx[i] = ti;
+            const int ry = ban.y + 30 + i * 44;
+            g.rc_banner_next[i] = Rect{ mid_x - 6, ry, mid_w + 12, 38 };
+            const bool rhov = in_rc(mx, my, g.rc_banner_next[i]);
+            if (rhov) fill_round_rect_aa(s, g.rc_banner_next[i].x, ry, g.rc_banner_next[i].w, 38, 10, g.C_GLASS_HOV);
+            char nb[8]{};
+            std::snprintf(nb, sizeof(nb), "%02d", i + 1);
+            draw_text_bold(s, f, 13.0f, mid_x, ry + 10, rhov ? g.C_ACCENT : g.C_TXT3, nb);
+            draw_text_max_bold(s, f, 13.5f, mid_x + 26, ry + 2, rhov ? g.C_ACCENT : g.C_TXT,
+                               g.tracks[ti].title.c_str(), mid_w - 28);
+            const char* na = !g.tracks[ti].artist.empty() ? g.tracks[ti].artist.c_str() : g.tracks[ti].fmt;
+            draw_text_max_bold(s, f, 11.5f, mid_x + 26, ry + 20, g.C_TXT2, na, mid_w - 28);
+        }
+    }
 
-    const int lx = hero.x + 20;
-    const int rx_lim = split_x - static_cast<int>(wave_amp) - 14;
-    const char* pill_txt = (g.playing_idx >= 0 && !paused) ? "正在播放" : (g.playing_idx >= 0 ? "已暂停" : "精选曲目");
-    const int pill_w = text_width_bold(f, 13.0f, pill_txt) + 28;
-    fill_round_rect_aa_a(s, lx, hero.y + 15, pill_w, 25, 12, mix_col(g.C_SURFACE, g.C_ACCENT, 0.26f), 205);
-    fill_ellipse_aa(s, lx + 12, hero.y + 27, 3, 3, g.C_ACCENT);
-    draw_text_bold(s, f, 13.0f, lx + 20, hero.y + 19, g.C_ACCENT, pill_txt);
+    constexpr int cov_sz = 136;
+    const int cov_x = ban.x + ban.w - 24 - cov_sz - 34;
+    const int cov_y = ban.y + (ban.h - cov_sz) / 2;
+    const int disc_cx = cov_x + cov_sz - 14;
+    const int disc_cy = ban.y + ban.h / 2;
+    constexpr int disc_r = 56;
+    fill_circle_a(s, disc_cx, disc_cy, disc_r, COL(18, 22, 28, 255), 235);
+    stroke_circle_aa(s, disc_cx, disc_cy, disc_r - 12, 1, COL(255, 255, 255, 255), 26);
+    stroke_circle_aa(s, disc_cx, disc_cy, disc_r - 24, 1, COL(255, 255, 255, 255), 20);
+    fill_circle_a(s, disc_cx, disc_cy, 18, g.C_ACCENT, 210);
+    fill_circle_a(s, disc_cx, disc_cy, 6, COL(18, 22, 28, 255), 240);
 
-    const int cov_sz = std::clamp(static_cast<int>(hero.h * 0.36f), 72, 106);
-    const int cov_y = hero.y + 46;
-    g.rc_hero_cov = Rect{ lx, cov_y, cov_sz, cov_sz };
+    g.rc_hero_cov = Rect{ cov_x, cov_y, cov_sz, cov_sz };
     const uint32_t* hc = nullptr;
     int hsrc_sz = COVER_SRC_SZ;
     if (g.playing_idx >= 0 && g.cover_ready && !g.cover_src.empty()) {
@@ -1894,54 +2028,70 @@ void draw_hero_card(Rect hero, int mx, int my) {
     } else if (!g.poster_hero.empty()) {
         hc = g.poster_hero.data();
     }
+    fill_round_rect_shadow(s, cov_x, cov_y + 4, cov_sz, cov_sz, 14, theme_shadow(92));
+    if (hc) blit_rgb_round_fit(s, cov_x, cov_y, cov_sz, cov_sz, hc, hsrc_sz, hsrc_sz, 14);
+    else    fill_round_rect_aa(s, cov_x, cov_y, cov_sz, cov_sz, 14, g.C_GLASS_ACT);
+    stroke_round_rect_aa(s, cov_x, cov_y, cov_sz, cov_sz, 14, 1, g.C_DIV, col_a(g.C_DIV) + 16);
+}
 
-    fill_round_rect_shadow(s, lx, cov_y + 3, cov_sz, cov_sz, 16, 75);
-    if (hc) blit_rgb_round_fit(s, lx, cov_y, cov_sz, cov_sz, hc, hsrc_sz, hsrc_sz, 16);
-    else    fill_round_rect_aa(s, lx, cov_y, cov_sz, cov_sz, 16, g.C_GLASS_ACT);
-    stroke_round_rect_aa(s, lx, cov_y, cov_sz, cov_sz, 16, 1, g.C_DIV, col_a(g.C_DIV) + 14);
+void draw_section_bar(int x, int y, int w, int min_vis_y, int max_vis_y, int mx, int my) {
+    if (y + SECTION_H < min_vis_y || y > max_vis_y) return;
+    Canvas* s = g.screen.get();
+    Font* f = g.font.get();
+    const bool lt = g.light_t > 0.5f;
 
-    const int tx = lx + cov_sz + 16;
-    const int tmax = std::max(60, rx_lim - tx);
-    const char* ttl = g.playing_idx >= 0 ? g.p_title.c_str() : (show_idx >= 0 ? g.tracks[show_idx].title.c_str() : "拖入音乐或点击导入");
-    const char* art = g.playing_idx >= 0 ? (!g.p_artist.empty() ? g.p_artist.c_str() : "本地音乐")
-                                         : (show_idx >= 0 && !g.tracks[show_idx].artist.empty() ? g.tracks[show_idx].artist.c_str() : "Sir\xC3\xA8ne");
-    const char* fmt = g.playing_idx >= 0 ? g.p_fmt : (show_idx >= 0 ? g.tracks[show_idx].fmt : "HI-RES");
+    std::string sec_prefix = "全部歌曲";
+    if (g.lib_tab == TAB_FAV) sec_prefix = "我喜欢的";
+    else if (g.lib_tab == TAB_DIR && g.active_dir >= 0 && g.active_dir < static_cast<int>(g.scan_dirs.size())) {
+        sec_prefix = basename_str(g.scan_dirs[g.active_dir]);
+        if (sec_prefix.empty()) sec_prefix = "音乐目录";
+    }
+    char sec_title[96]{};
+    std::snprintf(sec_title, sizeof(sec_title), "%s · %d 首", sec_prefix.c_str(), static_cast<int>(g.vis_idx.size()));
 
-    draw_text_max_bold(s, f, 20.5f, tx, cov_y + 3, g.C_TXT, ttl, tmax);
-    const int fw = text_width_bold(f, 12.5f, fmt) + 18;
-    fill_round_rect_aa(s, tx, cov_y + 35, fw, 22, 7, g.C_GLASS_ACT);
-    draw_text_centered_bold(s, f, 12.5f, tx, tx + fw, cov_y + 38, g.C_TXT2, fmt);
-    if (tmax > fw + 16) draw_text_max_bold(s, f, 14.0f, tx + fw + 8, cov_y + 37, g.C_TXT2, art, tmax - fw - 8);
-
-    const int bot_area_y = hero.y + hero.h - 70;
-    char pct[16]{}, tm[48]{}, b_pos[20]{}, b_dur[20]{};
-    snprintf(pct, sizeof(pct), "%d%%", static_cast<int>(frac * 100.0f + 0.5f));
-    fmt_time(pos, b_pos, sizeof(b_pos));
-    fmt_time(dur, b_dur, sizeof(b_dur));
-    snprintf(tm, sizeof(tm), "%s / %s", b_pos, b_dur);
-
-    draw_text_bold(s, f, 30.0f, lx, bot_area_y - 2, g.C_TXT, pct);
-    const int pw = text_width_bold(f, 30.0f, pct);
-    draw_text_bold(s, f, 13.5f, lx + pw + 14, bot_area_y + 11, g.C_TXT2, tm);
-
-    const int hprog_y = hero.y + hero.h - 22;
-    g.ui_hpx0 = lx + 4;
-    g.ui_hpx1 = rx_lim - 4;
-    if (g.ui_hpx1 > g.ui_hpx0 + 40) {
-        g.rc_hero_prog = Rect{ g.ui_hpx0 - 10, hprog_y - 16, (g.ui_hpx1 - g.ui_hpx0) + 20, 32 };
-        draw_m3_water_progress(s, g.ui_hpx0, g.ui_hpx1, hprog_y, frac,
-                               g.wave_phase, 9, 1, g.C_ACCENT, g.C_TRACK_BG);
+    const char* chips[5] = { "全部", "喜欢", "FLAC", "MP3", "其他" };
+    int chip_w[5]{};
+    int total_cw = 0;
+    for (int i = 0; i < 5; ++i) {
+        chip_w[i] = text_width_bold(f, 12.5f, chips[i]) + 22;
+        total_cw += chip_w[i] + (i > 0 ? 8 : 0);
+    }
+    const int title_w = text_width_bold(f, 18.0f, sec_title);
+    int cx = x + w - total_cw;
+    if (cx < x + title_w + 24) cx = x + std::min(w / 2, title_w + 24);
+    const int title_max_w = std::max(120, cx - x - 14);
+    draw_text_max_bold(s, f, 18.0f, x, y + 10, g.C_TXT, sec_title, title_max_w);
+    const int cy = y + 7;
+    const bool can_hit = (cy + 30 > min_vis_y && cy < max_vis_y);
+    for (int i = 0; i < 5; ++i) {
+        if (cx + chip_w[i] > x + w) break;
+        const Rect rc{ cx, cy, chip_w[i], 30 };
+        if (can_hit) g.rc_filt_chips[i] = rc;
+        const bool act = (g.fmt_filter == i);
+        const bool hov = can_hit && in_rc(mx, my, rc);
+        if (act) {
+            fill_frosted_round_rect(s, rc.x, rc.y, rc.w, rc.h, 15, mix_col(g.C_SURFACE, g.C_ACCENT, 0.30f),
+                                    202, 1, glass_rim(62, 210));
+            stroke_round_rect_aa(s, rc.x, rc.y, rc.w, rc.h, 15, 1, g.C_ACCENT, 145);
+            draw_text_centered_bold(s, f, 12.5f, rc.x, rc.x + rc.w, rc.y + 7, g.C_ACCENT, chips[i]);
+        } else {
+            fill_frosted_round_rect(s, rc.x, rc.y, rc.w, rc.h, 15, g.C_SURFACE,
+                                    hov ? 186 : (lt ? 156 : 130), 1, glass_rim(48, 195));
+            stroke_round_rect_aa(s, rc.x, rc.y, rc.w, rc.h, 15, 1, g.C_DIV, col_a(g.C_DIV) + 12);
+            draw_text_centered_bold(s, f, 12.5f, rc.x, rc.x + rc.w, rc.y + 7, hov ? g.C_TXT : g.C_TXT2, chips[i]);
+        }
+        cx += chip_w[i] + 8;
     }
 }
 
 void draw_grid_view(int mx, int my) {
     Canvas* s = g.screen.get();
     Font* f = g.font.get();
-    constexpr int lx = RAIL_W + 26;
-    constexpr int top_y = 114;
+    const int lx = side_w() + 26;
+    constexpr int top_y = HEADER_H;
     const int vh = list_vis_h();
-    int cols, gap, cw, ch, herow;
-    calc_grid_metrics(cols, gap, cw, ch, herow);
+    int cols, gap, cw, ch;
+    calc_grid_metrics(cols, gap, cw, ch);
 
     g.ui_list_x0 = lx;
     g.ui_list_x1 = lx + g.grid_w;
@@ -1949,20 +2099,20 @@ void draw_grid_view(int mx, int my) {
     g.ui_list_y1 = top_y + vh;
 
     canvas_set_clip(s, lx - 8, top_y, lx + g.grid_w + 10, top_y + vh);
-    const int start_y = top_y + 8 - static_cast<int>(g.scroll_px);
-
-    if (start_y + ch > top_y - 16 && start_y < top_y + vh + 16) {
-        draw_hero_card(Rect{ lx, start_y, herow, ch }, mx, my);
+    const int scroll_y = static_cast<int>(g.scroll_px);
+    const int ban_y = top_y + 4 - scroll_y;
+    if (ban_y + BANNER_H > top_y - 8 && ban_y < top_y + vh + 8) {
+        draw_banner(Rect{ lx, ban_y, g.grid_w, BANNER_H }, mx, my);
     }
+    const int sec_y = ban_y + BANNER_H + 14;
+    draw_section_bar(lx, sec_y, g.grid_w, top_y, top_y + vh, mx, my);
 
+    const int start_y = top_y + ITEMS_TOP_OFF - scroll_y;
     int next_hov = -1;
-    const int row0_rem = cols >= 3 ? (cols - 2) : 0;
     const int nvis = static_cast<int>(g.vis_idx.size());
-    constexpr int cov_pad = 6;
-    const int cov_sz = cw - cov_pad * 2;
     const int cov_px = (std::fabs(s->s - 1.0f) < 0.001f)
-                       ? cov_sz
-                       : std::max(1, static_cast<int>(std::floor(static_cast<float>(cov_sz) * s->s + 0.5f)));
+                       ? cw
+                       : std::max(1, static_cast<int>(std::floor(static_cast<float>(cw) * s->s + 0.5f)));
     if (!g.poster_hero.empty() &&
         (g.poster_card_px != cov_px || g.poster_card_cache.size() != static_cast<size_t>(cov_px) * cov_px)) {
         g.poster_card_cache.resize(static_cast<size_t>(cov_px) * cov_px);
@@ -1971,16 +2121,14 @@ void draw_grid_view(int mx, int my) {
     }
     int cov_builds = 0;
 
+    if (nvis == 0) {
+        draw_text_centered_bold(s, f, 15.0f, lx, lx + g.grid_w, start_y + 48, g.C_TXT3,
+                                "暂无曲目，请从左侧“+”添加本地音乐目录");
+    }
+
     for (int p = 0; p < nvis; ++p) {
-        int row, col;
-        if (cols >= 3 && p < row0_rem) {
-            row = 0;
-            col = 2 + p;
-        } else {
-            const int rem_idx = p - row0_rem;
-            row = 1 + rem_idx / cols;
-            col = rem_idx % cols;
-        }
+        const int row = p / cols;
+        const int col = p % cols;
         const int x = lx + col * (cw + gap);
         const int y = start_y + row * (ch + gap);
         if (y + ch < top_y - 16 || y > top_y + vh + 16) continue;
@@ -1988,26 +2136,15 @@ void draw_grid_view(int mx, int my) {
         const int idx = g.vis_idx[p];
         Track& tr = g.tracks[idx];
         const Rect card_rc{ x, y, cw, ch };
-        const bool in_view = in_rect(mx, my, lx - 4, top_y, g.grid_w + 8, vh);
+        const bool in_view = in_rect(mx, my, lx - 4, top_y, g.grid_w + 8, vh - DOCK_CLEAR + 16);
         const bool is_hov = in_view && in_rc(mx, my, card_rc);
         if (is_hov) next_hov = idx;
 
-        const int lift = (is_hov && g.hov_card_idx == idx) ? static_cast<int>(g.hov_card_t * 5.0f + 0.5f) : 0;
+        const int lift = (is_hov && g.hov_card_idx == idx) ? static_cast<int>(g.hov_card_t * 4.0f + 0.5f) : 0;
         const int cy = y - lift;
         const bool is_play = (idx == g.playing_idx);
 
-        fill_round_rect_shadow_fast(s, x, cy + 4, cw, ch, 18, theme_shadow(is_play ? 110 : 64));
-        const uint32_t card_tint = is_play ? mix_col(g.C_SURFACE, g.C_ACCENT, 0.16f)
-                                           : (is_hov ? mix_col(g.C_SURFACE, 0xFFFFFFFFu, 0.05f * (1.0f - g.light_t)) : g.C_SURFACE);
-        const uint8_t card_alpha = is_play ? static_cast<uint8_t>(180 + 18 * g.light_t)
-                                           : (is_hov ? static_cast<uint8_t>(168 + 20 * g.light_t)
-                                                     : static_cast<uint8_t>(142 + 34 * g.light_t));
-        const int cx0 = x + cov_pad;
-        const int cy0 = cy + cov_pad;
-        fill_frosted_round_rect_skip(s, x, cy, cw, ch, 18,
-                                     cx0, cy0 + 14, cov_sz, std::max(0, cov_sz - 28),
-                                     card_tint, card_alpha, (is_play || is_hov) ? 2 : 0,
-                                     is_play ? glass_rim(96, 230) : glass_rim(44, 195));
+        fill_round_rect_shadow_fast(s, x, cy + 3, cw, cw, 12, theme_shadow(is_play ? 105 : 64));
 
         const uint32_t* art = nullptr;
         int art_sz = COVER_SRC_SZ;
@@ -2033,54 +2170,56 @@ void draw_grid_view(int mx, int my) {
             art = g.poster_hero.data();
             art_sz = COVER_SRC_SZ;
         }
-        if (art) blit_rgb_round_fit(s, cx0, cy0, cov_sz, cov_sz, art, art_sz, art_sz, 14);
-        else     fill_round_rect_aa(s, cx0, cy0, cov_sz, cov_sz, 14, g.C_GLASS_ACT);
+        if (art) blit_rgb_round_fit(s, x, cy, cw, cw, art, art_sz, art_sz, 12);
+        else     fill_round_rect_aa(s, x, cy, cw, cw, 12, g.C_GLASS_ACT);
 
-        if (tr.fmt_w < 0) tr.fmt_w = text_width_bold(f, 12.0f, tr.fmt);
-        const int fpw = tr.fmt_w + 16;
-        fill_round_rect_aa_a(s, cx0 + 8, cy0 + 8, fpw, 22, 8, COL(12, 16, 22, 255), 186);
-        draw_text_centered_bold(s, f, 12.0f, cx0 + 8, cx0 + 8 + fpw, cy0 + 11,
-                                is_play ? g.C_ACCENT : COL(244, 248, 255, 255), tr.fmt);
+        if (is_play) stroke_round_rect_aa(s, x, cy, cw, cw, 12, 2, g.C_ACCENT, 215);
+        else if (is_hov) stroke_round_rect_aa(s, x, cy, cw, cw, 12, 1, g.C_DIV, 90);
 
-        const Rect fav_draw_rc{ cx0 + cov_sz - 34, cy0 + 6, 28, 28 };
-        const Rect fav_rc{ cx0 + cov_sz - 40, cy0, 38, 38 };
+        if (tr.fmt_w < 0) tr.fmt_w = text_width_bold(f, 11.5f, tr.fmt);
+        if (is_hov || is_play || tr.fmt_w > 0) {
+            const int fpw = tr.fmt_w + 14;
+            fill_round_rect_aa_a(s, x + 7, cy + 7, fpw, 20, 7, COL(12, 16, 22, 255), 178);
+            draw_text_centered_bold(s, f, 11.5f, x + 7, x + 7 + fpw, cy + 9,
+                                    is_play ? g.C_ACCENT : COL(244, 248, 255, 255), tr.fmt);
+        }
+
+        const Rect fav_draw_rc{ x + cw - 33, cy + 6, 27, 27 };
+        const Rect fav_rc{ x + cw - 38, cy, 38, 38 };
         if (tr.fav || is_hov) {
-            fill_round_rect_aa_a(s, fav_draw_rc.x, fav_draw_rc.y, 28, 28, 14, COL(12, 16, 22, 255), 165);
-            icon_heart_ex(s, fav_draw_rc.x + 6, fav_draw_rc.y + 6, 16,
+            fill_round_rect_aa_a(s, fav_draw_rc.x, fav_draw_rc.y, 27, 27, 13, COL(12, 16, 22, 255), 162);
+            icon_heart_ex(s, fav_draw_rc.x + 6, fav_draw_rc.y + 6, 15,
                           tr.fav ? g.C_HEART : COL(242, 246, 252, 220), tr.fav);
         }
 
         if (is_play || is_hov) {
-            const int bx = cx0 + cov_sz - 40;
-            const int by = cy0 + cov_sz - 40;
-            fill_round_rect_shadow_fast(s, bx, by + 2, 34, 34, 17, 90);
-            fill_round_rect_aa(s, bx, by, 34, 34, 17, g.C_ACCENT);
+            const int bx = x + cw - 39;
+            const int by = cy + cw - 39;
+            fill_round_rect_shadow_fast(s, bx, by + 2, 32, 32, 16, 86);
+            fill_round_rect_aa(s, bx, by, 32, 32, 16, g.C_ACCENT);
             if (is_play && !audio_paused()) {
                 for (int b = 0; b < 3; ++b) {
                     const float lvl = clampf(g.bars[b * 2] * 0.8f + 0.25f + 0.20f * std::sin(g.wave_phase * 2.1f + static_cast<float>(b) * 1.3f), 0.15f, 1.0f);
-                    const int bh = 5 + static_cast<int>(lvl * 13.0f);
-                    fill_round_rect_aa(s, bx + 10 + b * 6, by + 17 - bh / 2, 3, bh, 1, g.C_ON_ACCENT);
+                    const int bh = 5 + static_cast<int>(lvl * 12.0f);
+                    fill_round_rect_aa(s, bx + 9 + b * 6, by + 16 - bh / 2, 3, bh, 1, g.C_ON_ACCENT);
                 }
             } else {
-                icon_play(s, bx + 18, by + 17, 11, g.C_ON_ACCENT);
+                icon_play(s, bx + 17, by + 16, 10, g.C_ON_ACCENT);
             }
         }
 
-        if (is_play) stroke_round_rect_aa(s, x, cy, cw, ch, 18, 2, g.C_ACCENT, 210);
-        else if (is_hov) stroke_round_rect_aa(s, x, cy, cw, ch, 18, 1, g.C_DIV, 68);
-
-        const int info_y = cy0 + cov_sz + 7;
-        draw_text_max_bold(s, f, 15.5f, x + 10, info_y, is_play ? g.C_ACCENT : g.C_TXT, tr.title.c_str(), cw - 20);
+        const int info_y = cy + cw + 9;
+        draw_text_max_bold(s, f, 14.5f, x + 2, info_y, is_play ? g.C_ACCENT : g.C_TXT, tr.title.c_str(), cw - 4);
         if (tr.cached_dur_w < 0 || std::fabs(tr.dur - tr.cached_dur_val) > 0.25) {
             if (tr.dur > 0.5) fmt_time(tr.dur, tr.cached_dur_s, sizeof(tr.cached_dur_s));
             else std::snprintf(tr.cached_dur_s, sizeof(tr.cached_dur_s), "--:--");
             tr.cached_dur_val = tr.dur;
-            tr.cached_dur_w = text_width_bold(f, 12.5f, tr.cached_dur_s);
+            tr.cached_dur_w = text_width_bold(f, 12.0f, tr.cached_dur_s);
         }
         const int dw = tr.cached_dur_w;
-        draw_text_right_bold(s, f, 12.5f, x + cw - 10, info_y + 26, is_play ? g.C_ACCENT : g.C_TXT3, tr.cached_dur_s);
+        draw_text_right_bold(s, f, 12.0f, x + cw - 2, info_y + 24, is_play ? g.C_ACCENT : g.C_TXT3, tr.cached_dur_s);
         const char* sub = !tr.artist.empty() ? tr.artist.c_str() : (!tr.album.empty() ? tr.album.c_str() : tr.fmt);
-        draw_text_max_bold(s, f, 13.0f, x + 10, info_y + 25, g.C_TXT2, sub, cw - 26 - dw);
+        draw_text_max_bold(s, f, 12.5f, x + 2, info_y + 23, g.C_TXT2, sub, cw - 12 - dw);
 
         if (static_cast<int>(g.grid_hits.size()) < MAX_GRID_HITS) {
             Rect hit_card = card_rc;
@@ -2095,76 +2234,105 @@ void draw_grid_view(int mx, int my) {
 
     const float mscr = max_scroll_px();
     if (mscr > 1.0f) {
-        const int sbx = g.W - 16;
-        g.rc_sb_track = Rect{ g.W - 28, top_y + 6, 26, vh - 100 };
+        const int sbx = g.W - 14;
+        const int sb_h = std::max(40, vh - DOCK_CLEAR);
+        g.rc_sb_track = Rect{ g.W - 26, top_y + 6, 24, sb_h };
         const int th = g.rc_sb_track.h;
         const int thumb_h = std::min(th, std::max(38, static_cast<int>(static_cast<float>(vh) / static_cast<float>(vh + mscr) * static_cast<float>(th))));
         const int ty = g.rc_sb_track.y + static_cast<int>((g.scroll_px / mscr) * static_cast<float>(th - thumb_h));
-        fill_round_rect_aa(s, sbx, g.rc_sb_track.y, 7, th, 3, g.C_TRACK_BG);
-        fill_round_rect_aa(s, sbx, ty, 7, thumb_h, 3, g.sb_drag ? g.C_ACCENT : g.C_TXT3);
+        fill_round_rect_aa(s, sbx, g.rc_sb_track.y, 6, th, 3, g.C_TRACK_BG);
+        fill_round_rect_aa(s, sbx, ty, 6, thumb_h, 3, g.sb_drag ? g.C_ACCENT : g.C_TXT3);
     }
 }
 
 void draw_table_view(int mx, int my) {
     Canvas* s = g.screen.get();
     Font* f = g.font.get();
-    constexpr int lx = RAIL_W + 26;
+    const int lx = side_w() + 26;
     const int rx = g.W - 26;
-    constexpr int top_y = 114;
+    constexpr int top_y = HEADER_H;
     const int vh = list_vis_h();
-    const int tw = rx - lx - 14;
+    const int tw = std::max(320, rx - lx - 14);
     g.ui_list_x0 = lx; g.ui_list_x1 = lx + tw; g.ui_list_y0 = top_y; g.ui_list_y1 = top_y + vh;
 
-    fill_frosted_round_rect(s, lx, top_y, tw, 30, 10, g.C_SURFACE,
-                            static_cast<uint8_t>(118 + 38 * g.light_t), 2, glass_rim(42, 180));
-    draw_text_bold(s, f, 13.0f, lx + 56, top_y + 7, g.C_TXT3, "歌曲");
-    draw_text_bold(s, f, 13.0f, lx + static_cast<int>(tw * 0.44f), top_y + 7, g.C_TXT3, "歌手");
-    draw_text_bold(s, f, 13.0f, lx + static_cast<int>(tw * 0.68f), top_y + 7, g.C_TXT3, "格式");
-    draw_text_right_bold(s, f, 13.0f, lx + tw - 24, top_y + 7, g.C_TXT3, "时长");
+    canvas_set_clip(s, lx - 8, top_y, lx + tw + 10, top_y + vh);
+    const int scroll_y = static_cast<int>(g.scroll_px);
+    const int ban_y = top_y + 4 - scroll_y;
+    if (ban_y + BANNER_H > top_y - 8 && ban_y < top_y + vh + 8) {
+        draw_banner(Rect{ lx, ban_y, tw, BANNER_H }, mx, my);
+    }
+    const int sec_y = ban_y + BANNER_H + 14;
+    draw_section_bar(lx, sec_y, tw, top_y, top_y + vh, mx, my);
 
-    constexpr int body_y = top_y + 34;
-    const int body_h = vh - 34;
-    canvas_set_clip(s, lx, body_y, lx + tw, body_y + body_h);
+    const int tbl_hdr_y = top_y + ITEMS_TOP_OFF - scroll_y;
+    const int col_art = lx + static_cast<int>(tw * 0.48f);
+    const int col_fmt = lx + static_cast<int>(tw * 0.72f);
+    if (tbl_hdr_y + 32 > top_y && tbl_hdr_y < top_y + vh) {
+        draw_text_bold(s, f, 12.0f, lx + 10, tbl_hdr_y + 7, g.C_TXT3, "#");
+        draw_text_bold(s, f, 12.0f, lx + 122, tbl_hdr_y + 7, g.C_TXT3, "歌曲");
+        draw_text_bold(s, f, 12.0f, col_art, tbl_hdr_y + 7, g.C_TXT3, "歌手");
+        draw_text_bold(s, f, 12.0f, col_fmt, tbl_hdr_y + 7, g.C_TXT3, "格式");
+        draw_text_right_bold(s, f, 12.0f, lx + tw - 16, tbl_hdr_y + 7, g.C_TXT3, "时长");
+        fill_rect_a(s, lx, tbl_hdr_y + 30, tw, 1, g.C_DIV, col_a(g.C_DIV) + 14);
+    }
 
+    const int rows_y0 = tbl_hdr_y + 32;
     const int nvis = static_cast<int>(g.vis_idx.size());
+    if (nvis == 0) {
+        draw_text_centered_bold(s, f, 15.0f, lx, lx + tw, rows_y0 + 44, g.C_TXT3,
+                                "暂无曲目，请从左侧“+”添加本地音乐目录");
+    }
+
     for (int p = 0; p < nvis; ++p) {
-        const int y = body_y + p * ROW_H - static_cast<int>(g.scroll_px);
-        if (y + ROW_H < body_y || y > body_y + body_h) continue;
+        const int y = rows_y0 + p * ROW_H;
+        if (y + ROW_H < top_y || y > top_y + vh) continue;
         const int idx = g.vis_idx[p];
-        const Track& tr = g.tracks[idx];
+        Track& tr = g.tracks[idx];
         const Rect row_rc{ lx, y + 2, tw, ROW_H - 4 };
-        const bool hov = in_rect(mx, my, lx, body_y, tw, body_h) && in_rc(mx, my, row_rc);
+        const bool in_v = in_rect(mx, my, lx, top_y, tw, vh - DOCK_CLEAR + 16);
+        const bool hov = in_v && in_rc(mx, my, row_rc);
         const bool is_play = (idx == g.playing_idx);
-        if (is_play)
-            fill_frosted_round_rect(s, row_rc.x, row_rc.y, row_rc.w, row_rc.h, 14,
+
+        if (is_play) {
+            fill_frosted_round_rect(s, row_rc.x, row_rc.y, row_rc.w, row_rc.h, 12,
                                     mix_col(g.C_SURFACE, g.C_ACCENT, 0.22f),
                                     static_cast<uint8_t>(172 + 24 * g.light_t), 2, glass_rim(86, 225));
-        else if (hov)
-            fill_frosted_round_rect(s, row_rc.x, row_rc.y, row_rc.w, row_rc.h, 14,
-                                    g.C_SURFACE, static_cast<uint8_t>(128 + 38 * g.light_t), 1, glass_rim(44, 190));
+        } else if (hov) {
+            fill_round_rect_aa(s, row_rc.x, row_rc.y, row_rc.w, row_rc.h, 12, g.C_GLASS_HOV);
+        }
+
+        char idx_s[12]{};
+        std::snprintf(idx_s, sizeof(idx_s), "%02d", p + 1);
+        draw_text_bold(s, f, 12.5f, lx + 8, y + 20, is_play ? g.C_ACCENT : g.C_TXT3, idx_s);
 
         const uint32_t* art = !tr.thumb.empty() ? tr.thumb.data() : (!g.poster_mini.empty() ? g.poster_mini.data() : nullptr);
         const int asz = !tr.thumb.empty() ? THUMB_SZ : MINI_ART_SZ;
-        if (art) blit_rgb_round_fit(s, lx + 10, y + 7, 40, 40, art, asz, asz, 10);
-        else     fill_round_rect_aa(s, lx + 10, y + 7, 40, 40, 10, g.C_GLASS_ACT);
+        if (art) blit_rgb_round_fit(s, lx + 40, y + 8, 40, 40, art, asz, asz, 10);
+        else     fill_round_rect_aa(s, lx + 40, y + 8, 40, 40, 10, g.C_GLASS_ACT);
 
-        const Rect fav_rc{ lx + 50, y + 7, 36, 40 };
-        icon_heart_ex(s, lx + 60, y + 18, 15, tr.fav ? g.C_HEART : g.C_TXT3, tr.fav);
+        const Rect fav_rc{ lx + 84, y + 8, 32, 40 };
+        icon_heart_ex(s, lx + 92, y + 20, 15, tr.fav ? g.C_HEART : g.C_TXT3, tr.fav);
 
-        draw_text_max_bold(s, f, 15.5f, lx + 90, y + 8, is_play ? g.C_ACCENT : g.C_TXT,
-                           tr.title.c_str(), static_cast<int>(tw * 0.44f) - 100);
-        draw_text_max_bold(s, f, 12.5f, lx + 90, y + 30, g.C_TXT3, tr.album.c_str(), static_cast<int>(tw * 0.44f) - 100);
-        draw_text_max_bold(s, f, 14.0f, lx + static_cast<int>(tw * 0.44f), y + 17, g.C_TXT2,
-                           !tr.artist.empty() ? tr.artist.c_str() : "未知", static_cast<int>(tw * 0.22f));
-        draw_text_bold(s, f, 13.0f, lx + static_cast<int>(tw * 0.68f), y + 18, is_play ? g.C_ACCENT : g.C_TXT3, tr.fmt);
-        char ds[16] = "--:--";
-        if (tr.dur > 0.5) fmt_time(tr.dur, ds, sizeof(ds));
-        draw_text_right_bold(s, f, 13.5f, lx + tw - 24, y + 18, is_play ? g.C_ACCENT : g.C_TXT2, ds);
+        const int title_w = std::max(60, col_art - (lx + 122) - 12);
+        draw_text_max_bold(s, f, 14.5f, lx + 122, y + 9, is_play ? g.C_ACCENT : g.C_TXT,
+                           tr.title.c_str(), title_w);
+        draw_text_max_bold(s, f, 12.0f, lx + 122, y + 31, g.C_TXT3, tr.album.c_str(), title_w);
+        draw_text_max_bold(s, f, 13.5f, col_art, y + 19, g.C_TXT2,
+                           !tr.artist.empty() ? tr.artist.c_str() : "未知", std::max(40, col_fmt - col_art - 10));
+        draw_text_bold(s, f, 12.5f, col_fmt, y + 20, is_play ? g.C_ACCENT : g.C_TXT3, tr.fmt);
+
+        if (tr.cached_dur_w < 0 || std::fabs(tr.dur - tr.cached_dur_val) > 0.25) {
+            if (tr.dur > 0.5) fmt_time(tr.dur, tr.cached_dur_s, sizeof(tr.cached_dur_s));
+            else std::snprintf(tr.cached_dur_s, sizeof(tr.cached_dur_s), "--:--");
+            tr.cached_dur_val = tr.dur;
+            tr.cached_dur_w = text_width_bold(f, 13.0f, tr.cached_dur_s);
+        }
+        draw_text_right_bold(s, f, 13.0f, lx + tw - 16, y + 19, is_play ? g.C_ACCENT : g.C_TXT2, tr.cached_dur_s);
 
         if (static_cast<int>(g.grid_hits.size()) < MAX_GRID_HITS) {
             Rect hr = row_rc;
-            if (hr.y < body_y) { hr.h -= (body_y - hr.y); hr.y = body_y; }
-            if (hr.y + hr.h > body_y + body_h) hr.h = body_y + body_h - hr.y;
+            if (hr.y < top_y) { hr.h -= (top_y - hr.y); hr.y = top_y; }
+            if (hr.y + hr.h > top_y + vh) hr.h = top_y + vh - hr.y;
             if (hr.h > 0) g.grid_hits.push_back(GridHit{ hr, fav_rc, idx });
         }
     }
@@ -2172,248 +2340,275 @@ void draw_table_view(int mx, int my) {
 
     const float mscr = max_scroll_px();
     if (mscr > 1.0f) {
-        const int sbx = g.W - 16;
-        g.rc_sb_track = Rect{ g.W - 28, body_y, 26, body_h - 90 };
+        const int sbx = g.W - 14;
+        const int sb_h = std::max(40, vh - DOCK_CLEAR);
+        g.rc_sb_track = Rect{ g.W - 26, top_y + 6, 24, sb_h };
         const int th = g.rc_sb_track.h;
-        const int thumb_h = std::max(38, static_cast<int>(static_cast<float>(body_h) / static_cast<float>(body_h + mscr) * static_cast<float>(th)));
+        const int thumb_h = std::min(th, std::max(38, static_cast<int>(static_cast<float>(vh) / static_cast<float>(vh + mscr) * static_cast<float>(th))));
         const int ty = g.rc_sb_track.y + static_cast<int>((g.scroll_px / mscr) * static_cast<float>(th - thumb_h));
-        fill_round_rect_aa(s, sbx, g.rc_sb_track.y, 7, th, 3, g.C_TRACK_BG);
-        fill_round_rect_aa(s, sbx, ty, 7, thumb_h, 3, g.sb_drag ? g.C_ACCENT : g.C_TXT3);
+        fill_round_rect_aa(s, sbx, g.rc_sb_track.y, 6, th, 3, g.C_TRACK_BG);
+        fill_round_rect_aa(s, sbx, ty, 6, thumb_h, 3, g.sb_drag ? g.C_ACCENT : g.C_TXT3);
     }
 }
 
-void draw_dynamic_island(int mx, int my) {
+void draw_player_bar(int mx, int my) {
     Canvas* s = g.screen.get();
     Font* f = g.font.get();
-    constexpr int fab_w = 108, fab_h = 46;
-    g.rc_fab_import = Rect{ g.W - 26 - fab_w, g.H - 22 - fab_h, fab_w, fab_h };
-    const bool hov_fab = in_rc(mx, my, g.rc_fab_import);
-    fill_round_rect_shadow(s, g.rc_fab_import.x, g.rc_fab_import.y + 3, fab_w, fab_h, 16, theme_shadow(110));
-    fill_round_rect_aa(s, g.rc_fab_import.x, g.rc_fab_import.y, fab_w, fab_h, 16,
-                       hov_fab ? mix_col(g.C_ACCENT, COL(255, 255, 255, 255), 0.14f) : g.C_ACCENT);
-    icon_plus(s, g.rc_fab_import.x + 26, g.rc_fab_import.y + 23, 7, g.C_ON_ACCENT);
-    draw_text_bold(s, f, 15.0f, g.rc_fab_import.x + 42, g.rc_fab_import.y + 13, g.C_ON_ACCENT, "导入");
+    const bool lt = g.light_t > 0.5f;
 
-    const int center_x = (RAIL_W + g.W) / 2;
-    const int max_half = std::min(g.rc_fab_import.x - 16 - center_x, center_x - RAIL_W - 14);
-    const int max_w = std::max(240, max_half * 2);
-    int base_w = std::min(820, max_w);
-    if (base_w < 460 && max_w >= 460) base_w = 460;
+    const int bx = side_w() + PLAYER_MARGIN;
+    const int bw = std::max(280, g.W - side_w() - PLAYER_MARGIN * 2);
+    constexpr int bh = PLAYER_H;
+    const int by = g.H - PLAYER_MARGIN - bh;
+    constexpr int br = 16;
+    g.rc_island = Rect{ bx, by, bw, bh };
 
-    const bool raw_hov = in_rect(mx, my, center_x - base_w / 2 - 20, g.H - 96, base_w + 40, 88) || g.scrub_drag == 1 || g.vol_drag;
-    g.island_exp += ((raw_hov ? 1.0f : 0.0f) - g.island_exp) * (1.0f - std::exp(-12.0f * static_cast<float>(g.dt)));
+    fill_round_rect_shadow(s, bx, by + 4, bw, bh, br, theme_shadow(110));
+    const uint32_t bar_bg = mix_col(mix_col(COL(18, 22, 30, 255), COL(246, 249, 255, 255), g.light_t), g.C_HERO_L, 0.20f);
+    fill_frosted_round_rect(s, bx, by, bw, bh, br, bar_bg, static_cast<uint8_t>(188 + 22 * g.light_t), 4, glass_rim(88, 235));
+    stroke_round_rect_aa(s, bx, by, bw, bh, br, 1,
+                         mix_col(g.C_DIV, g.C_ACCENT, g.light_t < 0.6f ? 0.22f : 0.08f), lt ? 130 : 72);
 
-    const int iw = std::min(max_w, base_w + static_cast<int>(26.0f * g.island_exp));
-    const int ih = 66 + static_cast<int>(6.0f * g.island_exp);
-    const int ix = center_x - iw / 2;
-    const int iy = g.H - 18 - ih;
-    const int ir = ih / 2;
-    g.rc_island = Rect{ ix, iy, iw, ih };
-
-    fill_round_rect_shadow(s, ix, iy + 5, iw, ih, ir, theme_shadow(115));
-    const uint32_t isl_bg = mix_col(mix_col(COL(16, 20, 28, 255), COL(246, 249, 255, 255), g.light_t), g.C_HERO_L, 0.24f);
-    fill_frosted_round_rect(s, ix, iy, iw, ih, ir, isl_bg, static_cast<uint8_t>(168 + 28 * g.light_t), 4, glass_rim(92, 240));
-    if (g.light_t < 0.7f) {
-        stroke_round_rect_aa(s, ix, iy, iw, ih, ir, 1, g.C_ACCENT, static_cast<uint8_t>(38.0f * (1.0f - g.light_t)));
-    }
-
-    const int cov_sz = ih - 18;
-    g.rc_bar_cov = Rect{ ix + 14, iy + (ih - cov_sz) / 2 - 2, cov_sz, cov_sz };
+    constexpr int cov_sz = 48;
+    g.rc_bar_cov = Rect{ bx + 12, by + (bh - cov_sz) / 2, cov_sz, cov_sz };
     const uint32_t* mc = (g.playing_idx >= 0 && g.cover_ready && !g.cover_mini.empty()) ? g.cover_mini.data()
                          : (!g.poster_mini.empty() ? g.poster_mini.data() : nullptr);
-    if (mc) blit_rgb_round_fit(s, g.rc_bar_cov.x, g.rc_bar_cov.y, cov_sz, cov_sz, mc, MINI_ART_SZ, MINI_ART_SZ, cov_sz / 2);
-    else    fill_ellipse_aa(s, g.rc_bar_cov.x + cov_sz / 2, g.rc_bar_cov.y + cov_sz / 2, cov_sz / 2, cov_sz / 2, g.C_ACCENT);
+    if (mc) blit_rgb_round_fit(s, g.rc_bar_cov.x, g.rc_bar_cov.y, cov_sz, cov_sz, mc, MINI_ART_SZ, MINI_ART_SZ, 10);
+    else    fill_round_rect_aa(s, g.rc_bar_cov.x, g.rc_bar_cov.y, cov_sz, cov_sz, 10, g.C_ACCENT);
+    stroke_round_rect_aa(s, g.rc_bar_cov.x, g.rc_bar_cov.y, cov_sz, cov_sz, 10, 1, g.C_DIV, col_a(g.C_DIV) + 12);
 
-    const int mid_x = ix + iw / 2;
-    const int ctrl_y = iy + ih / 2 - 3;
-    g.rc_bar_play = Rect{ mid_x - 22, ctrl_y - 22, 44, 44 };
-    g.rc_bar_prev = Rect{ mid_x - 62, ctrl_y - 19, 38, 38 };
-    g.rc_bar_next = Rect{ mid_x + 24, ctrl_y - 19, 38, 38 };
-    g.rc_bar_fav  = Rect{ mid_x - 102, ctrl_y - 19, 36, 38 };
+    const int mid_x = bx + bw / 2;
+    const int btn_y = by + 23;
+    g.rc_bar_play = Rect{ mid_x - 19, btn_y - 19, 38, 38 };
+    g.rc_bar_prev = Rect{ mid_x - 56, btn_y - 16, 32, 32 };
+    g.rc_bar_next = Rect{ mid_x + 24, btn_y - 16, 32, 32 };
 
-    const int is_fav = (g.playing_idx >= 0 && g.tracks[g.playing_idx].fav);
-    if (in_rc(mx, my, g.rc_bar_fav)) fill_round_rect_aa(s, mid_x - 98, ctrl_y - 15, 30, 30, 15, g.C_GLASS_HOV);
-    icon_heart_ex(s, mid_x - 91, ctrl_y - 8, 16, is_fav ? g.C_HEART : g.C_TXT2, is_fav);
-
-    if (in_rc(mx, my, g.rc_bar_prev)) fill_round_rect_aa(s, mid_x - 59, ctrl_y - 16, 32, 32, 16, g.C_GLASS_HOV);
-    icon_prev(s, mid_x - 43, ctrl_y, 11, g.C_TXT);
+    if (in_rc(mx, my, g.rc_bar_prev)) fill_round_rect_aa(s, g.rc_bar_prev.x, g.rc_bar_prev.y, 32, 32, 16, g.C_GLASS_HOV);
+    icon_prev(s, mid_x - 40, btn_y, 10, g.C_TXT);
 
     const bool hov_p = in_rc(mx, my, g.rc_bar_play);
     const bool playing_now = (g.playing_idx >= 0 && !audio_paused());
-    fill_ellipse_aa(s, mid_x, ctrl_y, hov_p ? 20 : 19, hov_p ? 20 : 19, playing_now ? g.C_ACCENT : g.C_PLAY_BTN);
-    if (playing_now) icon_pause(s, mid_x, ctrl_y, 10, g.C_ON_ACCENT);
-    else             icon_play(s, mid_x + 1, ctrl_y, 11, g.C_PLAY_ICO);
+    fill_ellipse_aa(s, mid_x, btn_y, hov_p ? 18 : 17, hov_p ? 18 : 17, playing_now ? g.C_ACCENT : g.C_PLAY_BTN);
+    if (playing_now) icon_pause(s, mid_x, btn_y, 9, g.C_ON_ACCENT);
+    else             icon_play(s, mid_x + 1, btn_y, 10, g.C_PLAY_ICO);
 
-    if (in_rc(mx, my, g.rc_bar_next)) fill_round_rect_aa(s, mid_x + 27, ctrl_y - 16, 32, 32, 16, g.C_GLASS_HOV);
-    icon_next(s, mid_x + 43, ctrl_y, 11, g.C_TXT);
-
-    const int info_x = g.rc_bar_cov.x + cov_sz + 12;
-    const int info_max = g.rc_bar_fav.x - info_x - 8;
-    if (info_max > 40) {
-        draw_text_max_bold(s, f, 15.5f, info_x, iy + 9, g.C_TXT, g.p_title.c_str(), info_max);
-        const int eq_y = iy + 40;
-        for (int b = 0; b < 5; ++b) {
-            const float lvl = playing_now
-                              ? clampf(g.bars[b * 2] * 0.75f + 0.25f + 0.22f * std::sin(g.wave_phase * 2.4f + static_cast<float>(b) * 1.1f), 0.15f, 1.0f)
-                              : 0.18f;
-            const int bh = 3 + static_cast<int>(lvl * 10.0f);
-            fill_round_rect_aa(s, info_x + b * 5, eq_y - bh / 2, 3, bh, 1, g.C_ACCENT);
-        }
-        draw_text_max_bold(s, f, 12.5f, info_x + 32, iy + 32, g.C_TXT2,
-                           !g.p_artist.empty() ? g.p_artist.c_str() : "点击封面进入歌词", info_max - 32);
-    }
-
-    const int rx = ix + iw - 16;
-    g.rc_bar_lyr = Rect{ rx - 38, ctrl_y - 17, 40, 34 };
-    const bool act_lyr = (g.lyr && g.lyr->n > 0);
-    if (act_lyr) {
-        fill_frosted_round_rect(s, rx - 36, ctrl_y - 14, 36, 28, 14,
-                                mix_col(g.C_SURFACE, g.C_ACCENT, 0.28f), 192, 1, glass_rim(92, 225));
-    } else {
-        fill_frosted_round_rect(s, rx - 36, ctrl_y - 14, 36, 28, 14,
-                                g.C_SURFACE, in_rc(mx, my, g.rc_bar_lyr) ? 168 : 122, 1, glass_rim(44, 180));
-    }
-    draw_text_centered_bold(s, f, 13.0f, rx - 36, rx, ctrl_y - 9, act_lyr ? g.C_ACCENT : g.C_TXT2, "词");
-
-    const char* mode_lbl = g.play_mode == MODE_LOOP_ONE ? "单曲" : (g.play_mode == MODE_SHUFFLE ? "随机" : "顺序");
-    g.rc_bar_mode = Rect{ rx - 86, ctrl_y - 17, 46, 34 };
-    fill_frosted_round_rect(s, rx - 85, ctrl_y - 14, 44, 28, 14,
-                            g.C_SURFACE, in_rc(mx, my, g.rc_bar_mode) ? 168 : 122, 1, glass_rim(44, 180));
-    draw_text_centered_bold(s, f, 12.5f, rx - 85, rx - 41, ctrl_y - 8, g.C_TXT2, mode_lbl);
-
-    const int vol_w = (g.rc_bar_mode.x - g.rc_bar_next.x - g.rc_bar_next.w > 130) ? 68 : 54;
-    if (g.rc_bar_mode.x - g.rc_bar_next.x - g.rc_bar_next.w > 106) {
-        g.ui_vx1 = g.rc_bar_mode.x - 10;
-        g.ui_vx0 = g.ui_vx1 - vol_w;
-        g.rc_bar_vol_trk = Rect{ g.ui_vx0 - 8, ctrl_y - 17, vol_w + 16, 34 };
-        g.rc_bar_vol_ico = Rect{ g.ui_vx0 - 34, ctrl_y - 17, 26, 34 };
-        const float v = audio_volume();
-        icon_vol(s, g.ui_vx0 - 20, ctrl_y, 14, g.C_TXT2, v <= 0.01f);
-        fill_round_rect_aa(s, g.ui_vx0, ctrl_y - 3, vol_w, 6, 3, g.C_TRACK_BG);
-        const int vw = static_cast<int>(v * static_cast<float>(vol_w));
-        if (vw > 0) fill_round_rect_aa(s, g.ui_vx0, ctrl_y - 3, vw, 6, 3, g.C_ACCENT);
-        fill_ellipse_aa(s, g.ui_vx0 + vw, ctrl_y, 6, 6, g.C_ACCENT);
-    }
+    if (in_rc(mx, my, g.rc_bar_next)) fill_round_rect_aa(s, g.rc_bar_next.x, g.rc_bar_next.y, 32, 32, 16, g.C_GLASS_HOV);
+    icon_next(s, mid_x + 40, btn_y, 10, g.C_TXT);
 
     const double dur = g.playing_idx >= 0 ? audio_duration() : 0.0;
     const double pos = g.playing_idx >= 0 ? (g.scrub_drag == 1 ? g.scrub_sec : audio_position()) : 0.0;
     const float frac = (dur > 0.1) ? clampf(static_cast<float>(pos / dur), 0.0f, 1.0f) : 0.0f;
-    g.ui_px0 = ix + 34;
-    g.ui_px1 = ix + iw - 34;
-    g.ui_py = iy + ih - 8;
-    g.rc_bar_prog = Rect{ g.ui_px0 - 8, g.ui_py - 16, (g.ui_px1 - g.ui_px0) + 16, 28 };
-    draw_m3_water_progress(s, g.ui_px0, g.ui_px1, g.ui_py, frac, g.wave_phase, 6,
-                           (g.island_exp > 0.15f || g.scrub_drag == 1) ? 1 : 0, g.C_ACCENT, g.C_TRACK_BG);
+    const int prog_span = std::clamp(bw - 480, 140, 360);
+    g.ui_px0 = mid_x - prog_span / 2;
+    g.ui_px1 = mid_x + prog_span / 2;
+    g.ui_py  = by + bh - 14;
+    g.rc_bar_prog = Rect{ g.ui_px0 - 8, g.ui_py - 12, (g.ui_px1 - g.ui_px0) + 16, 24 };
+
+    fill_round_rect_aa(s, g.ui_px0, g.ui_py - 2, prog_span, 4, 2, g.C_TRACK_BG);
+    const int fill_w = static_cast<int>(frac * static_cast<float>(prog_span));
+    if (fill_w > 0) fill_round_rect_aa(s, g.ui_px0, g.ui_py - 2, fill_w, 4, 2, g.C_ACCENT);
+    if (in_rc(mx, my, g.rc_bar_prog) || g.scrub_drag == 1) {
+        fill_ellipse_aa(s, g.ui_px0 + fill_w, g.ui_py, 5, 5, g.C_ACCENT);
+    }
+
+    const bool show_times = (bw >= 740);
+    if (show_times) {
+        char pos_s[16]{}, dur_s[16]{};
+        fmt_time(pos, pos_s, sizeof(pos_s));
+        fmt_time(dur, dur_s, sizeof(dur_s));
+        draw_text_right_bold(s, f, 11.0f, g.ui_px0 - 8, g.ui_py - 7, g.C_TXT3, pos_s);
+        draw_text_bold(s, f, 11.0f, g.ui_px1 + 8, g.ui_py - 7, g.C_TXT3, dur_s);
+    }
+
+    const int left_end = std::min(bx + 290, g.ui_px0 - (show_times ? 48 : 16));
+    const int info_x = g.rc_bar_cov.x + cov_sz + 10;
+    const int fav_sz = 30;
+    if (left_end - info_x >= 44) {
+        g.rc_bar_fav = Rect{ left_end - fav_sz, by + (bh - fav_sz) / 2, fav_sz, fav_sz };
+        const int is_fav = (g.playing_idx >= 0 && g.tracks[g.playing_idx].fav);
+        if (in_rc(mx, my, g.rc_bar_fav)) fill_round_rect_aa(s, g.rc_bar_fav.x, g.rc_bar_fav.y, fav_sz, fav_sz, 15, g.C_GLASS_HOV);
+        icon_heart_ex(s, g.rc_bar_fav.x + 7, g.rc_bar_fav.y + 7, 16, is_fav ? g.C_HEART : g.C_TXT2, is_fav);
+
+        const int info_max = g.rc_bar_fav.x - info_x - 8;
+        if (info_max > 28) {
+            draw_text_max_bold(s, f, 14.0f, info_x, by + 13, g.C_TXT, g.p_title.c_str(), info_max);
+            draw_text_max_bold(s, f, 12.0f, info_x, by + 35, g.C_TXT2,
+                               !g.p_artist.empty() ? g.p_artist.c_str() : "点击封面进入歌词", info_max);
+        }
+    }
+
+    const int rx = bx + bw - 14;
+    const int cy = by + bh / 2;
+    g.rc_bar_lyr = Rect{ rx - 34, cy - 15, 34, 30 };
+    const bool act_lyr = (g.lyr && g.lyr->n > 0);
+    fill_frosted_round_rect(s, g.rc_bar_lyr.x, g.rc_bar_lyr.y, 34, 30, 15,
+                            act_lyr ? mix_col(g.C_SURFACE, g.C_ACCENT, 0.28f) : g.C_SURFACE,
+                            act_lyr ? 192 : (in_rc(mx, my, g.rc_bar_lyr) ? 176 : 128), 1,
+                            glass_rim(act_lyr ? 90 : 44, act_lyr ? 225 : 185));
+    draw_text_centered_bold(s, f, 12.5f, g.rc_bar_lyr.x, g.rc_bar_lyr.x + 34, g.rc_bar_lyr.y + 7,
+                            act_lyr ? g.C_ACCENT : g.C_TXT2, "词");
+
+    const char* mode_lbl = g.play_mode == MODE_LOOP_ONE ? "单曲" : (g.play_mode == MODE_SHUFFLE ? "随机" : "顺序");
+    g.rc_bar_mode = Rect{ g.rc_bar_lyr.x - 6 - 44, cy - 15, 44, 30 };
+    fill_frosted_round_rect(s, g.rc_bar_mode.x, g.rc_bar_mode.y, 44, 30, 15,
+                            g.C_SURFACE, in_rc(mx, my, g.rc_bar_mode) ? 176 : 128, 1, glass_rim(44, 185));
+    draw_text_centered_bold(s, f, 12.0f, g.rc_bar_mode.x, g.rc_bar_mode.x + 44, g.rc_bar_mode.y + 7, g.C_TXT2, mode_lbl);
+
+    const int center_right = std::max(g.rc_bar_next.x + g.rc_bar_next.w + 12,
+                                      g.ui_px1 + (show_times ? 46 : 12));
+    if (g.rc_bar_mode.x - center_right >= 92) {
+        constexpr int vol_w = 64;
+        g.ui_vx1 = g.rc_bar_mode.x - 10;
+        g.ui_vx0 = g.ui_vx1 - vol_w;
+        g.rc_bar_vol_trk = Rect{ g.ui_vx0 - 6, cy - 15, vol_w + 12, 30 };
+        g.rc_bar_vol_ico = Rect{ g.ui_vx0 - 30, cy - 15, 24, 30 };
+        const float v = audio_volume();
+        icon_vol(s, g.ui_vx0 - 18, cy, 13, g.C_TXT2, v <= 0.01f);
+        fill_round_rect_aa(s, g.ui_vx0, cy - 2, vol_w, 4, 2, g.C_TRACK_BG);
+        const int vw = static_cast<int>(v * static_cast<float>(vol_w));
+        if (vw > 0) fill_round_rect_aa(s, g.ui_vx0, cy - 2, vw, 4, 2, g.C_ACCENT);
+        fill_ellipse_aa(s, g.ui_vx0 + vw, cy, 5, 5, g.C_ACCENT);
+    }
 }
 
 void draw_immersive_view(int mx, int my) {
     draw_frosted_ambient_bg(1);
     Canvas* s = g.screen.get();
     Font* f = g.font.get();
+    const bool lt = g.light_t > 0.5f;
 
-    g.rc_back_lib = Rect{ 26, 18, 132, 42 };
+    g.rc_back_lib = Rect{ 26, 18, 124, 40 };
     const bool hov_back = in_rc(mx, my, g.rc_back_lib);
-    fill_frosted_round_rect(s, g.rc_back_lib.x, g.rc_back_lib.y, g.rc_back_lib.w, g.rc_back_lib.h, 21,
+    fill_frosted_round_rect(s, g.rc_back_lib.x, g.rc_back_lib.y, g.rc_back_lib.w, g.rc_back_lib.h, 20,
                             g.C_SURFACE, hov_back ? 186 : static_cast<uint8_t>(138 + 34 * g.light_t), 3,
                             glass_rim(hov_back ? 96 : 64, 235));
-    icon_back(s, g.rc_back_lib.x + 15, g.rc_back_lib.y + 14, 14, g.C_TXT);
-    draw_text_bold(s, f, 14.0f, g.rc_back_lib.x + 38, g.rc_back_lib.y + 11, g.C_TXT, "返回曲库");
+    icon_back(s, g.rc_back_lib.x + 14, g.rc_back_lib.y + 13, 14, g.C_TXT);
+    draw_text_bold(s, f, 13.5f, g.rc_back_lib.x + 36, g.rc_back_lib.y + 10, g.C_TXT, "返回曲库");
 
-    g.rc_lyr_fs = Rect{ g.W - 68, 18, 42, 42 };
+    g.rc_lyr_fs = Rect{ g.W - 66, 18, 40, 40 };
     const bool hov_fs = in_rc(mx, my, g.rc_lyr_fs);
-    fill_frosted_round_rect(s, g.rc_lyr_fs.x, g.rc_lyr_fs.y, 42, 42, 21,
+    fill_frosted_round_rect(s, g.rc_lyr_fs.x, g.rc_lyr_fs.y, 40, 40, 20,
                             g.C_SURFACE, hov_fs ? 186 : static_cast<uint8_t>(138 + 34 * g.light_t), 3,
                             glass_rim(hov_fs ? 96 : 64, 235));
-    icon_expand(s, g.rc_lyr_fs.x + 13, g.rc_lyr_fs.y + 13, 16, g.C_TXT);
+    icon_expand(s, g.rc_lyr_fs.x + 12, g.rc_lyr_fs.y + 12, 16, g.C_TXT);
 
-    g.rc_lyr_theme = Rect{ g.W - 118, 18, 42, 42 };
+    g.rc_lyr_theme = Rect{ g.W - 114, 18, 40, 40 };
     const bool hov_thm = in_rc(mx, my, g.rc_lyr_theme);
-    fill_frosted_round_rect(s, g.rc_lyr_theme.x, g.rc_lyr_theme.y, 42, 42, 21,
+    fill_frosted_round_rect(s, g.rc_lyr_theme.x, g.rc_lyr_theme.y, 40, 40, 20,
                             g.C_SURFACE, hov_thm ? 186 : static_cast<uint8_t>(138 + 34 * g.light_t), 3,
                             glass_rim(hov_thm ? 96 : 64, 235));
-    icon_theme_orb(s, g.rc_lyr_theme.x + 21, g.rc_lyr_theme.y + 21, 8, mix_col(g.C_TXT, g.C_ACCENT, g.light_t));
+    icon_theme_orb(s, g.rc_lyr_theme.x + 20, g.rc_lyr_theme.y + 20, 8, mix_col(g.C_TXT, g.C_ACCENT, g.light_t));
 
-    g.rc_lyr_bg = Rect{ g.W - 168, 18, 42, 42 };
+    g.rc_lyr_bg = Rect{ g.W - 162, 18, 40, 40 };
     const bool has_bg = !g.bg_img_raw.empty();
     const bool hov_lbg = in_rc(mx, my, g.rc_lyr_bg);
-    fill_frosted_round_rect(s, g.rc_lyr_bg.x, g.rc_lyr_bg.y, 42, 42, 21,
+    fill_frosted_round_rect(s, g.rc_lyr_bg.x, g.rc_lyr_bg.y, 40, 40, 20,
                             has_bg ? mix_col(g.C_SURFACE, g.C_ACCENT, 0.24f) : g.C_SURFACE,
                             has_bg ? 194 : (hov_lbg ? 186 : static_cast<uint8_t>(138 + 34 * g.light_t)), 3,
                             glass_rim((has_bg || hov_lbg) ? 96 : 64, 235));
-    icon_wallpaper(s, g.rc_lyr_bg.x + 13, g.rc_lyr_bg.y + 13, 16, has_bg ? g.C_ACCENT : g.C_TXT);
+    icon_wallpaper(s, g.rc_lyr_bg.x + 12, g.rc_lyr_bg.y + 12, 16, has_bg ? g.C_ACCENT : g.C_TXT);
 
     if (has_bg) {
-        g.rc_lyr_bg_clear = Rect{ g.W - 218, 18, 42, 42 };
+        g.rc_lyr_bg_clear = Rect{ g.W - 210, 18, 40, 40 };
         const bool hov_lcl = in_rc(mx, my, g.rc_lyr_bg_clear);
-        fill_frosted_round_rect(s, g.rc_lyr_bg_clear.x, g.rc_lyr_bg_clear.y, 42, 42, 21,
+        fill_frosted_round_rect(s, g.rc_lyr_bg_clear.x, g.rc_lyr_bg_clear.y, 40, 40, 20,
                                 g.C_SURFACE, hov_lcl ? 190 : static_cast<uint8_t>(138 + 34 * g.light_t), 3,
                                 glass_rim(hov_lcl ? 96 : 64, 235));
-        icon_close_x(s, g.rc_lyr_bg_clear.x + 21, g.rc_lyr_bg_clear.y + 21, 4, hov_lcl ? g.C_HEART : g.C_TXT2);
+        icon_close_x(s, g.rc_lyr_bg_clear.x + 20, g.rc_lyr_bg_clear.y + 20, 4, hov_lcl ? g.C_HEART : g.C_TXT2);
     }
 
-    const int left_col_w = std::clamp(static_cast<int>(g.W * 0.40f), 340, 540);
-    const int cov_sz = std::clamp(std::min(static_cast<int>(g.H * 0.44f), left_col_w - 72), 200, 430);
-    const int cov_x = 36 + (left_col_w - cov_sz) / 2;
-    const int cov_y = std::max(72, static_cast<int>(g.H * 0.11f));
+    const int left_col_w = std::clamp(static_cast<int>(g.W * 0.36f), 280, 440);
+    constexpr int chrome_below = 194;
+    const int max_cov_h = std::max(140, g.H - 72 - 26 - chrome_below);
+    const int cov_sz = std::clamp(std::min(max_cov_h, std::min(static_cast<int>(g.H * 0.42f), left_col_w - 40)), 140, 340);
+    const int block_h = cov_sz + chrome_below;
+    const int cov_x = 40 + (left_col_w - cov_sz) / 2;
+    const int cov_y = std::max(72, 72 + (g.H - 96 - block_h) / 2);
 
-    fill_round_rect_shadow(s, cov_x, cov_y + 12, cov_sz, cov_sz, 24, 138);
+    fill_round_rect_shadow(s, cov_x, cov_y + 10, cov_sz, cov_sz, 14, theme_shadow(130));
     const uint32_t* art = (g.playing_idx >= 0 && g.cover_ready && !g.cover_src.empty()) ? g.cover_src.data()
                           : (!g.poster_hero.empty() ? g.poster_hero.data() : nullptr);
-    if (art) blit_rgb_round_fit(s, cov_x, cov_y, cov_sz, cov_sz, art, COVER_SRC_SZ, COVER_SRC_SZ, 24);
-    else     fill_round_rect_aa(s, cov_x, cov_y, cov_sz, cov_sz, 24, g.C_GLASS_ACT);
-    stroke_round_rect_aa(s, cov_x, cov_y, cov_sz, cov_sz, 24, 1, g.C_DIV, col_a(g.C_DIV) + 12);
+    if (art) blit_rgb_round_fit(s, cov_x, cov_y, cov_sz, cov_sz, art, COVER_SRC_SZ, COVER_SRC_SZ, 14);
+    else     fill_round_rect_aa(s, cov_x, cov_y, cov_sz, cov_sz, 14, g.C_GLASS_ACT);
+    stroke_round_rect_aa(s, cov_x, cov_y, cov_sz, cov_sz, 14, 1, g.C_DIV, col_a(g.C_DIV) + 14);
 
     const int info_x = cov_x;
     const int info_w = cov_sz;
-    const int ty = cov_y + cov_sz + 22;
-    draw_text_max_bold(s, f, 26.5f, info_x, ty, g.C_TXT, g.p_title.c_str(), info_w);
-    draw_text_max_bold(s, f, 16.5f, info_x, ty + 35, g.C_TXT2,
-                       !g.p_artist.empty() ? g.p_artist.c_str() : (!g.p_album.empty() ? g.p_album.c_str() : "Sir\xC3\xA8ne Hi-Res"), info_w);
+    const int ty = cov_y + cov_sz + 18;
+    g.rc_bar_fav = Rect{ info_x + info_w - 32, ty - 2, 32, 32 };
+    const int is_fav = (g.playing_idx >= 0 && g.tracks[g.playing_idx].fav);
+    if (in_rc(mx, my, g.rc_bar_fav)) fill_round_rect_aa(s, g.rc_bar_fav.x, g.rc_bar_fav.y, 32, 32, 16, g.C_GLASS_HOV);
+    icon_heart_ex(s, g.rc_bar_fav.x + 7, g.rc_bar_fav.y + 7, 18, is_fav ? g.C_HEART : g.C_TXT2, is_fav);
 
-    char spec[96]{};
-    snprintf(spec, sizeof(spec), "%s  %uHz  %uch", g.p_fmt, audio_sample_rate(), audio_channels());
-    const int spw = text_width_bold(f, 12.5f, spec) + 22;
-    fill_frosted_round_rect(s, info_x, ty + 64, spw, 25, 12,
-                            g.C_SURFACE, static_cast<uint8_t>(118 + 38 * g.light_t), 2, glass_rim(44, 185));
-    draw_text_centered_bold(s, f, 12.5f, info_x, info_x + spw, ty + 68, g.C_ACCENT, spec);
+    draw_text_max_bold(s, f, 22.0f, info_x, ty, g.C_TXT, g.p_title.c_str(), info_w - 38);
+    draw_text_max_bold(s, f, 14.5f, info_x, ty + 30, g.C_TXT2,
+                       !g.p_artist.empty() ? g.p_artist.c_str() : (!g.p_album.empty() ? g.p_album.c_str() : "Sir\xC3\xA8ne Hi-Res"), info_w);
 
     const double dur = g.playing_idx >= 0 ? audio_duration() : 0.0;
     const double pos = g.playing_idx >= 0 ? (g.scrub_drag == 1 ? g.scrub_sec : audio_position()) : 0.0;
     const float frac = (dur > 0.1) ? clampf(static_cast<float>(pos / dur), 0.0f, 1.0f) : 0.0f;
-    const int py = ty + 108;
+    const int py = ty + 68;
     g.ui_px0 = info_x;
     g.ui_px1 = info_x + info_w;
     g.ui_py = py;
-    g.rc_bar_prog = Rect{ g.ui_px0 - 10, py - 16, info_w + 20, 32 };
-    draw_m3_water_progress(s, g.ui_px0, g.ui_px1, py, frac, g.wave_phase, 10, 1, g.C_ACCENT, g.C_TRACK_BG);
+    g.rc_bar_prog = Rect{ g.ui_px0 - 8, py - 14, info_w + 16, 28 };
+    fill_round_rect_aa(s, g.ui_px0, py - 2, info_w, 5, 2, g.C_TRACK_BG);
+    const int fpw = static_cast<int>(frac * static_cast<float>(info_w));
+    if (fpw > 0) fill_round_rect_aa(s, g.ui_px0, py - 2, fpw, 5, 2, g.C_ACCENT);
+    fill_ellipse_aa(s, g.ui_px0 + fpw, py, (in_rc(mx, my, g.rc_bar_prog) || g.scrub_drag == 1) ? 7 : 5,
+                    (in_rc(mx, my, g.rc_bar_prog) || g.scrub_drag == 1) ? 7 : 5, g.C_ACCENT);
 
     char bpos[20]{}, bdur[20]{};
     fmt_time(pos, bpos, sizeof(bpos));
     fmt_time(dur, bdur, sizeof(bdur));
-    draw_text_bold(s, f, 13.5f, g.ui_px0, py + 15, g.C_TXT2, bpos);
-    draw_text_right_bold(s, f, 13.5f, g.ui_px1, py + 15, g.C_TXT2, bdur);
+    draw_text_bold(s, f, 12.0f, g.ui_px0, py + 11, g.C_TXT3, bpos);
+    draw_text_right_bold(s, f, 12.0f, g.ui_px1, py + 11, g.C_TXT3, bdur);
 
-    const int cy = py + 56;
+    const int cy = py + 48;
     const int cx = info_x + info_w / 2;
-    g.rc_bar_play = Rect{ cx - 28, cy - 28, 56, 56 };
-    g.rc_bar_prev = Rect{ cx - 80, cy - 21, 44, 42 };
-    g.rc_bar_next = Rect{ cx + 36, cy - 21, 44, 42 };
-    g.rc_bar_fav  = Rect{ info_x - 4, cy - 20, 40, 40 };
-    g.rc_bar_mode = Rect{ info_x + info_w - 58, cy - 19, 58, 38 };
+    g.rc_bar_play = Rect{ cx - 23, cy - 23, 46, 46 };
+    g.rc_bar_prev = Rect{ cx - 74, cy - 18, 36, 36 };
+    g.rc_bar_next = Rect{ cx + 38, cy - 18, 36, 36 };
 
-    const int is_fav = (g.playing_idx >= 0 && g.tracks[g.playing_idx].fav);
-    icon_heart_ex(s, info_x + 6, cy - 10, 20, is_fav ? g.C_HEART : g.C_TXT2, is_fav);
-    icon_prev(s, cx - 58, cy, 14, g.C_TXT);
-    fill_m3_scallop(s, cx, cy, in_rc(mx, my, g.rc_bar_play) ? 27 : 25, 10, g.scallop_rot, g.C_ACCENT);
-    if (g.playing_idx >= 0 && !audio_paused()) icon_pause(s, cx, cy, 13, g.C_ON_ACCENT);
-    else                                       icon_play(s, cx + 2, cy, 14, g.C_ON_ACCENT);
-    icon_next(s, cx + 58, cy, 14, g.C_TXT);
+    if (in_rc(mx, my, g.rc_bar_prev)) fill_round_rect_aa(s, g.rc_bar_prev.x, g.rc_bar_prev.y, 36, 36, 18, g.C_GLASS_HOV);
+    icon_prev(s, cx - 56, cy, 13, g.C_TXT);
+
+    const bool hov_p = in_rc(mx, my, g.rc_bar_play);
+    fill_ellipse_aa(s, cx, cy, hov_p ? 23 : 22, hov_p ? 23 : 22, g.C_ACCENT);
+    if (g.playing_idx >= 0 && !audio_paused()) icon_pause(s, cx, cy, 11, g.C_ON_ACCENT);
+    else                                       icon_play(s, cx + 2, cy, 12, g.C_ON_ACCENT);
+
+    if (in_rc(mx, my, g.rc_bar_next)) fill_round_rect_aa(s, g.rc_bar_next.x, g.rc_bar_next.y, 36, 36, 18, g.C_GLASS_HOV);
+    icon_next(s, cx + 56, cy, 13, g.C_TXT);
+
+    const int vy = cy + 40;
+    char spec[64]{};
+    snprintf(spec, sizeof(spec), "%s  %ukHz", g.p_fmt, audio_sample_rate() / 1000u);
+    const int spw = text_width_bold(f, 11.5f, spec) + 18;
+    fill_frosted_round_rect(s, info_x, vy - 13, spw, 26, 13,
+                            g.C_SURFACE, lt ? 168 : 138, 1, glass_rim(44, 185));
+    draw_text_centered_bold(s, f, 11.5f, info_x, info_x + spw, vy - 7, g.C_ACCENT, spec);
 
     const char* ml = g.play_mode == MODE_LOOP_ONE ? "单曲" : (g.play_mode == MODE_SHUFFLE ? "随机" : "顺序");
+    g.rc_bar_mode = Rect{ info_x + info_w - 50, vy - 13, 50, 26 };
     const bool hov_m = in_rc(mx, my, g.rc_bar_mode);
-    fill_frosted_round_rect(s, g.rc_bar_mode.x, g.rc_bar_mode.y, 58, 38, 19,
-                            g.C_SURFACE, hov_m ? 180 : static_cast<uint8_t>(128 + 38 * g.light_t), 2, glass_rim(48, 205));
-    draw_text_centered_bold(s, f, 13.5f, g.rc_bar_mode.x, g.rc_bar_mode.x + 58, g.rc_bar_mode.y + 10, g.C_TXT2, ml);
+    fill_frosted_round_rect(s, g.rc_bar_mode.x, g.rc_bar_mode.y, 50, 26, 13,
+                            g.C_SURFACE, hov_m ? 182 : (lt ? 156 : 132), 1, glass_rim(48, 200));
+    draw_text_centered_bold(s, f, 12.0f, g.rc_bar_mode.x, g.rc_bar_mode.x + 50, vy - 7, g.C_TXT2, ml);
+
+    if (g.rc_bar_mode.x - (info_x + spw) >= 88) {
+        const int vw_tot = std::min(72, g.rc_bar_mode.x - (info_x + spw) - 34);
+        g.ui_vx1 = g.rc_bar_mode.x - 10;
+        g.ui_vx0 = g.ui_vx1 - vw_tot;
+        g.rc_bar_vol_trk = Rect{ g.ui_vx0 - 6, vy - 14, vw_tot + 12, 28 };
+        g.rc_bar_vol_ico = Rect{ g.ui_vx0 - 28, vy - 14, 22, 28 };
+        const float vol = audio_volume();
+        icon_vol(s, g.ui_vx0 - 17, vy, 12, g.C_TXT2, vol <= 0.01f);
+        fill_round_rect_aa(s, g.ui_vx0, vy - 2, vw_tot, 4, 2, g.C_TRACK_BG);
+        const int vfill = static_cast<int>(vol * static_cast<float>(vw_tot));
+        if (vfill > 0) fill_round_rect_aa(s, g.ui_vx0, vy - 2, vfill, 4, 2, g.C_ACCENT);
+        fill_ellipse_aa(s, g.ui_vx0 + vfill, vy, 5, 5, g.C_ACCENT);
+    }
 
     const int lyr_x = cov_x + cov_sz + 56;
     const int lyr_w = std::max(240, g.W - lyr_x - 48);
@@ -2526,26 +2721,233 @@ void draw_immersive_view(int mx, int my) {
     canvas_reset_clip(s);
 }
 
-void draw_diag_modal() {
-    if (!g.show_diag) return;
+void draw_switch(int x, int y, float t, uint32_t acc, int mx, int my) {
+    Canvas* s = g.screen.get();
+    constexpr int w = 44, h = 24;
+    const Rect rc{ x, y, w, h };
+    const uint32_t track = mix_col(g.C_TRACK_BG, acc, clampf(t, 0.0f, 1.0f));
+    fill_round_rect_aa(s, x, y, w, h, 12, track);
+    if (in_rc(mx, my, rc)) stroke_round_rect_aa(s, x, y, w, h, 12, 1, acc, 140);
+    const int cx = x + 12 + static_cast<int>(clampf(t, 0.0f, 1.0f) * 20.0f + 0.5f);
+    fill_ellipse_aa(s, cx, y + 12, 9, 9, COL(255, 255, 255, 255));
+}
+
+void draw_segmented(int x, int y, const char* const* opts, int n, int active_idx, int item_w,
+                    int mx, int my, const int* hit_ids, bool can_hit) {
     Canvas* s = g.screen.get();
     Font* f = g.font.get();
-    constexpr int mw = 520, mh = 250;
-    const int mx = (g.W - mw) / 2, my = (g.H - mh) / 2;
-    fill_round_rect_shadow(s, mx, my + 8, mw, mh, 22, theme_shadow(150));
-    fill_frosted_round_rect(s, mx, my, mw, mh, 22, g.C_SURFACE,
-                            static_cast<uint8_t>(210 + 26 * g.light_t), 4, glass_rim(96, 235));
-    stroke_round_rect_aa(s, mx, my, mw, mh, 22, 1, g.C_ACCENT, 130);
-    draw_text_bold(s, f, 18.0f, mx + 24, my + 20, g.C_TXT, "Sir\xC3\xA8ne 音频与歌词诊断（学习研究版）");
-    char adiag[256]{};
-    audio_get_diag(adiag, sizeof(adiag));
-    draw_text_max(s, f, 13.0f, mx + 24, my + 60, g.C_TXT2, adiag, mw - 48);
-    draw_text_max(s, f, 13.0f, mx + 24, my + 96, g.C_TXT2, lyrics_last_diag(), mw - 48);
-    char sc[128]{};
-    snprintf(sc, sizeof(sc), "DPI 缩放: %.2fx  |  窗口逻辑分辨率: %dx%d  |  曲目数: %d",
-             g.ui_scale, g.W, g.H, static_cast<int>(g.tracks.size()));
-    draw_text_max(s, f, 12.5f, mx + 24, my + 136, g.C_ACCENT, sc, mw - 48);
-    draw_text(s, f, 12.0f, mx + 24, my + 204, g.C_TXT3, "提示: 再次点击左下角 i 按钮或按 Esc 关闭");
+    const bool lt = g.light_t > 0.5f;
+    const int tot_w = n * item_w + 6;
+    fill_frosted_round_rect(s, x, y, tot_w, 32, 16, g.C_SURFACE, lt ? 148 : 118, 1, glass_rim(42, 185));
+    for (int i = 0; i < n; ++i) {
+        const Rect ir{ x + 3 + i * item_w, y + 3, item_w, 26 };
+        if (can_hit) g.set_hits.push_back(SetHit{ ir, hit_ids[i], i });
+        const bool act = (i == active_idx);
+        const bool hov = can_hit && in_rc(mx, my, ir);
+        if (act) {
+            fill_round_rect_aa(s, ir.x, ir.y, ir.w, ir.h, 13, mix_col(g.C_SURFACE, g.C_ACCENT, 0.30f));
+            stroke_round_rect_aa(s, ir.x, ir.y, ir.w, ir.h, 13, 1, g.C_ACCENT, 145);
+        } else if (hov) {
+            fill_round_rect_aa(s, ir.x, ir.y, ir.w, ir.h, 13, g.C_GLASS_HOV);
+        }
+        draw_text_centered_bold(s, f, 12.5f, ir.x, ir.x + ir.w, ir.y + 5,
+                                act ? g.C_ACCENT : (hov ? g.C_TXT : g.C_TXT2), opts[i]);
+    }
+}
+
+void draw_settings_view(int mx, int my) {
+    Canvas* s = g.screen.get();
+    Font* f = g.font.get();
+    const bool lt = g.light_t > 0.5f;
+    const int lx = side_w() + 26;
+    const int rx = g.W - 26;
+
+    g.rc_set_back = Rect{ lx, 22, 88, 38 };
+    const bool hov_back = in_rc(mx, my, g.rc_set_back);
+    fill_frosted_round_rect(s, g.rc_set_back.x, g.rc_set_back.y, g.rc_set_back.w, g.rc_set_back.h, 19,
+                            g.C_SURFACE, hov_back ? 188 : (lt ? 156 : 132), 2, glass_rim(56, 210));
+    stroke_round_rect_aa(s, g.rc_set_back.x, g.rc_set_back.y, g.rc_set_back.w, g.rc_set_back.h, 19, 1,
+                         g.C_DIV, col_a(g.C_DIV) + 12);
+    icon_back(s, g.rc_set_back.x + 14, g.rc_set_back.y + 12, 13, g.C_TXT);
+    draw_text_bold(s, f, 13.5f, g.rc_set_back.x + 34, g.rc_set_back.y + 10, g.C_TXT, "返回");
+    draw_text_bold(s, f, 23.5f, lx + 104, 26, g.C_TXT, "设置");
+
+    constexpr int top_y = HEADER_H;
+    const int vh = list_vis_h();
+    const int avail_w = std::max(320, rx - lx - 14);
+    const int card_w = std::min(780, avail_w);
+    const int cx0 = lx + (avail_w - card_w) / 2;
+
+    g.ui_list_x0 = cx0; g.ui_list_x1 = cx0 + card_w; g.ui_list_y0 = top_y; g.ui_list_y1 = top_y + vh;
+    canvas_set_clip(s, lx - 8, top_y, rx, top_y + vh);
+
+    const int start_y = top_y + 8 - static_cast<int>(g.scroll_px);
+    int y = start_y;
+
+    auto draw_card_box = [&](int cy, int ch) {
+        fill_round_rect_shadow(s, cx0, cy + 3, card_w, ch, 16, theme_shadow(58));
+        fill_frosted_round_rect(s, cx0, cy, card_w, ch, 16, g.C_SURFACE,
+                                lt ? 186 : 162, 3, glass_rim(54, 210));
+        stroke_round_rect_aa(s, cx0, cy, card_w, ch, 16, 1, g.C_DIV, col_a(g.C_DIV) + 14);
+    };
+    auto vis_hit = [&](const Rect& r) { return r.y + r.h > top_y && r.y < top_y + vh; };
+
+    draw_text_bold(s, f, 13.0f, cx0 + 8, y, g.C_TXT3, "外观");
+    y += 24;
+    {
+        constexpr int row_h = 62;
+        constexpr int card_h = row_h * 3;
+        draw_card_box(y, card_h);
+
+        int ry = y;
+        draw_text_bold(s, f, 15.0f, cx0 + 20, ry + 12, g.C_TXT, "界面主题");
+        draw_text_max(s, f, 12.5f, cx0 + 20, ry + 36, g.C_TXT2, "切换浅色或深色玻璃外观", card_w - 220);
+        const char* th_opts[2] = { "浅色", "深色" };
+        const int th_ids[2] = { SET_THEME_LIGHT, SET_THEME_DARK };
+        draw_segmented(cx0 + card_w - 154, ry + 15, th_opts, 2, g.is_light ? 0 : 1, 64, mx, my, th_ids,
+                       vis_hit(Rect{ cx0, ry, card_w, row_h }));
+        fill_rect_a(s, cx0 + 18, ry + row_h - 1, card_w - 36, 1, g.C_DIV, col_a(g.C_DIV) + 12);
+
+        ry += row_h;
+        draw_text_bold(s, f, 15.0f, cx0 + 20, ry + 12, g.C_TXT, "主题色跟随封面");
+        draw_text_max(s, f, 12.5f, cx0 + 20, ry + 36, g.C_TXT2, "按钮与高亮取当前播放封面配色，关闭后使用默认蓝", card_w - 110);
+        const Rect sw_rc{ cx0 + card_w - 64, ry + 19, 44, 24 };
+        draw_switch(sw_rc.x, sw_rc.y, g.accent_sw_t, g.C_ACCENT, mx, my);
+        if (vis_hit(sw_rc)) g.set_hits.push_back(SetHit{ Rect{ sw_rc.x - 8, ry + 10, 60, 42 }, SET_ACCENT_FOLLOW, 0 });
+        fill_rect_a(s, cx0 + 18, ry + row_h - 1, card_w - 36, 1, g.C_DIV, col_a(g.C_DIV) + 12);
+
+        ry += row_h;
+        draw_text_bold(s, f, 15.0f, cx0 + 20, ry + 12, g.C_TXT, "自定义背景图片");
+        const bool has_bg = !g.bg_img_raw.empty();
+        draw_text_max(s, f, 12.5f, cx0 + 20, ry + 36, g.C_TXT2,
+                      has_bg && !g.bg_img_path.empty() ? g.bg_img_path.c_str() : "支持 PNG / JPG，作为窗口毛玻璃背景",
+                      card_w - 220);
+        int bx_r = cx0 + card_w - 20;
+        if (has_bg) {
+            const Rect cl_rc{ bx_r - 64, ry + 15, 64, 32 };
+            const bool hov = vis_hit(cl_rc) && in_rc(mx, my, cl_rc);
+            fill_frosted_round_rect(s, cl_rc.x, cl_rc.y, cl_rc.w, cl_rc.h, 16, g.C_SURFACE,
+                                    hov ? 188 : (lt ? 156 : 132), 1, glass_rim(48, 200));
+            draw_text_centered_bold(s, f, 12.5f, cl_rc.x, cl_rc.x + cl_rc.w, cl_rc.y + 8,
+                                    hov ? g.C_HEART : g.C_TXT2, "清除");
+            if (vis_hit(cl_rc)) g.set_hits.push_back(SetHit{ cl_rc, SET_BG_CLEAR, 0 });
+            bx_r = cl_rc.x - 8;
+        }
+        {
+            const Rect pk_rc{ bx_r - 92, ry + 15, 92, 32 };
+            const bool hov = vis_hit(pk_rc) && in_rc(mx, my, pk_rc);
+            fill_frosted_round_rect(s, pk_rc.x, pk_rc.y, pk_rc.w, pk_rc.h, 16,
+                                    mix_col(g.C_SURFACE, g.C_ACCENT, 0.22f),
+                                    hov ? 204 : 184, 1, glass_rim(56, 210));
+            draw_text_centered_bold(s, f, 12.5f, pk_rc.x, pk_rc.x + pk_rc.w, pk_rc.y + 8, g.C_ACCENT, "选择图片");
+            if (vis_hit(pk_rc)) g.set_hits.push_back(SetHit{ pk_rc, SET_BG_PICK, 0 });
+        }
+        y += card_h + 22;
+    }
+
+    draw_text_bold(s, f, 13.0f, cx0 + 8, y, g.C_TXT3, "播放");
+    y += 24;
+    {
+        constexpr int row_h = 62;
+        draw_card_box(y, row_h);
+        draw_text_bold(s, f, 15.0f, cx0 + 20, y + 12, g.C_TXT, "播放模式");
+        draw_text_max(s, f, 12.5f, cx0 + 20, y + 36, g.C_TXT2, "切换队列顺序、单曲循环或随机播放", card_w - 230);
+        const char* pm_opts[3] = { "顺序", "单曲", "随机" };
+        const int pm_ids[3] = { SET_PLAY_MODE, SET_PLAY_MODE, SET_PLAY_MODE };
+        draw_segmented(cx0 + card_w - 194, y + 15, pm_opts, 3, g.play_mode % 3, 56, mx, my, pm_ids,
+                       vis_hit(Rect{ cx0, y, card_w, row_h }));
+        y += row_h + 22;
+    }
+
+    draw_text_bold(s, f, 13.0f, cx0 + 8, y, g.C_TXT3, "曲库");
+    y += 24;
+    {
+        const int nd = static_cast<int>(g.scan_dirs.size());
+        constexpr int hdr_h = 62;
+        constexpr int dir_h = 46;
+        const int list_h = std::max(1, nd) * dir_h + 8;
+        const int card_h = hdr_h + list_h;
+        draw_card_box(y, card_h);
+
+        char lib_sub[64]{};
+        std::snprintf(lib_sub, sizeof(lib_sub), "已添加 %d 个目录  ·  共 %d 首曲目", nd, static_cast<int>(g.tracks.size()));
+        draw_text_bold(s, f, 15.0f, cx0 + 20, y + 12, g.C_TXT, "本地音乐目录");
+        draw_text_max(s, f, 12.5f, cx0 + 20, y + 36, g.C_TXT2, lib_sub, card_w - 230);
+
+        const Rect rs_rc{ cx0 + card_w - 20 - 82, y + 15, 82, 32 };
+        const Rect ad_rc{ rs_rc.x - 8 - 88, y + 15, 88, 32 };
+        {
+            const bool hov = vis_hit(rs_rc) && in_rc(mx, my, rs_rc);
+            fill_frosted_round_rect(s, rs_rc.x, rs_rc.y, rs_rc.w, rs_rc.h, 16, g.C_SURFACE,
+                                    hov ? 188 : (lt ? 156 : 132), 1, glass_rim(48, 200));
+            draw_text_centered_bold(s, f, 12.5f, rs_rc.x, rs_rc.x + rs_rc.w, rs_rc.y + 8, g.C_TXT2, "刷新扫描");
+            if (vis_hit(rs_rc)) g.set_hits.push_back(SetHit{ rs_rc, SET_RESCAN, 0 });
+        }
+        {
+            const bool hov = vis_hit(ad_rc) && in_rc(mx, my, ad_rc);
+            fill_frosted_round_rect(s, ad_rc.x, ad_rc.y, ad_rc.w, ad_rc.h, 16,
+                                    mix_col(g.C_SURFACE, g.C_ACCENT, 0.22f),
+                                    hov ? 204 : 184, 1, glass_rim(56, 210));
+            draw_text_centered_bold(s, f, 12.5f, ad_rc.x, ad_rc.x + ad_rc.w, ad_rc.y + 8, g.C_ACCENT, "添加目录");
+            if (vis_hit(ad_rc)) g.set_hits.push_back(SetHit{ ad_rc, SET_ADD_DIR, 0 });
+        }
+
+        fill_rect_a(s, cx0 + 18, y + hdr_h - 1, card_w - 36, 1, g.C_DIV, col_a(g.C_DIV) + 12);
+
+        int dy = y + hdr_h + 4;
+        if (nd == 0) {
+            draw_text_bold(s, f, 13.0f, cx0 + 20, dy + 14, g.C_TXT3, "尚未添加任何目录，点击右上角“添加目录”即可导入歌曲");
+        } else {
+            for (int di = 0; di < nd; ++di) {
+                icon_folder(s, cx0 + 22, dy + 16, 15, g.C_TXT2);
+                draw_text_max_bold(s, f, 13.0f, cx0 + 44, dy + 14, g.C_TXT, g.scan_dirs[di].c_str(), card_w - 134);
+                const Rect rm_rc{ cx0 + card_w - 78, dy + 9, 58, 28 };
+                const bool hov = vis_hit(rm_rc) && in_rc(mx, my, rm_rc);
+                fill_frosted_round_rect(s, rm_rc.x, rm_rc.y, rm_rc.w, rm_rc.h, 14, g.C_SURFACE,
+                                        hov ? 188 : (lt ? 150 : 126), 1, glass_rim(44, 190));
+                draw_text_centered_bold(s, f, 12.0f, rm_rc.x, rm_rc.x + rm_rc.w, rm_rc.y + 6,
+                                        hov ? g.C_HEART : g.C_TXT2, "移除");
+                if (vis_hit(rm_rc)) g.set_hits.push_back(SetHit{ rm_rc, SET_DIR_REMOVE, di });
+                dy += dir_h;
+            }
+        }
+        y += card_h + 22;
+    }
+
+    draw_text_bold(s, f, 13.0f, cx0 + 8, y, g.C_TXT3, "关于与诊断");
+    y += 24;
+    {
+        constexpr int card_h = 126;
+        draw_card_box(y, card_h);
+        draw_text_bold(s, f, 15.0f, cx0 + 20, y + 16, g.C_TXT, "Sir\xC3\xA8ne v1.2.6  ·  本地无损音频播放器");
+        char adiag[256]{};
+        audio_get_diag(adiag, sizeof(adiag));
+        for (int i = 0; adiag[i]; ++i) {
+            if (adiag[i] == '\n' || adiag[i] == '\r' || adiag[i] == '\t') adiag[i] = ' ';
+        }
+        draw_text_max(s, f, 12.5f, cx0 + 20, y + 42, g.C_TXT2, adiag, card_w - 40);
+        draw_text_max(s, f, 12.5f, cx0 + 20, y + 66, g.C_TXT2, lyrics_last_diag(), card_w - 40);
+        char sc[128]{};
+        std::snprintf(sc, sizeof(sc), "DPI 缩放 %.2fx  |  窗口 %dx%d  |  仅限个人学习与音频界面技术研究",
+                      g.ui_scale, g.W, g.H);
+        draw_text_max(s, f, 12.0f, cx0 + 20, y + 92, g.C_TXT3, sc, card_w - 40);
+        y += card_h + 12;
+    }
+
+    g.set_content_h = static_cast<float>(y - start_y);
+    canvas_reset_clip(s);
+
+    const float mscr = max_scroll_px();
+    if (mscr > 1.0f) {
+        const int sbx = g.W - 14;
+        const int sb_h = std::max(40, vh - DOCK_CLEAR);
+        g.rc_sb_track = Rect{ g.W - 26, top_y + 6, 24, sb_h };
+        const int th = g.rc_sb_track.h;
+        const int thumb_h = std::min(th, std::max(38, static_cast<int>(static_cast<float>(vh) / static_cast<float>(vh + mscr) * static_cast<float>(th))));
+        const int ty = g.rc_sb_track.y + static_cast<int>((g.scroll_px / mscr) * static_cast<float>(th - thumb_h));
+        fill_round_rect_aa(s, sbx, g.rc_sb_track.y, 6, th, 3, g.C_TRACK_BG);
+        fill_round_rect_aa(s, sbx, ty, 6, thumb_h, 3, g.sb_drag ? g.C_ACCENT : g.C_TXT3);
+    }
 }
 
 void handle_text_input_events() {
@@ -2592,17 +2994,26 @@ void update_hover_cursor(int mx, int my) {
             in_rc(mx, my, g.rc_lyr_theme) || in_rc(mx, my, g.rc_lyr_fs)) hand = true;
         for (const auto& lh : g.lyr_hits) if (!hand && in_rc(mx, my, lh.rc)) hand = true;
     } else if (!hand) {
-        if (in_rc(mx, my, g.rc_fab_import) || in_rc(mx, my, g.rc_menu_btn) ||
+        if (in_rc(mx, my, g.rc_search_box) || in_rc(mx, my, g.rc_search_clear) ||
             in_rc(mx, my, g.rc_nav_all) || in_rc(mx, my, g.rc_nav_fav) || in_rc(mx, my, g.rc_nav_lyr) ||
-            in_rc(mx, my, g.rc_nav_rescan) || in_rc(mx, my, g.rc_nav_bg) || in_rc(mx, my, g.rc_nav_view) ||
-            in_rc(mx, my, g.rc_nav_theme) || in_rc(mx, my, g.rc_nav_diag) || in_rc(mx, my, g.rc_search_box) ||
-            in_rc(mx, my, g.rc_sort_btn) || in_rc(mx, my, g.rc_view_pill) || in_rc(mx, my, g.rc_bg_btn) ||
-            in_rc(mx, my, g.rc_bg_clear) || in_rc(mx, my, g.rc_fs_btn) || in_rc(mx, my, g.rc_dir_chip) ||
-            in_rc(mx, my, g.rc_sb_track) || in_rc(mx, my, g.rc_hero_card)) {
+            in_rc(mx, my, g.rc_nav_rescan) || in_rc(mx, my, g.rc_nav_set) || in_rc(mx, my, g.rc_nav_add) ||
+            in_rc(mx, my, g.rc_nav_bg) || in_rc(mx, my, g.rc_nav_theme) || in_rc(mx, my, g.rc_sb_track)) {
             hand = true;
         }
-        for (const auto& fc : g.rc_filt_chips) if (!hand && in_rc(mx, my, fc)) hand = true;
-        for (const auto& gh : g.grid_hits) if (!hand && in_rc(mx, my, gh.card)) hand = true;
+        for (const auto& dr : g.rc_dir_rows) if (!hand && in_rc(mx, my, dr.rc)) hand = true;
+        if (!hand && g.page == PAGE_SETTINGS) {
+            if (in_rc(mx, my, g.rc_set_back)) hand = true;
+            for (const auto& sh : g.set_hits) if (!hand && in_rc(mx, my, sh.rc)) hand = true;
+        } else if (!hand) {
+            if (in_rc(mx, my, g.rc_sort_btn) || in_rc(mx, my, g.rc_view_pill) || in_rc(mx, my, g.rc_bg_btn) ||
+                in_rc(mx, my, g.rc_bg_clear) || in_rc(mx, my, g.rc_fs_btn) ||
+                in_rc(mx, my, g.rc_hero_play) || in_rc(mx, my, g.rc_hero_cov)) {
+                hand = true;
+            }
+            for (const auto& bn : g.rc_banner_next) if (!hand && in_rc(mx, my, bn)) hand = true;
+            for (const auto& fc : g.rc_filt_chips) if (!hand && in_rc(mx, my, fc)) hand = true;
+            for (const auto& gh : g.grid_hits) if (!hand && in_rc(mx, my, gh.card)) hand = true;
+        }
     }
     const int ih = hand ? 1 : 0;
     if (ih != g.ui_cursor_hand) { g.ui_cursor_hand = ih; be_set_cursor(ih); }
@@ -2627,6 +3038,9 @@ void handle_input() {
     while ((dp = be_poll_dropped_path()) != nullptr) handle_dropped(dp);
 
     handle_text_input_events();
+    if (!g.search_q.empty() && g.search_focused && g.page != PAGE_LIBRARY) {
+        g.page = PAGE_LIBRARY;
+    }
 
     const int wh = be_wheel_delta();
     if (wh != 0) {
@@ -2663,6 +3077,10 @@ void handle_input() {
         }
     } else if (hk == 'b') {
         pick_bg_image_action();
+    } else if (hk == 'd') {
+        capture_fade();
+        g.page = (g.page == PAGE_SETTINGS) ? PAGE_LIBRARY : PAGE_SETTINGS;
+        g.scroll_px = g.scroll_target = g.scroll_vel = 0.0f;
     }
 
     TouchInfo ti{};
@@ -2675,13 +3093,8 @@ void handle_input() {
             g.search_focused = 0;
             be_text_input(0);
         }
-        if (g.show_diag) {
-            constexpr int mw = 520, mh = 250;
-            if (!in_rect(ti.x, ti.y, (g.W - mw) / 2, (g.H - mh) / 2, mw, mh)) g.show_diag = 0;
-            else return;
-        }
 
-        if (g.page == PAGE_LIBRARY) {
+        if (g.page != PAGE_LYRICS) {
             if (in_rc(ti.x, ti.y, g.rc_search_clear) && !g.search_q.empty()) {
                 g.search_q.clear();
                 rebuild_visible();
@@ -2689,12 +3102,9 @@ void handle_input() {
                 return;
             }
             if (in_rc(ti.x, ti.y, g.rc_search_box)) {
+                if (g.page != PAGE_LIBRARY) { capture_fade(); g.page = PAGE_LIBRARY; }
                 g.search_focused = 1;
                 be_text_input(1);
-                return;
-            }
-            if (in_rc(ti.x, ti.y, g.rc_fab_import)) {
-                open_folder_dialog();
                 return;
             }
         }
@@ -2735,10 +3145,10 @@ void handle_input() {
         }
         if (in_rc(ti.x, ti.y, g.rc_bar_lyr) || in_rc(ti.x, ti.y, g.rc_bar_cov)) {
             capture_fade();
-            g.page = (g.page == PAGE_LIBRARY) ? PAGE_LYRICS : PAGE_LIBRARY;
+            g.page = (g.page == PAGE_LYRICS) ? PAGE_LIBRARY : PAGE_LYRICS;
             return;
         }
-        if (g.page == PAGE_LIBRARY && in_rc(ti.x, ti.y, g.rc_island)) return;
+        if (g.page != PAGE_LYRICS && in_rc(ti.x, ti.y, g.rc_island)) return;
 
         if (g.page == PAGE_LYRICS) {
             if (in_rc(ti.x, ti.y, g.rc_back_lib))     { capture_fade(); g.page = PAGE_LIBRARY; return; }
@@ -2759,30 +3169,109 @@ void handle_input() {
             return;
         }
 
-        if (in_rc(ti.x, ti.y, g.rc_menu_btn) || in_rc(ti.x, ti.y, g.rc_nav_all)) {
+        if (in_rc(ti.x, ti.y, g.rc_nav_all)) {
+            if (g.page != PAGE_LIBRARY) { capture_fade(); g.page = PAGE_LIBRARY; }
             g.lib_tab = TAB_ALL; g.active_dir = -1; g.fmt_filter = FMT_FILT_ALL;
-            rebuild_visible(); g.scroll_px = g.scroll_target = 0.0f; return;
+            rebuild_visible(); g.scroll_px = g.scroll_target = g.scroll_vel = 0.0f; return;
         }
-        if (in_rc(ti.x, ti.y, g.rc_nav_fav)) { g.lib_tab = TAB_FAV; rebuild_visible(); g.scroll_px = g.scroll_target = 0.0f; return; }
+        if (in_rc(ti.x, ti.y, g.rc_nav_fav)) {
+            if (g.page != PAGE_LIBRARY) { capture_fade(); g.page = PAGE_LIBRARY; }
+            g.lib_tab = TAB_FAV; rebuild_visible(); g.scroll_px = g.scroll_target = g.scroll_vel = 0.0f; return;
+        }
         if (in_rc(ti.x, ti.y, g.rc_nav_lyr)) { capture_fade(); g.page = PAGE_LYRICS; return; }
         if (in_rc(ti.x, ti.y, g.rc_nav_rescan)) { scan_library(1); return; }
-        if (in_rc(ti.x, ti.y, g.rc_nav_bg)) { pick_bg_image_action(); return; }
-        if (in_rc(ti.x, ti.y, g.rc_nav_view) || in_rc(ti.x, ti.y, g.rc_view_pill)) {
-            capture_fade(); g.view_grid = !g.view_grid; g.scroll_px = g.scroll_target = 0.0f; save_settings(); return;
+        if (in_rc(ti.x, ti.y, g.rc_nav_set)) {
+            capture_fade();
+            g.page = (g.page == PAGE_SETTINGS) ? PAGE_LIBRARY : PAGE_SETTINGS;
+            g.scroll_px = g.scroll_target = g.scroll_vel = 0.0f; return;
         }
+        if (in_rc(ti.x, ti.y, g.rc_nav_add)) { open_folder_dialog(); return; }
+        for (const auto& dr : g.rc_dir_rows) {
+            if (in_rc(ti.x, ti.y, dr.rc)) {
+                if (g.page != PAGE_LIBRARY) { capture_fade(); g.page = PAGE_LIBRARY; }
+                g.lib_tab = TAB_DIR; g.active_dir = dr.dir_idx;
+                rebuild_visible(); g.scroll_px = g.scroll_target = g.scroll_vel = 0.0f; return;
+            }
+        }
+        if (in_rc(ti.x, ti.y, g.rc_nav_bg))    { pick_bg_image_action(); return; }
         if (in_rc(ti.x, ti.y, g.rc_nav_theme)) { toggle_theme_smooth(); return; }
-        if (in_rc(ti.x, ti.y, g.rc_nav_diag))  { g.show_diag = !g.show_diag; return; }
+
+        if (g.page == PAGE_SETTINGS) {
+            if (in_rc(ti.x, ti.y, g.rc_set_back)) {
+                capture_fade(); g.page = PAGE_LIBRARY; g.scroll_px = g.scroll_target = g.scroll_vel = 0.0f; return;
+            }
+            for (const auto& sh : g.set_hits) {
+                if (!in_rc(ti.x, ti.y, sh.rc)) continue;
+                switch (sh.id) {
+                case SET_THEME_LIGHT:
+                    if (!g.is_light) toggle_theme_smooth();
+                    return;
+                case SET_THEME_DARK:
+                    if (g.is_light) toggle_theme_smooth();
+                    return;
+                case SET_ACCENT_FOLLOW:
+                    g.accent_follow = !g.accent_follow;
+                    save_settings();
+                    step_palette_and_ambient();
+                    show_toast(g.accent_follow ? "主题色已设为跟随封面" : "已切换为默认主题色");
+                    return;
+                case SET_BG_PICK:
+                    pick_bg_image_action();
+                    return;
+                case SET_BG_CLEAR:
+                    clear_bg_image();
+                    return;
+                case SET_PLAY_MODE:
+                    g.play_mode = sh.arg % 3;
+                    save_settings();
+                    show_toast(g.play_mode == MODE_LOOP_ONE ? "单曲循环" : (g.play_mode == MODE_SHUFFLE ? "随机播放" : "顺序循环"));
+                    return;
+                case SET_ADD_DIR:
+                    open_folder_dialog();
+                    return;
+                case SET_RESCAN:
+                    scan_library(1);
+                    return;
+                case SET_DIR_REMOVE:
+                    if (sh.arg >= 0 && sh.arg < static_cast<int>(g.scan_dirs.size())) {
+                        g.scan_dirs.erase(g.scan_dirs.begin() + sh.arg);
+                        if (g.lib_tab == TAB_DIR) { g.lib_tab = TAB_ALL; g.active_dir = -1; }
+                        else if (g.active_dir > sh.arg) --g.active_dir;
+                        else if (g.active_dir == sh.arg) g.active_dir = -1;
+                        save_dirs_cfg();
+                        scan_library(1);
+                    }
+                    return;
+                default: break;
+                }
+            }
+            if (in_rc(ti.x, ti.y, g.rc_sb_track)) {
+                g.sb_drag = 1;
+                g.drag_mode = DRAG_SB;
+                const float f = clampf(static_cast<float>(ti.y - g.rc_sb_track.y) / static_cast<float>(g.rc_sb_track.h), 0.0f, 1.0f);
+                g.scroll_target = g.scroll_px = f * max_scroll_px();
+                return;
+            }
+            if (in_rect(ti.x, ti.y, g.ui_list_x0, g.ui_list_y0, g.ui_list_x1 - g.ui_list_x0, g.ui_list_y1 - g.ui_list_y0)) {
+                g.drag_mode = DRAG_LIST;
+                g.drag_start_x = ti.x;
+                g.drag_start_y = ti.y;
+                g.drag_moved = 0;
+                g.drag_cand_track = -1;
+                g.drag_cand_fav = 0;
+                g.drag_cand_hero = 0;
+                g.scroll_target = g.scroll_px;
+            }
+            return;
+        }
 
         if (in_rc(ti.x, ti.y, g.rc_bg_clear))  { clear_bg_image(); return; }
         if (in_rc(ti.x, ti.y, g.rc_bg_btn))    { pick_bg_image_action(); return; }
         if (in_rc(ti.x, ti.y, g.rc_sort_btn))  { g.sort_mode = (g.sort_mode + 1) % 4; rebuild_visible(); save_settings(); return; }
-        if (in_rc(ti.x, ti.y, g.rc_fs_btn))    { be_toggle_fullscreen(); return; }
-        if (in_rc(ti.x, ti.y, g.rc_dir_chip)) {
-            if (g.lib_tab != TAB_DIR) { g.lib_tab = TAB_DIR; g.active_dir = 0; }
-            else if (g.active_dir + 1 < static_cast<int>(g.scan_dirs.size())) ++g.active_dir;
-            else { g.lib_tab = TAB_ALL; g.active_dir = -1; }
-            rebuild_visible(); g.scroll_px = g.scroll_target = 0.0f; return;
+        if (in_rc(ti.x, ti.y, g.rc_view_pill)) {
+            capture_fade(); g.view_grid = !g.view_grid; g.scroll_px = g.scroll_target = g.scroll_vel = 0.0f; save_settings(); return;
         }
+        if (in_rc(ti.x, ti.y, g.rc_fs_btn))    { be_toggle_fullscreen(); return; }
         for (int i = 0; i < 5; ++i) {
             if (in_rc(ti.x, ti.y, g.rc_filt_chips[i])) {
                 g.fmt_filter = i; rebuild_visible(); g.scroll_px = g.scroll_target = 0.0f; return;
@@ -2797,15 +3286,6 @@ void handle_input() {
         }
 
         if (in_rect(ti.x, ti.y, g.ui_list_x0, g.ui_list_y0, g.ui_list_x1 - g.ui_list_x0, g.ui_list_y1 - g.ui_list_y0)) {
-            if (in_rc(ti.x, ti.y, g.rc_hero_prog) && g.playing_idx >= 0 && g.ui_hpx1 > g.ui_hpx0) {
-                const double dur = audio_duration();
-                if (dur > 0.1) {
-                    g.scrub_drag = 2;
-                    g.drag_mode = DRAG_HERO_PROG;
-                    g.scrub_sec = static_cast<double>(clampf(static_cast<float>(ti.x - g.ui_hpx0) / static_cast<float>(g.ui_hpx1 - g.ui_hpx0), 0.0f, 1.0f)) * dur;
-                }
-                return;
-            }
             if (in_rc(ti.x, ti.y, g.rc_hero_play)) { toggle_play_pause_action(); return; }
 
             g.drag_mode = DRAG_LIST;
@@ -2817,6 +3297,12 @@ void handle_input() {
             g.drag_cand_hero = 0;
             g.scroll_target = g.scroll_px;
 
+            for (int i = 0; i < 3; ++i) {
+                if (g.banner_next_idx[i] >= 0 && in_rc(ti.x, ti.y, g.rc_banner_next[i])) {
+                    g.drag_cand_track = g.banner_next_idx[i];
+                    return;
+                }
+            }
             if (in_rc(ti.x, ti.y, g.rc_hero_cov) || in_rc(ti.x, ti.y, g.rc_hero_card)) {
                 g.drag_cand_hero = 1;
                 return;
@@ -2831,8 +3317,6 @@ void handle_input() {
     if (ti.held) {
         if (g.scrub_drag == 1 && g.ui_px1 > g.ui_px0) {
             g.scrub_sec = static_cast<double>(clampf(static_cast<float>(ti.x - g.ui_px0) / static_cast<float>(g.ui_px1 - g.ui_px0), 0.0f, 1.0f)) * audio_duration();
-        } else if (g.scrub_drag == 2 && g.ui_hpx1 > g.ui_hpx0) {
-            g.scrub_sec = static_cast<double>(clampf(static_cast<float>(ti.x - g.ui_hpx0) / static_cast<float>(g.ui_hpx1 - g.ui_hpx0), 0.0f, 1.0f)) * audio_duration();
         } else if (g.vol_drag && g.ui_vx1 > g.ui_vx0) {
             const float f = clampf(static_cast<float>(ti.x - g.ui_vx0) / static_cast<float>(g.ui_vx1 - g.ui_vx0), 0.0f, 1.0f);
             audio_set_volume(f);
@@ -2918,12 +3402,15 @@ void handle_input() {
     const uint64_t kd = be_btn_down();
     if (!g.search_focused && kd) {
         if (kd & BTN_B) {
-            if (g.show_diag) g.show_diag = 0;
-            else if (g.page == PAGE_LYRICS) { capture_fade(); g.page = PAGE_LIBRARY; }
+            if (g.page == PAGE_SETTINGS || g.page == PAGE_LYRICS) {
+                capture_fade();
+                g.page = PAGE_LIBRARY;
+                g.scroll_px = g.scroll_target = g.scroll_vel = 0.0f;
+            }
         }
         if (kd & BTN_A) toggle_play_pause_action();
         if (kd & BTN_X) { if (g.playing_idx >= 0) toggle_fav(g.playing_idx); }
-        if (kd & BTN_Y) { capture_fade(); g.page = (g.page == PAGE_LIBRARY) ? PAGE_LYRICS : PAGE_LIBRARY; }
+        if (kd & BTN_Y) { capture_fade(); g.page = (g.page == PAGE_LYRICS) ? PAGE_LIBRARY : PAGE_LYRICS; }
         if (kd & BTN_ZL) { if (!g.tracks.empty()) load_track(pick_prev(g.playing_idx)); }
         if (kd & BTN_ZR) { if (!g.tracks.empty()) load_track(pick_next(g.playing_idx, 1)); }
         if (kd & BTN_LEFT)  { if (g.playing_idx >= 0) audio_seek(std::max(0.0, audio_position() - 5.0)); }
@@ -2971,11 +3458,15 @@ void render_frame(int mx, int my) {
         draw_library_header(mx, my);
         if (g.view_grid) draw_grid_view(mx, my);
         else             draw_table_view(mx, my);
-        draw_dynamic_island(mx, my);
+        draw_player_bar(mx, my);
+    } else if (g.page == PAGE_SETTINGS) {
+        draw_frosted_ambient_bg(0);
+        draw_nav_rail(mx, my);
+        draw_settings_view(mx, my);
+        draw_player_bar(mx, my);
     } else {
         draw_immersive_view(mx, my);
     }
-    draw_diag_modal();
 
     if (g.toast_timer > 0 && !g.toast_text.empty()) {
         Canvas* s = g.screen.get();
@@ -3098,6 +3589,8 @@ int main(int argc, char** argv) {
         if (g.hov_card_idx >= 0) {
             g.hov_card_t = clampf(g.hov_card_t + static_cast<float>(g.dt) * 9.0f, 0.0f, 1.0f);
         }
+        const float tgt_sw = g.accent_follow ? 1.0f : 0.0f;
+        g.accent_sw_t += (tgt_sw - g.accent_sw_t) * (1.0f - std::exp(-14.0f * static_cast<float>(g.dt)));
 
         const float mscr = max_scroll_px();
         if (g.drag_mode != DRAG_LIST && std::fabs(g.scroll_vel) > 4.0f) {
@@ -3126,7 +3619,8 @@ int main(int argc, char** argv) {
                                    (std::fabs(g.scroll_target - g.scroll_px) > 1.0f);
         if (scroll_moving) g.scroll_rest_timer = 0.0f;
         else g.scroll_rest_timer += static_cast<float>(g.dt);
-        const bool theme_moving  = std::fabs(g.theme_pos - (g.is_light ? 1.0f : 0.0f)) > 0.001f;
+        const bool theme_moving = (std::fabs(g.theme_pos - (g.is_light ? 1.0f : 0.0f)) > 0.001f) ||
+                                  (std::fabs(g.accent_sw_t - tgt_sw) > 0.002f);
         if (!scroll_moving && !theme_moving && !g.fade_armed && g.scroll_rest_timer >= 0.22f) {
             pump_background_meta();
         }
@@ -3164,10 +3658,17 @@ int main(int argc, char** argv) {
                 dump_rgba_shot(dump_dir, "shot_day.rgba");
                 g.is_light = 0; g.theme_pos = 0.0f; g.light_t = 0.0f;
                 step_palette_and_ambient();
+                g.page = PAGE_SETTINGS;
+                g.scroll_px = g.scroll_target = 0.0f;
+                g.fade_armed = 0;
+            }
+            if (dump_frame == 108) {
+                render_frame(0, 0);
+                dump_rgba_shot(dump_dir, "shot_set.rgba");
                 g.page = PAGE_LYRICS;
                 g.fade_armed = 0;
             }
-            if (dump_frame == 112) {
+            if (dump_frame == 124) {
                 render_frame(0, 0);
                 dump_rgba_shot(dump_dir, "shot_lyr.rgba");
                 break;
