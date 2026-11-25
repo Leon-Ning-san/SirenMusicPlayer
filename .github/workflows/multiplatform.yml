@@ -109,9 +109,6 @@ jobs:
       image: devkitpro/devkita64:latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Switch open-source portlibs
-        run: |
-          dkp-pacman -Sy --noconfirm --needed switch-sdl2 switch-mesa switch-libdrm_nouveau
       - name: Build Sirene Switch NRO (Open-Source Homebrew)
         run: |
           source /etc/profile.d/devkit-env.sh || true
