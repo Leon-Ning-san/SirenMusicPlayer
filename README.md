@@ -35,7 +35,7 @@
 | **Windows x64** | `Sirene-v1.2.7-Windows-x64.exe` | C++17 + Win32 GDI 原生物理像素（DPI V2）+ WinMM + Media Foundation | 缩放/全屏/高分屏 1:1 物理像素锐利渲染；`Segoe UI` + `Microsoft YaHei UI` 原生清晰排版；支持触控惯性滚动、桌面快捷方式自动创建、**任务栏悬停缩略图播控栏（上一首 / 播放·暂停 / 下一首）**、UTF-16 拖放、M4A/AAC/MP4/ALAC/OPUS/WMA 解码 |
 | **Linux x86_64** | `Sirene-v1.2.7-Linux-x86_64.tar.gz` | C++17 + SDL2 HiDPI + SDL2 Audio + FFmpeg 管道 | 原生 HiDPI 渲染、`SDL_SetWindowIcon` 图标、支持常见有损/无损音频格式 |
 | **macOS Apple Silicon** | `Sirene-v1.2.7-macOS-arm64.zip` | C++17 + SDL2 Retina + SDL2 Audio + AudioToolbox | 独立 `Sirène.app`（Retina 物理像素锐利渲染 + CoreAudio 原生解码） |
-| **Switch (Homebrew `.nro`)** | `Sirene-v1.2.6-Switch.nro` | C + `libnx` + SDL2 + `dr_libs` | 纯开源自制程序环境运行（无任何官方 SDK）；支持 1080p/720p 渲染、触屏与手柄按键控制、本地无损解码与 `.lrc` 歌词 |
+| **Switch (Homebrew `.nro`)** | `Sirene-v1.2.7-Switch.nro` | C + `libnx` + SDL2 + `dr_libs` | 纯开源自制程序环境运行（无任何官方 SDK）；支持 1080p/720p 渲染、触屏与手柄按键控制、本地无损解码与 `.lrc` 歌词 |
 
 ## 核心学习与实现特性（v1.2.7）
 
@@ -60,11 +60,15 @@
    - **macOS**：解压 `Sirene-v1.2.7-macOS-arm64.zip` 打开 `Sirène.app`（如系统拦截可执行 `xattr -cr Sirène.app`）。
 2. 自动扫描用户 `Music` 文件夹，也可点击左侧边栏 **`我的目录 +`** 或在 **设置 → 曲库** 中添加/移除任意合法持有的本地音频目录。
 
-## 补充：`.nro` 独立版文件使用说明（开源自制环境）
+## 补充：Switch 版 `.nro` 独立文件使用与免责说明（开源自制环境）
 
-> *(仅供跨平台学习归档使用；运行环境与合规责任由使用者自行承担，与任何硬件厂商或原作者无关。)*
+> [!IMPORTANT]
+> **Switch 版（Homebrew `.nro`）专项学习研究与免责声明**
+> - 本分支产物 `Sirene-v1.2.7-Switch.nro` 仅采用 `libnx`、`SDL2`、`dr_libs` 等**纯开源自制程序工具链**编写与构建，**完全不包含任何官方商业 SDK、专利固件代码或系统破解/绕过机制**，仅供个人嵌入式与跨平台音视频渲染技术学习交流。
+> - 本项目与任何游戏机制造商及第三方公司**没有任何官方关联、合作或授权关系**；软件本身亦**不内置、不提供任何受版权保护的音频内容**，仅用于读取与播放用户本人合法持有的本地音频文件。
+> - 下载、放置、运行 `.nro` 文件及所使用自制环境产生的一切技术、设备或法律合规责任**均由使用者自行承担，与原作者及仓库维护者无关**（详见 [DISCLAIMER.md](DISCLAIMER.md)）。
 
-1. **放置 `.nro` 文件**：从 [Releases v1.2.6](../../releases/tag/v1.2.6) 下载独立 `.nro` 文件（如 `Sirene-v1.2.6-Switch.nro`），放入存储卡 `sdmc:/switch/Sirene.nro`（或 `sdmc:/switch/Sirene/Sirene.nro`）。
+1. **放置 `.nro` 文件**：前往 [**Releases v1.2.7 页面**](../../releases/tag/v1.2.7) 下载对应版本的独立 `.nro` 文件（`Sirene-v1.2.7-Switch.nro`），放入存储卡 `sdmc:/switch/Sirene.nro`（或 `sdmc:/switch/Sirene/Sirene.nro`）。
 2. **准备本地音乐与歌词**：将个人合法持有的本地音频文件（支持 MP3 / FLAC / WAV / OGG / AIFF / M4A 等）及同名 `.lrc` 歌词放入 `sdmc:/music/` 目录（程序亦会自动扫描存储卡非系统目录下的音频文件）。
 3. **启动与使用**：在开源自制程序菜单（Homebrew Menu）中找到并运行 `Sirène`，即可通过触控或物理按键浏览曲库、搜索歌曲、调节进度并播放本地音乐与外挂/内嵌歌词。
 

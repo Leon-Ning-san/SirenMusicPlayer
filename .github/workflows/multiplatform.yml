@@ -7,6 +7,7 @@ on:
       - 'src/**'
       - 'desktop_src/**'
       - 'desktop_deps/**'
+      - 'Makefile'
       - 'Makefile.desktop'
       - '.github/workflows/multiplatform.yml'
   workflow_dispatch:
@@ -102,23 +103,54 @@ jobs:
           name: macos-arm64
           path: Sirene-v1.2.7-macOS-arm64.zip
 
+  build-switch:
+    runs-on: ubuntu-latest
+    container:
+      image: devkitpro/devkita64:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Switch open-source portlibs
+        run: |
+          dkp-pacman -Sy --noconfirm --needed switch-sdl2 switch-mesa switch-libdrm_nouveau
+      - name: Build Sirene Switch NRO (Open-Source Homebrew)
+        run: |
+          source /etc/profile.d/devkit-env.sh || true
+          export DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
+          export PATH="$DEVKITPRO/tools/bin:$DEVKITPRO/devkitA64/bin:$PATH"
+          make clean && make -j$(nproc)
+          mv PureMusic.nro Sirene-v1.2.7-Switch.nro
+      - uses: actions/upload-artifact@v4
+        with:
+          name: switch-nro
+          path: Sirene-v1.2.7-Switch.nro
+
   publish-to-release:
-    needs: [ build-windows, build-linux, build-macos ]
+    needs: [ build-windows, build-linux, build-macos, build-switch ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-      - name: Upload desktop packages to Release v1.2.7
+      - name: Upload all platform packages to Release v1.2.7
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          NOTES=$(cat <<'EOF'
+          Sirène v1.2.7 跨平台学习研究版（Windows / Linux / macOS / Switch Homebrew .nro）。
+
+          > **学习研究与免责声明**：本项目为纯个人技术学习与开源研究作品（非商业用途），与任何硬件厂商或第三方平台无任何官方关联，不包含任何非授权系统修改或绕过机制；Switch `.nro` 仅基于 `libnx` / `SDL2` / `dr_libs` 等纯开源自制工具链构建，仅用于合法本地音频学习测试。一切下载、编译与运行风险均由使用者自行承担，与原作者无关（详见 `DISCLAIMER.md`）。
+          EOF
+          )
+          NOTES="$(printf '%s' "$NOTES" | sed 's/^          //')"
           if ! gh release view v1.2.7 --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            gh release create v1.2.7 --repo "${{ github.repository }}" --title "Sirène v1.2.7 (Lua Plugins · Frameless Lyrics · Lightweight Sidebar)" --notes "Sirène v1.2.7 Multi-Platform Release"
+            gh release create v1.2.7 --repo "${{ github.repository }}" --title "Sirène v1.2.7 (Lua Plugins · Frameless Lyrics · Lightweight Sidebar · Switch .nro)" --notes "$NOTES"
+          else
+            gh release edit v1.2.7 --repo "${{ github.repository }}" --notes "$NOTES"
           fi
           gh release upload v1.2.7 \
             artifacts/windows-x64/Sirene-v1.2.7-Windows-x64.exe \
             artifacts/linux-x86_64/Sirene-v1.2.7-Linux-x86_64.tar.gz \
             artifacts/macos-arm64/Sirene-v1.2.7-macOS-arm64.zip \
+            artifacts/switch-nro/Sirene-v1.2.7-Switch.nro \
             --repo "${{ github.repository }}" \
             --clobber
