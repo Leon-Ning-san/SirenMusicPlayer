@@ -315,11 +315,13 @@ struct AppState {
     std::vector<PluginInfo> plg_list;
     std::vector<SetHit> plg_hits;
     std::vector<std::string> plg_hit_keys;
+    std::string nav_tooltip;
+    Rect nav_tooltip_rc{};
 };
 
 AppState g;
 
-inline int side_w() { return g.W >= 1000 ? 220 : 76; }
+inline int side_w() { return g.W >= 1000 ? 210 : 76; }
 
 inline uint8_t theme_shadow(uint8_t dark_a) {
     return static_cast<uint8_t>(static_cast<float>(dark_a) * (1.0f - 0.58f * g.light_t));
@@ -1785,6 +1787,8 @@ void pump_background_meta() {
 void reset_hit_rects() {
     g.rc_menu_btn = g.rc_nav_all = g.rc_nav_fav = g.rc_nav_lyr = g.rc_nav_plg = g.rc_nav_add = g.rc_nav_set = {};
     g.rc_nav_bg = g.rc_nav_theme = g.rc_nav_rescan = {};
+    g.nav_tooltip.clear();
+    g.nav_tooltip_rc = {};
     g.rc_search_box = g.rc_search_clear = g.rc_sort_btn = g.rc_fs_btn = g.rc_view_pill = g.rc_bg_btn = g.rc_bg_clear = {};
     g.rc_filt_chips.fill(Rect{});
     g.rc_dir_chip = {};
@@ -1815,163 +1819,224 @@ void draw_nav_rail(int mx, int my) {
     const bool wide = (sw > 120);
 
     fill_frosted_round_rect(s, 0, 0, sw, g.H, 0, g.C_RAIL, lt ? 182 : 172, 3, 0);
-    fill_rect_a(s, sw - 1, 0, 1, g.H, g.C_DIV, col_a(g.C_DIV) + 16);
+    fill_rect_a(s, sw - 1, 0, 1, g.H, g.C_DIV, col_a(g.C_DIV) + 12);
+
+    // Lightweight translucent surface tokens (bg-white/5, bg-white/8 in dark mode)
+    const uint32_t pill_sel_bg = mix_col_a(COL(255, 255, 255, 21), COL(18, 24, 38, 16), g.light_t);
+    const uint32_t pill_hov_bg = mix_col_a(COL(255, 255, 255, 13), COL(18, 24, 38, 10), g.light_t);
+    const uint32_t ind_blue    = mix_col(COL(74, 162, 255, 255), COL(44, 118, 245, 255), g.light_t);
 
     if (wide) {
-        g.rc_search_box = Rect{ 14, 16, sw - 28, 36 };
+        g.rc_search_box = Rect{ 14, 16, sw - 28, 34 };
         const bool s_hov = in_rc(mx, my, g.rc_search_box);
-        fill_frosted_round_rect(s, g.rc_search_box.x, g.rc_search_box.y, g.rc_search_box.w, g.rc_search_box.h, 18,
-                                g.C_SURFACE, g.search_focused ? 205 : (s_hov ? 185 : (lt ? 168 : 138)), 2,
-                                g.search_focused ? glass_rim(96, 230) : glass_rim(52, 205));
-        stroke_round_rect_aa(s, g.rc_search_box.x, g.rc_search_box.y, g.rc_search_box.w, g.rc_search_box.h, 18,
-                             g.search_focused ? 2 : 1, g.search_focused ? g.C_ACCENT : g.C_DIV,
-                             g.search_focused ? 210 : (col_a(g.C_DIV) + 14));
-        icon_search(s, g.rc_search_box.x + 17, g.rc_search_box.y + 17, 5,
-                    g.search_focused ? g.C_ACCENT : g.C_TXT3);
-        const int tmax = g.rc_search_box.w - 64;
+        const uint32_t s_bg = g.search_focused
+                              ? mix_col_a(COL(255, 255, 255, 24), COL(18, 24, 38, 22), g.light_t)
+                              : (s_hov ? mix_col_a(COL(255, 255, 255, 18), COL(18, 24, 38, 16), g.light_t)
+                                       : mix_col_a(COL(255, 255, 255, 13), COL(18, 24, 38, 11), g.light_t));
+        fill_round_rect_aa(s, g.rc_search_box.x, g.rc_search_box.y, g.rc_search_box.w, g.rc_search_box.h, 17, s_bg);
+        icon_search(s, g.rc_search_box.x + 16, g.rc_search_box.y + 16, 5,
+                    g.search_focused ? ind_blue : g.C_TXT3);
+        const int tmax = g.rc_search_box.w - 60;
         if (!g.search_q.empty()) {
-            draw_text_max_bold(s, f, 13.0f, g.rc_search_box.x + 31, g.rc_search_box.y + 10,
+            draw_text_max_bold(s, f, 13.0f, g.rc_search_box.x + 30, g.rc_search_box.y + 9,
                                g.C_TXT, g.search_q.c_str(), tmax);
-            g.rc_search_clear = Rect{ g.rc_search_box.x + g.rc_search_box.w - 30, g.rc_search_box.y + 3, 28, 30 };
-            fill_round_rect_aa(s, g.rc_search_clear.x + 3, g.rc_search_clear.y + 3, 24, 24, 12,
+            g.rc_search_clear = Rect{ g.rc_search_box.x + g.rc_search_box.w - 28, g.rc_search_box.y + 3, 26, 28 };
+            fill_round_rect_aa(s, g.rc_search_clear.x + 2, g.rc_search_clear.y + 2, 24, 24, 12,
                                in_rc(mx, my, g.rc_search_clear) ? g.C_GLASS_ACT : g.C_GLASS);
-            draw_text_centered_bold(s, f, 12.5f, g.rc_search_clear.x, g.rc_search_clear.x + 28,
+            draw_text_centered_bold(s, f, 12.0f, g.rc_search_clear.x, g.rc_search_clear.x + 26,
                                     g.rc_search_clear.y + 7, g.C_TXT2, "x");
         } else {
-            draw_text_max_bold(s, f, 12.5f, g.rc_search_box.x + 31, g.rc_search_box.y + 10,
+            draw_text_max_bold(s, f, 12.5f, g.rc_search_box.x + 30, g.rc_search_box.y + 9,
                                g.C_TXT3, "搜索歌曲、歌手...", tmax);
         }
     } else {
-        g.rc_search_box = Rect{ 16, 16, sw - 32, 36 };
+        g.rc_search_box = Rect{ 16, 16, sw - 32, 34 };
         const bool s_act = g.search_focused || !g.search_q.empty();
-        fill_frosted_round_rect(s, g.rc_search_box.x, g.rc_search_box.y, g.rc_search_box.w, g.rc_search_box.h, 18,
-                                s_act ? mix_col(g.C_SURFACE, g.C_ACCENT, 0.25f) : g.C_SURFACE,
-                                in_rc(mx, my, g.rc_search_box) ? 185 : (lt ? 164 : 138), 2, glass_rim(54, 205));
-        icon_search(s, sw / 2 - 1, 33, 6, s_act ? g.C_ACCENT : g.C_TXT2);
+        const uint32_t s_bg = s_act ? pill_sel_bg : (in_rc(mx, my, g.rc_search_box) ? pill_hov_bg : mix_col_a(COL(255, 255, 255, 13), COL(18, 24, 38, 11), g.light_t));
+        fill_round_rect_aa(s, g.rc_search_box.x, g.rc_search_box.y, g.rc_search_box.w, g.rc_search_box.h, 17, s_bg);
+        icon_search(s, sw / 2 - 1, 32, 6, s_act ? ind_blue : g.C_TXT2);
+        if (in_rc(mx, my, g.rc_search_box)) { g.nav_tooltip = "搜索歌曲"; g.nav_tooltip_rc = g.rc_search_box; }
     }
 
     int active_slot = -1;
-    if (g.page == PAGE_SETTINGS) active_slot = 5;
-    else if (g.page == PAGE_PLUGINS) active_slot = 3;
+    if (g.page == PAGE_PLUGINS) active_slot = 3;
     else if (g.page == PAGE_LYRICS) active_slot = 2;
-    else if (g.lib_tab == TAB_ALL) active_slot = 0;
-    else if (g.lib_tab == TAB_FAV) active_slot = 1;
+    else if (g.page == PAGE_LIBRARY && g.lib_tab == TAB_ALL) active_slot = 0;
+    else if (g.page == PAGE_LIBRARY && g.lib_tab == TAB_FAV) active_slot = 1;
 
-    constexpr int nav_y0 = 66;
-    const int nav_step = wide ? 38 : 42;
-    const int pill_h = wide ? 34 : 36;
+    constexpr int nav_y0 = 64;
+    const int nav_step = wide ? 36 : 42;
+    const int pill_h = wide ? 32 : 36;
     if (active_slot >= 0) {
         const float tgt_pill_y = static_cast<float>(nav_y0 + active_slot * nav_step);
         const float kp = 1.0f - std::exp(-16.0f * static_cast<float>(g.dt));
         g.rail_pill_y += (tgt_pill_y - g.rail_pill_y) * kp;
         const int py = static_cast<int>(g.rail_pill_y + 0.5f);
-        fill_frosted_round_rect(s, 12, py, sw - 24, pill_h, 10,
-                                mix_col(g.C_SURFACE, g.C_ACCENT, 0.30f), 192, 2, glass_rim(58, 205));
-        stroke_round_rect_aa(s, 12, py, sw - 24, pill_h, 10, 1, g.C_ACCENT, 125);
+        fill_round_rect_aa(s, 12, py, sw - 24, pill_h, 9, pill_sel_bg);
+        fill_round_rect_aa(s, 12, py + 6, 3, pill_h - 12, 1, ind_blue);
     }
 
-    const char* labels_wide[6]  = { "为你推荐", "我喜欢的", "歌词", "扩展插件", "刷新曲库", "设置" };
-    const char* labels_short[6] = { "推荐", "喜欢", "歌词", "插件", "刷新", "设置" };
-    Rect* nav_rcs[6] = { &g.rc_nav_all, &g.rc_nav_fav, &g.rc_nav_lyr, &g.rc_nav_plg, &g.rc_nav_rescan, &g.rc_nav_set };
-    for (int i = 0; i < 6; ++i) {
+    const char* labels_wide[4]  = { "为你推荐", "我喜欢的", "歌词", "扩展插件" };
+    const char* labels_short[4] = { "推荐", "喜欢", "歌词", "插件" };
+    Rect* nav_rcs[4] = { &g.rc_nav_all, &g.rc_nav_fav, &g.rc_nav_lyr, &g.rc_nav_plg };
+    for (int i = 0; i < 4; ++i) {
         const int iy = nav_y0 + i * nav_step;
         *nav_rcs[i] = Rect{ 12, iy, sw - 24, pill_h };
         const int is_act = (i == active_slot);
         const int is_hov = in_rc(mx, my, *nav_rcs[i]);
         if (is_hov && !is_act) {
-            fill_round_rect_aa(s, 12, iy, sw - 24, pill_h, 10, g.C_GLASS_HOV);
+            fill_round_rect_aa(s, 12, iy, sw - 24, pill_h, 9, pill_hov_bg);
         }
-        const uint32_t icol = is_act ? g.C_ACCENT : (is_hov ? g.C_TXT : g.C_TXT2);
-        const int cy = iy + (wide ? 17 : 13);
+        if (!wide && is_hov) { g.nav_tooltip = labels_wide[i]; g.nav_tooltip_rc = *nav_rcs[i]; }
+
+        const uint32_t icol = is_act ? (i == 1 ? g.C_HEART : ind_blue) : (is_hov ? g.C_TXT : g.C_TXT2);
+        const int cy = iy + (wide ? 16 : 13);
         const int ix = wide ? 24 : (sw / 2 - 8);
         if (i == 0) icon_library_grid(s, ix, cy - 8, 16, icol);
         else if (i == 1) icon_heart_ex(s, ix, cy - 7, 16, is_act ? g.C_HEART : icol, is_act);
         else if (i == 2) icon_lyrics_waves(s, ix, cy - 8, 16, icol);
-        else if (i == 3) icon_plug(s, ix, cy - 8, 16, icol);
-        else if (i == 4) icon_refresh(s, ix + 8, cy, 7, icol);
-        else icon_gear(s, ix + 8, cy, 7, icol);
+        else icon_plug(s, ix, cy - 8, 16, icol);
 
         if (wide) {
-            draw_text_max_bold(s, f, 14.0f, 50, iy + 8,
-                               is_act ? g.C_ACCENT : (is_hov ? g.C_TXT : g.C_TXT2),
-                               labels_wide[i], sw - 64);
+            draw_text_max_bold(s, f, 13.0f, 48, iy + 8,
+                               is_act ? g.C_TXT : (is_hov ? g.C_TXT : g.C_TXT2),
+                               labels_wide[i], sw - 60);
         } else {
-            draw_text_centered_bold(s, f, 11.0f, 8, sw - 8, iy + 22,
-                                    is_act ? g.C_ACCENT : g.C_TXT2, labels_short[i]);
+            draw_text_centered_bold(s, f, 10.5f, 8, sw - 8, iy + 22,
+                                    is_act ? g.C_TXT : g.C_TXT2, labels_short[i]);
         }
     }
 
-    const int div_y = nav_y0 + 6 * nav_step + 8;
-    fill_rect_a(s, 14, div_y, sw - 28, 1, g.C_DIV, col_a(g.C_DIV) + 12);
-
-    const int bot_top = wide ? (g.H - 60) : (g.H - 104);
+    // Group with generous whitespace instead of horizontal divider lines
+    const int dir_y = nav_y0 + 4 * nav_step + 18;
+    const int bot_top = wide ? (g.H - 50) : (g.H - 134);
     if (wide) {
-        draw_text_bold(s, f, 12.0f, 18, div_y + 12, g.C_TXT3, "我的目录");
-        g.rc_nav_add = Rect{ sw - 38, div_y + 6, 26, 26 };
-        if (in_rc(mx, my, g.rc_nav_add)) {
-            fill_round_rect_aa(s, g.rc_nav_add.x, g.rc_nav_add.y, 26, 26, 13, g.C_GLASS_HOV);
-        }
-        icon_plus(s, g.rc_nav_add.x + 13, g.rc_nav_add.y + 13, 5,
-                  in_rc(mx, my, g.rc_nav_add) ? g.C_ACCENT : g.C_TXT2);
+        draw_text_bold(s, f, 12.0f, 16, dir_y + 4, g.C_TXT3, "我的目录");
 
-        int dy = div_y + 38;
+        g.rc_nav_rescan = Rect{ sw - 62, dir_y - 1, 24, 24 };
+        const bool hov_rs = in_rc(mx, my, g.rc_nav_rescan);
+        if (hov_rs) {
+            fill_round_rect_aa(s, g.rc_nav_rescan.x, g.rc_nav_rescan.y, 24, 24, 12, pill_hov_bg);
+            g.nav_tooltip = "刷新曲库";
+            g.nav_tooltip_rc = g.rc_nav_rescan;
+        }
+        icon_refresh(s, g.rc_nav_rescan.x + 12, g.rc_nav_rescan.y + 12, 6, hov_rs ? ind_blue : g.C_TXT3);
+
+        g.rc_nav_add = Rect{ sw - 34, dir_y - 1, 24, 24 };
+        const bool hov_add = in_rc(mx, my, g.rc_nav_add);
+        if (hov_add) {
+            fill_round_rect_aa(s, g.rc_nav_add.x, g.rc_nav_add.y, 24, 24, 12, pill_hov_bg);
+            g.nav_tooltip = "添加目录";
+            g.nav_tooltip_rc = g.rc_nav_add;
+        }
+        icon_plus(s, g.rc_nav_add.x + 12, g.rc_nav_add.y + 12, 5, hov_add ? ind_blue : g.C_TXT3);
+
+        int dy = dir_y + 30;
         const int n_dirs = static_cast<int>(g.scan_dirs.size());
         if (n_dirs == 0 && dy + 28 < bot_top) {
-            draw_text_bold(s, f, 12.5f, 18, dy + 6, g.C_TXT3, "点击 + 添加音乐目录");
+            draw_text_bold(s, f, 12.0f, 16, dy + 6, g.C_TXT3, "点击 + 添加音乐目录");
         }
-        for (int di = 0; di < n_dirs && dy + 32 <= bot_top - 6; ++di) {
-            Rect r{ 12, dy, sw - 24, 32 };
+        for (int di = 0; di < n_dirs && dy + 30 <= bot_top - 6; ++di) {
+            Rect r{ 12, dy, sw - 24, 30 };
             const bool is_act = (g.page == PAGE_LIBRARY && g.lib_tab == TAB_DIR && g.active_dir == di);
             const bool is_hov = in_rc(mx, my, r);
             if (is_act) {
-                fill_frosted_round_rect(s, r.x, r.y, r.w, r.h, 10,
-                                        mix_col(g.C_SURFACE, g.C_ACCENT, 0.28f), 186, 1, glass_rim(54, 200));
-                stroke_round_rect_aa(s, r.x, r.y, r.w, r.h, 10, 1, g.C_ACCENT, 115);
+                fill_round_rect_aa(s, r.x, r.y, r.w, r.h, 8, pill_sel_bg);
+                fill_round_rect_aa(s, r.x, r.y + 6, 3, r.h - 12, 1, ind_blue);
             } else if (is_hov) {
-                fill_round_rect_aa(s, r.x, r.y, r.w, r.h, 10, g.C_GLASS_HOV);
+                fill_round_rect_aa(s, r.x, r.y, r.w, r.h, 8, pill_hov_bg);
             }
-            const uint32_t dc = is_act ? g.C_ACCENT : (is_hov ? g.C_TXT : g.C_TXT2);
-            icon_folder(s, r.x + 10, r.y + 9, 14, dc);
+            const uint32_t dc = is_act ? ind_blue : (is_hov ? g.C_TXT : g.C_TXT2);
+            icon_folder(s, r.x + 12, r.y + 7, 16, dc);
             std::string dname = basename_str(g.scan_dirs[di]);
             if (dname.empty()) dname = g.scan_dirs[di];
-            draw_text_max_bold(s, f, 13.0f, r.x + 30, r.y + 8, dc, dname.c_str(), r.w - 38);
+            draw_text_max_bold(s, f, 13.0f, r.x + 36, r.y + 7, is_act ? g.C_TXT : dc, dname.c_str(), r.w - 42);
             g.rc_dir_rows.push_back(DirHit{ r, di });
-            dy += 34;
+            dy += 32;
         }
 
-        fill_rect_a(s, 14, bot_top, sw - 28, 1, g.C_DIV, col_a(g.C_DIV) + 12);
-        const int half_w = (sw - 32) / 2;
-        g.rc_nav_theme = Rect{ 12, g.H - 50, half_w, 36 };
-        g.rc_nav_bg    = Rect{ 12 + half_w + 8, g.H - 50, half_w, 36 };
+        // Single borderless icon-only footer row: Theme + Wallpaper + Settings
+        constexpr int b_w = 40, b_h = 34, b_gap = 14;
+        const int bx0 = (sw - (b_w * 3 + b_gap * 2)) / 2;
+        const int by = g.H - 44;
+        g.rc_nav_theme = Rect{ bx0, by, b_w, b_h };
+        g.rc_nav_bg    = Rect{ bx0 + b_w + b_gap, by, b_w, b_h };
+        g.rc_nav_set   = Rect{ bx0 + (b_w + b_gap) * 2, by, b_w, b_h };
 
-        fill_frosted_round_rect(s, g.rc_nav_theme.x, g.rc_nav_theme.y, half_w, 36, 10,
-                                g.C_SURFACE, in_rc(mx, my, g.rc_nav_theme) ? 185 : (lt ? 156 : 132), 1, glass_rim(48, 195));
-        icon_theme_orb(s, g.rc_nav_theme.x + 18, g.rc_nav_theme.y + 18, 7, mix_col(g.C_TXT2, g.C_ACCENT, g.light_t));
-        draw_text_bold(s, f, 12.5f, g.rc_nav_theme.x + 32, g.rc_nav_theme.y + 10, g.C_TXT2, lt ? "浅色" : "深色");
+        const bool hov_th = in_rc(mx, my, g.rc_nav_theme);
+        if (hov_th) {
+            fill_round_rect_aa(s, g.rc_nav_theme.x, g.rc_nav_theme.y, b_w, b_h, 9, pill_hov_bg);
+            g.nav_tooltip = lt ? "切换深色模式" : "切换浅色模式";
+            g.nav_tooltip_rc = g.rc_nav_theme;
+        }
+        icon_theme_orb(s, g.rc_nav_theme.x + b_w / 2, by + b_h / 2, 8,
+                       hov_th ? g.C_TXT : mix_col(g.C_TXT2, ind_blue, g.light_t));
 
         const bool has_bg = !g.bg_img_raw.empty();
-        fill_frosted_round_rect(s, g.rc_nav_bg.x, g.rc_nav_bg.y, half_w, 36, 10,
-                                has_bg ? mix_col(g.C_SURFACE, g.C_ACCENT, 0.22f) : g.C_SURFACE,
-                                in_rc(mx, my, g.rc_nav_bg) ? 185 : (lt ? 156 : 132), 1, glass_rim(48, 195));
-        icon_wallpaper(s, g.rc_nav_bg.x + 12, g.rc_nav_bg.y + 10, 15, has_bg ? g.C_ACCENT : g.C_TXT2);
-        draw_text_bold(s, f, 12.5f, g.rc_nav_bg.x + 32, g.rc_nav_bg.y + 10,
-                       has_bg ? g.C_ACCENT : g.C_TXT2, "壁纸");
-    } else {
-        if (div_y + 44 <= bot_top) {
-            g.rc_nav_add = Rect{ 14, div_y + 10, sw - 28, 36 };
-            if (in_rc(mx, my, g.rc_nav_add)) {
-                fill_round_rect_aa(s, g.rc_nav_add.x, g.rc_nav_add.y, g.rc_nav_add.w, 36, 10, g.C_GLASS_HOV);
-            }
-            icon_plus(s, sw / 2, g.rc_nav_add.y + 18, 6,
-                      in_rc(mx, my, g.rc_nav_add) ? g.C_ACCENT : g.C_TXT2);
+        const bool hov_bg = in_rc(mx, my, g.rc_nav_bg);
+        if (has_bg || hov_bg) {
+            fill_round_rect_aa(s, g.rc_nav_bg.x, g.rc_nav_bg.y, b_w, b_h, 9, has_bg ? pill_sel_bg : pill_hov_bg);
         }
-        fill_rect_a(s, 14, bot_top, sw - 28, 1, g.C_DIV, col_a(g.C_DIV) + 12);
-        g.rc_nav_bg    = Rect{ 14, g.H - 96, sw - 28, 38 };
-        g.rc_nav_theme = Rect{ 14, g.H - 52, sw - 28, 38 };
-        if (in_rc(mx, my, g.rc_nav_bg)) fill_round_rect_aa(s, g.rc_nav_bg.x, g.rc_nav_bg.y, g.rc_nav_bg.w, 38, 10, g.C_GLASS_HOV);
-        icon_wallpaper(s, sw / 2 - 8, g.rc_nav_bg.y + 11, 16, !g.bg_img_raw.empty() ? g.C_ACCENT : g.C_TXT2);
-        if (in_rc(mx, my, g.rc_nav_theme)) fill_round_rect_aa(s, g.rc_nav_theme.x, g.rc_nav_theme.y, g.rc_nav_theme.w, 38, 10, g.C_GLASS_HOV);
-        icon_theme_orb(s, sw / 2, g.rc_nav_theme.y + 19, 8, mix_col(g.C_TXT2, g.C_ACCENT, g.light_t));
+        if (hov_bg) {
+            g.nav_tooltip = "自定义壁纸";
+            g.nav_tooltip_rc = g.rc_nav_bg;
+        }
+        icon_wallpaper(s, g.rc_nav_bg.x + b_w / 2 - 8, by + b_h / 2 - 8, 16,
+                       has_bg ? ind_blue : (hov_bg ? g.C_TXT : g.C_TXT2));
+
+        const bool act_set = (g.page == PAGE_SETTINGS);
+        const bool hov_set = in_rc(mx, my, g.rc_nav_set);
+        if (act_set) {
+            fill_round_rect_aa(s, g.rc_nav_set.x, g.rc_nav_set.y, b_w, b_h, 9, pill_sel_bg);
+        } else if (hov_set) {
+            fill_round_rect_aa(s, g.rc_nav_set.x, g.rc_nav_set.y, b_w, b_h, 9, pill_hov_bg);
+        }
+        if (hov_set) {
+            g.nav_tooltip = "设置";
+            g.nav_tooltip_rc = g.rc_nav_set;
+        }
+        icon_gear(s, g.rc_nav_set.x + b_w / 2, by + b_h / 2, 7,
+                  act_set ? ind_blue : (hov_set ? g.C_TXT : g.C_TXT2));
+    } else {
+        if (dir_y + 72 <= bot_top) {
+            g.rc_nav_rescan = Rect{ 14, dir_y, sw - 28, 32 };
+            const bool hov_rs = in_rc(mx, my, g.rc_nav_rescan);
+            if (hov_rs) {
+                fill_round_rect_aa(s, g.rc_nav_rescan.x, g.rc_nav_rescan.y, g.rc_nav_rescan.w, 32, 9, pill_hov_bg);
+                g.nav_tooltip = "刷新曲库"; g.nav_tooltip_rc = g.rc_nav_rescan;
+            }
+            icon_refresh(s, sw / 2, g.rc_nav_rescan.y + 16, 6, hov_rs ? ind_blue : g.C_TXT2);
+
+            g.rc_nav_add = Rect{ 14, dir_y + 38, sw - 28, 32 };
+            const bool hov_add = in_rc(mx, my, g.rc_nav_add);
+            if (hov_add) {
+                fill_round_rect_aa(s, g.rc_nav_add.x, g.rc_nav_add.y, g.rc_nav_add.w, 32, 9, pill_hov_bg);
+                g.nav_tooltip = "添加目录"; g.nav_tooltip_rc = g.rc_nav_add;
+            }
+            icon_plus(s, sw / 2, g.rc_nav_add.y + 16, 5, hov_add ? ind_blue : g.C_TXT2);
+        }
+        g.rc_nav_theme = Rect{ 14, g.H - 126, sw - 28, 34 };
+        g.rc_nav_bg    = Rect{ 14, g.H - 86, sw - 28, 34 };
+        g.rc_nav_set   = Rect{ 14, g.H - 46, sw - 28, 34 };
+        if (in_rc(mx, my, g.rc_nav_theme)) {
+            fill_round_rect_aa(s, g.rc_nav_theme.x, g.rc_nav_theme.y, g.rc_nav_theme.w, 34, 9, pill_hov_bg);
+            g.nav_tooltip = lt ? "切换深色模式" : "切换浅色模式"; g.nav_tooltip_rc = g.rc_nav_theme;
+        }
+        icon_theme_orb(s, sw / 2, g.rc_nav_theme.y + 17, 8, mix_col(g.C_TXT2, ind_blue, g.light_t));
+
+        const bool has_bg = !g.bg_img_raw.empty();
+        if (has_bg || in_rc(mx, my, g.rc_nav_bg)) {
+            fill_round_rect_aa(s, g.rc_nav_bg.x, g.rc_nav_bg.y, g.rc_nav_bg.w, 34, 9, has_bg ? pill_sel_bg : pill_hov_bg);
+        }
+        if (in_rc(mx, my, g.rc_nav_bg)) { g.nav_tooltip = "自定义壁纸"; g.nav_tooltip_rc = g.rc_nav_bg; }
+        icon_wallpaper(s, sw / 2 - 8, g.rc_nav_bg.y + 9, 16, has_bg ? ind_blue : g.C_TXT2);
+
+        const bool act_set = (g.page == PAGE_SETTINGS);
+        if (act_set || in_rc(mx, my, g.rc_nav_set)) {
+            fill_round_rect_aa(s, g.rc_nav_set.x, g.rc_nav_set.y, g.rc_nav_set.w, 34, 9, act_set ? pill_sel_bg : pill_hov_bg);
+        }
+        if (in_rc(mx, my, g.rc_nav_set)) { g.nav_tooltip = "设置"; g.nav_tooltip_rc = g.rc_nav_set; }
+        icon_gear(s, sw / 2, g.rc_nav_set.y + 17, 7, act_set ? ind_blue : g.C_TXT2);
     }
 }
 
@@ -2366,7 +2431,7 @@ void draw_grid_view(int mx, int my) {
         }
 
         const int info_y = cy + cw + 9;
-        draw_text_max_bold(s, f, 14.5f, x + 5, info_y, is_play ? g.C_ACCENT : g.C_TXT, tr.title.c_str(), cw - 10);
+        draw_text_max_bold(s, f, 14.5f, x + 8, info_y, is_play ? g.C_ACCENT : g.C_TXT, tr.title.c_str(), cw - 16);
         if (tr.cached_dur_w < 0 || std::fabs(tr.dur - tr.cached_dur_val) > 0.25) {
             if (tr.dur > 0.5) fmt_time(tr.dur, tr.cached_dur_s, sizeof(tr.cached_dur_s));
             else std::snprintf(tr.cached_dur_s, sizeof(tr.cached_dur_s), "--:--");
@@ -2374,9 +2439,9 @@ void draw_grid_view(int mx, int my) {
             tr.cached_dur_w = text_width_bold(f, 12.0f, tr.cached_dur_s);
         }
         const int dw = tr.cached_dur_w;
-        draw_text_right_bold(s, f, 12.0f, x + cw - 5, info_y + 24, is_play ? g.C_ACCENT : g.C_TXT3, tr.cached_dur_s);
+        draw_text_right_bold(s, f, 12.0f, x + cw - 8, info_y + 24, is_play ? g.C_ACCENT : g.C_TXT3, tr.cached_dur_s);
         const char* sub = !tr.artist.empty() ? tr.artist.c_str() : (!tr.album.empty() ? tr.album.c_str() : tr.fmt);
-        draw_text_max_bold(s, f, 12.5f, x + 5, info_y + 23, g.C_TXT2, sub, cw - 18 - dw);
+        draw_text_max_bold(s, f, 12.5f, x + 8, info_y + 23, g.C_TXT2, sub, cw - 26 - dw);
 
         if (static_cast<int>(g.grid_hits.size()) < MAX_GRID_HITS) {
             Rect hit_card = card_rc;
@@ -4219,6 +4284,22 @@ void render_frame(int mx, int my) {
         draw_immersive_view(mx, my);
     }
     draw_qr_modal(mx, my);
+
+    if (!g.nav_tooltip.empty() && g.nav_tooltip_rc.w > 0 && !plugin_get_qr_state().active) {
+        Canvas* s = g.screen.get();
+        Font* f = g.font.get();
+        const bool lt = g.light_t > 0.5f;
+        const int tw = text_width_bold(f, 11.5f, g.nav_tooltip.c_str()) + 16;
+        constexpr int th = 24;
+        int tx = g.nav_tooltip_rc.x + (g.nav_tooltip_rc.w - tw) / 2;
+        tx = std::clamp(tx, 8, std::max(8, g.W - tw - 8));
+        int ty = g.nav_tooltip_rc.y - th - 6;
+        if (ty < 8) ty = g.nav_tooltip_rc.y + g.nav_tooltip_rc.h + 6;
+        fill_round_rect_shadow_fast(s, tx, ty + 2, tw, th, 6, theme_shadow(84));
+        fill_round_rect_aa(s, tx, ty, tw, th, 6, lt ? COL(248, 250, 254, 244) : COL(24, 28, 38, 240));
+        stroke_round_rect_aa(s, tx, ty, tw, th, 6, 1, g.C_DIV, col_a(g.C_DIV) + 28);
+        draw_text_centered_bold(s, f, 11.5f, tx, tx + tw, ty + 5, g.C_TXT, g.nav_tooltip.c_str());
+    }
 
     if (g.toast_timer > 0 && !g.toast_text.empty()) {
         Canvas* s = g.screen.get();
