@@ -36,7 +36,8 @@ constexpr int MINI_ART_SZ   = 54;
 constexpr int COVER_SRC_SZ  = 360;
 constexpr int ROW_H         = 54;
 constexpr int RAIL_W        = 76;
-constexpr int MAX_RIPPLES   = 8;
+constexpr int BG_ART_W      = 48;
+constexpr int BG_ART_H      = 27;
 constexpr int MAX_GRID_HITS = 96;
 constexpr int LYRIC_MAX_HITS = 48;
 constexpr float kPi         = 3.14159265358979323846f;
@@ -127,14 +128,6 @@ struct Track {
     std::vector<uint32_t> thumb;
 };
 
-struct ClickRipple {
-    int active = 0;
-    float x = 0.0f, y = 0.0f;
-    float r = 0.0f, max_r = 0.0f;
-    float alpha = 0.0f;
-    uint32_t col = 0;
-};
-
 enum { DRAG_NONE = 0, DRAG_ISLAND_PROG = 1, DRAG_HERO_PROG = 2, DRAG_VOL = 3, DRAG_SB = 4, DRAG_LIST = 5, DRAG_LYRICS = 6 };
 
 struct WrappedLyrLine {
@@ -200,7 +193,9 @@ struct AppState {
 
     float cur_qf[4][3] = { { 34, 88, 62 }, { 64, 128, 72 }, { 22, 48, 44 }, { 42, 92, 68 } };
     float tgt_qf[4][3] = { { 34, 88, 62 }, { 64, 128, 72 }, { 22, 48, 44 }, { 42, 92, 68 } };
-    std::array<ClickRipple, MAX_RIPPLES> click_ripples{};
+    std::array<float, BG_ART_W * BG_ART_H * 3> cur_bg_art{};
+    std::array<float, BG_ART_W * BG_ART_H * 3> tgt_bg_art{};
+    int bg_art_init = 0;
     uint32_t seed_rng = 0x9E3779B9u;
 
     double dt = 1.0 / 60.0;
@@ -212,7 +207,7 @@ struct AppState {
     float lyr_cam_y = 0.0f;
     int   lyr_cam_valid = 0;
     float lyr_manual_timer = 0.0f;
-    float wave_phase = 0.0f, ripple_time = 0.0f, scallop_rot = 0.0f;
+    float wave_phase = 0.0f, ambient_t = 0.0f, scallop_rot = 0.0f;
     float island_exp = 0.0f;
     float rail_pill_y = 92.0f;
     std::array<float, 28> bars{};
@@ -280,23 +275,6 @@ uint32_t next_rand() {
 void show_toast(const char* s) {
     g.toast_text = s ? s : "";
     g.toast_timer = 130;
-}
-
-void spawn_ripple(int x, int y, uint32_t col) {
-    int slot = 0;
-    float best_a = 999.0f;
-    for (int i = 0; i < MAX_RIPPLES; ++i) {
-        if (!g.click_ripples[i].active) { slot = i; break; }
-        if (g.click_ripples[i].alpha < best_a) { best_a = g.click_ripples[i].alpha; slot = i; }
-    }
-    auto& rp = g.click_ripples[slot];
-    rp.active = 1;
-    rp.x = static_cast<float>(x);
-    rp.y = static_cast<float>(y);
-    rp.r = 10.0f;
-    rp.max_r = static_cast<float>(std::max(g.W, g.H)) * 0.30f;
-    rp.alpha = 74.0f;
-    rp.col = col;
 }
 
 void capture_fade() {
@@ -384,6 +362,9 @@ void make_default_art(uint32_t* dst, int n, const char* key) {
 }
 
 void update_target_cover_colors() {
+    std::array<uint32_t, BG_ART_W * BG_ART_H> tmp_bg{};
+    const uint32_t* art_src = (g.cover_ready && !g.cover_src.empty()) ? g.cover_src.data()
+                            : (!g.poster_hero.empty() ? g.poster_hero.data() : nullptr);
     if (g.cover_ready && !g.cover_src.empty()) {
         for (int q = 0; q < 4; ++q) {
             const int qx = (q & 1) ? COVER_SRC_SZ / 2 : 0;
@@ -404,6 +385,34 @@ void update_target_cover_colors() {
     } else {
         constexpr float def[4][3] = { { 42, 118, 86 }, { 76, 152, 92 }, { 24, 62, 58 }, { 48, 108, 82 } };
         std::memcpy(g.tgt_qf, def, sizeof(def));
+    }
+
+    if (art_src) {
+        const int crop_h = std::max(16, (COVER_SRC_SZ * BG_ART_H) / BG_ART_W);
+        const int y0 = std::max(0, (COVER_SRC_SZ - crop_h) / 2);
+        resample_bilinear(art_src + static_cast<size_t>(y0) * COVER_SRC_SZ, COVER_SRC_SZ, crop_h,
+                          tmp_bg.data(), BG_ART_W, BG_ART_H);
+        box_blur(tmp_bg.data(), BG_ART_W, BG_ART_H, 5, 2);
+    } else {
+        for (int y = 0; y < BG_ART_H; ++y) {
+            const float fy = static_cast<float>(y) / static_cast<float>(BG_ART_H - 1);
+            for (int x = 0; x < BG_ART_W; ++x) {
+                const float fx = static_cast<float>(x) / static_cast<float>(BG_ART_W - 1);
+                const uint32_t t = mix_col(COL(42, 118, 86, 255), COL(76, 152, 92, 255), fx);
+                const uint32_t b = mix_col(COL(24, 62, 58, 255), COL(48, 108, 82, 255), fx);
+                tmp_bg[static_cast<size_t>(y) * BG_ART_W + x] = mix_col(t, b, fy);
+            }
+        }
+    }
+    for (int i = 0; i < BG_ART_W * BG_ART_H; ++i) {
+        const uint32_t c = tmp_bg[i];
+        g.tgt_bg_art[static_cast<size_t>(i) * 3 + 0] = static_cast<float>(c & 0xFFu);
+        g.tgt_bg_art[static_cast<size_t>(i) * 3 + 1] = static_cast<float>((c >> 8) & 0xFFu);
+        g.tgt_bg_art[static_cast<size_t>(i) * 3 + 2] = static_cast<float>((c >> 16) & 0xFFu);
+    }
+    if (!g.bg_art_init) {
+        g.cur_bg_art = g.tgt_bg_art;
+        g.bg_art_init = 1;
     }
 }
 
@@ -450,10 +459,14 @@ uint32_t boost_pastel_accent(float r, float gr, float b, int is_light) {
     return COL(static_cast<uint8_t>(r), static_cast<uint8_t>(gr), static_cast<uint8_t>(b), 255);
 }
 
-void step_palette_and_water_ripples() {
-    const float k = clampf(static_cast<float>(g.dt) * 3.8f, 0.02f, 1.0f);
+void step_palette_and_ambient() {
+    const float k = 1.0f - std::exp(-4.0f * static_cast<float>(g.dt));
     for (int q = 0; q < 4; ++q) {
         for (int c = 0; c < 3; ++c) g.cur_qf[q][c] += (g.tgt_qf[q][c] - g.cur_qf[q][c]) * k;
+    }
+    if (g.bg_art_init) {
+        constexpr size_t N = static_cast<size_t>(BG_ART_W) * BG_ART_H * 3;
+        for (size_t i = 0; i < N; ++i) g.cur_bg_art[i] += (g.tgt_bg_art[i] - g.cur_bg_art[i]) * k;
     }
 
     const float tgt_theme = g.is_light ? 1.0f : 0.0f;
@@ -529,86 +542,163 @@ void step_palette_and_water_ripples() {
         prev_dark_bar = want_dark_bar;
     }
 
-    for (auto& rp : g.click_ripples) {
-        if (!rp.active) continue;
-        rp.r += static_cast<float>(g.dt) * 320.0f;
-        rp.alpha -= static_cast<float>(g.dt) * 145.0f;
-        if (rp.alpha <= 1.0f || rp.r >= rp.max_r) rp.active = 0;
-    }
 }
 
-void draw_water_ripple_bg(int is_immersive) {
-    if (!g.screen) return;
-    constexpr int MW = 160, MH = 90;
-    if (!g.bg_mesh || g.bg_mesh->w != MW || g.bg_mesh->h != MH) g.bg_mesh.reset(canvas_new(MW, MH));
-    if (!g.bg_mesh) return;
+void draw_frosted_ambient_bg(int is_immersive) {
+    if (!g.screen || !g.screen->px) return;
+    if (!g.bg_art_init) update_target_cover_colors();
+
+    const int dw = g.screen->w, dh = g.screen->h;
+    if (dw <= 0 || dh <= 0) return;
 
     const float lt = g.light_t;
-    auto lerp_q = [&](int idx) {
-        const uint32_t raw = COL(static_cast<uint8_t>(g.cur_qf[idx][0]),
-                                 static_cast<uint8_t>(g.cur_qf[idx][1]),
-                                 static_cast<uint8_t>(g.cur_qf[idx][2]), 255);
-        return mix_col(clamp_mesh_lum(raw, 0), clamp_mesh_lum(raw, 1), lt);
-    };
-    const uint32_t q0 = lerp_q(0);
-    uint32_t q1 = lerp_q(1);
-    uint32_t q2 = lerp_q(2);
-    const uint32_t q3 = lerp_q(3);
+    const float art_w = (is_immersive ? 0.62f : 0.46f) * (1.0f - lt) + (is_immersive ? 0.54f : 0.40f) * lt;
+    const float breath = 0.04f * std::sin(g.ambient_t * 0.45f);
+    const float bx1 = (is_immersive ? 0.22f : 0.25f) + 0.05f * std::cos(g.ambient_t * 0.22f);
+    const float by1 = (is_immersive ? 0.42f : 0.30f) + 0.05f * std::sin(g.ambient_t * 0.19f);
 
-    q1 = mix_col(clamp_mesh_lum(mix_col(q1, g.C_ACCENT, 0.28f), 0),
-                 clamp_mesh_lum(mix_col(q1, g.C_ACCENT, 0.22f), 1), lt);
-    q2 = mix_col(q2, g.C_HERO_L, 0.20f);
+    const float ar = static_cast<float>(g.C_ACCENT & 0xFFu);
+    const float ag = static_cast<float>((g.C_ACCENT >> 8) & 0xFFu);
+    const float ab = static_cast<float>((g.C_ACCENT >> 16) & 0xFFu);
 
-    const float bass = (g.bars[0] + g.bars[1] + g.bars[2] + g.bars[3]) * 0.25f;
-    const float base_tint = is_immersive ? (0.48f - 0.16f * lt) : (0.24f - 0.10f * lt);
-    const uint32_t bg_floor = mix_col(COL(11, 13, 18, 255), COL(236, 240, 246, 255), lt);
+    constexpr int MN = BG_ART_W * BG_ART_H;
+    float mr[MN]{}, mg[MN]{}, mb[MN]{};
+    float tr[MN]{}, tg[MN]{}, tb[MN]{};
 
-    const float e1x = 0.28f + 0.04f * std::cos(g.ripple_time * 0.36f);
-    const float e1y = 0.35f + 0.04f * std::sin(g.ripple_time * 0.31f);
-    const float e2x = 0.74f + 0.05f * std::sin(g.ripple_time * 0.28f);
-    const float e2y = 0.66f + 0.04f * std::cos(g.ripple_time * 0.33f);
-    const float ph1 = g.ripple_time * 1.45f;
-    const float ph2 = g.ripple_time * 1.15f;
+    for (int y = 0; y < BG_ART_H; ++y) {
+        const float fy = static_cast<float>(y) / static_cast<float>(BG_ART_H - 1);
+        for (int x = 0; x < BG_ART_W; ++x) {
+            const float fx = static_cast<float>(x) / static_cast<float>(BG_ART_W - 1);
+            const size_t p = static_cast<size_t>(y) * BG_ART_W + x;
+            const size_t idx = p * 3;
+            const float dx = fx - bx1, dy = fy - by1;
+            const float glow = clampf(0.22f / (1.0f + (dx * dx + dy * dy) * 3.6f) + breath * (1.0f - fy) + 0.14f, 0.08f, 0.44f);
 
-    for (int y = 0; y < MH; ++y) {
-        const float fy = static_cast<float>(y) / static_cast<float>(MH - 1);
-        const float dy1 = (fy - e1y) * (fy - e1y) * 0.58f;
-        const float dy2 = (fy - e2y) * (fy - e2y) * 0.58f;
-        for (int x = 0; x < MW; ++x) {
-            const float fx = static_cast<float>(x) / static_cast<float>(MW - 1);
-            const float d1_2 = (fx - e1x) * (fx - e1x) * 1.35f + dy1;
-            const float d2_2 = (fx - e2x) * (fx - e2x) * 1.35f + dy2;
-            const float d1 = std::sqrt(d1_2);
-            const float d2 = std::sqrt(d2_2);
-            const float w1 = std::sin(d1 * 7.6f - ph1) / (1.0f + d1_2 * 2.8f);
-            const float w2 = std::sin(d2 * 6.2f - ph2) / (1.0f + d2_2 * 2.6f);
-            const float wave = (w1 + w2 * 0.78f) * 0.20f;
+            const float cr = g.cur_bg_art[idx + 0] + (ar - g.cur_bg_art[idx + 0]) * glow;
+            const float cg = g.cur_bg_art[idx + 1] + (ag - g.cur_bg_art[idx + 1]) * glow;
+            const float cb = g.cur_bg_art[idx + 2] + (ab - g.cur_bg_art[idx + 2]) * glow;
 
-            float crest = 0.0f;
-            if (wave > 0.14f) {
-                const float u = (wave - 0.14f) / 0.86f;
-                crest = u * u * (is_immersive ? 0.11f : 0.07f);
-            }
+            // Dark branch: clamp luminance <= 112 and blend gently with deep base
+            float dr = cr, dg = cg, db = cb;
+            const float dlum = 0.299f * dr + 0.587f * dg + 0.114f * db;
+            if (dlum > 112.0f) { const float sc = 112.0f / dlum; dr *= sc; dg *= sc; db *= sc; }
+            dr = dr * 0.66f + 18.0f * 0.34f;
+            dg = dg * 0.66f + 22.0f * 0.34f;
+            db = db * 0.66f + 30.0f * 0.34f;
+            dr = 11.0f + (dr - 11.0f) * art_w;
+            dg = 13.0f + (dg - 13.0f) * art_w;
+            db = 19.0f + (db - 19.0f) * art_w;
 
-            const float sx = clampf(fx + wave * 0.055f, 0.0f, 1.0f);
-            const float sy = clampf(fy - wave * 0.055f, 0.0f, 1.0f);
-            const uint32_t c_mesh = mix_col(mix_col(q0, q1, sx), mix_col(q2, q3, sx), sy);
+            // Light branch: soft milky tint
+            const float llum = 0.299f * cr + 0.587f * cg + 0.114f * cb;
+            const float lmix = (llum < 185.0f) ? 0.66f : 0.48f;
+            float lr = cr * (1.0f - lmix) + 236.0f * lmix;
+            float lg = cg * (1.0f - lmix) + 240.0f * lmix;
+            float lb = cb * (1.0f - lmix) + 246.0f * lmix;
+            lr = 228.0f + (lr - 228.0f) * art_w;
+            lg = 234.0f + (lg - 234.0f) * art_w;
+            lb = 244.0f + (lb - 244.0f) * art_w;
 
-            const float t_mix = clampf(base_tint + wave * (0.10f + bass * 0.05f), 0.08f, is_immersive ? 0.72f : 0.44f);
-            uint32_t px = mix_col(bg_floor, c_mesh, t_mix);
-            if (crest > 0.004f) px = mix_col(px, g.C_ACCENT, crest);
-            g.bg_mesh->px[static_cast<size_t>(y) * MW + x] = px;
+            mr[p] = dr + (lr - dr) * lt;
+            mg[p] = dg + (lg - dg) * lt;
+            mb[p] = db + (lb - db) * lt;
         }
     }
 
-    resample_bilinear(g.bg_mesh->px, MW, MH, g.screen->px, g.screen->w, g.screen->h);
+    // Two tiny float [1 2 1]/4 separable passes keep gradients ultra-smooth
+    for (int pass = 0; pass < 2; ++pass) {
+        for (int y = 0; y < BG_ART_H; ++y) {
+            const int row = y * BG_ART_W;
+            for (int x = 0; x < BG_ART_W; ++x) {
+                const int xl = x > 0 ? x - 1 : 0;
+                const int xr = (x + 1 < BG_ART_W) ? x + 1 : BG_ART_W - 1;
+                tr[row + x] = (mr[row + xl] + mr[row + x] * 2.0f + mr[row + xr]) * 0.25f;
+                tg[row + x] = (mg[row + xl] + mg[row + x] * 2.0f + mg[row + xr]) * 0.25f;
+                tb[row + x] = (mb[row + xl] + mb[row + x] * 2.0f + mb[row + xr]) * 0.25f;
+            }
+        }
+        for (int y = 0; y < BG_ART_H; ++y) {
+            const int yu = y > 0 ? y - 1 : 0;
+            const int yd = (y + 1 < BG_ART_H) ? y + 1 : BG_ART_H - 1;
+            const int ru = yu * BG_ART_W, rc = y * BG_ART_W, rd = yd * BG_ART_W;
+            for (int x = 0; x < BG_ART_W; ++x) {
+                mr[rc + x] = (tr[ru + x] + tr[rc + x] * 2.0f + tr[rd + x]) * 0.25f;
+                mg[rc + x] = (tg[ru + x] + tg[rc + x] * 2.0f + tg[rd + x]) * 0.25f;
+                mb[rc + x] = (tb[ru + x] + tb[rc + x] * 2.0f + tb[rd + x]) * 0.25f;
+            }
+        }
+    }
 
-    for (const auto& rp : g.click_ripples) {
-        if (!rp.active) continue;
-        const uint8_t a1 = static_cast<uint8_t>(clampf(rp.alpha, 0.0f, 120.0f));
-        if (a1 < 2) continue;
-        stroke_circle_aa(g.screen.get(), static_cast<int>(rp.x), static_cast<int>(rp.y),
-                         static_cast<int>(rp.r), 2, rp.col, a1);
+    uint32_t rb_q[MN]{}, g_q[MN]{};
+    for (int i = 0; i < MN; ++i) {
+        const int r12 = std::clamp(static_cast<int>(mr[i] * 16.0f + 0.5f), 0, 4080);
+        const int g12 = std::clamp(static_cast<int>(mg[i] * 16.0f + 0.5f), 0, 4080);
+        const int b12 = std::clamp(static_cast<int>(mb[i] * 16.0f + 0.5f), 0, 4080);
+        rb_q[i] = (static_cast<uint32_t>(b12) << 16) | static_cast<uint32_t>(r12);
+        g_q[i]  = static_cast<uint32_t>(g12);
+    }
+
+    int stk_x0[2560], stk_x1[2560], stk_wx[2560];
+    std::vector<int> dyn_x0, dyn_x1, dyn_wx;
+    int* ix0 = stk_x0;
+    int* ix1 = stk_x1;
+    int* wx  = stk_wx;
+    if (dw > 2560) {
+        dyn_x0.resize(dw); dyn_x1.resize(dw); dyn_wx.resize(dw);
+        ix0 = dyn_x0.data(); ix1 = dyn_x1.data(); wx = dyn_wx.data();
+    }
+
+    const float sx = static_cast<float>(BG_ART_W) / static_cast<float>(dw);
+    const float sy = static_cast<float>(BG_ART_H) / static_cast<float>(dh);
+    for (int x = 0; x < dw; ++x) {
+        const float fx = (static_cast<float>(x) + 0.5f) * sx - 0.5f;
+        int x0 = static_cast<int>(std::floor(fx));
+        int wxi = (x0 < 0) ? (x0 = 0, 0) : static_cast<int>((fx - static_cast<float>(x0)) * 16.0f + 0.5f);
+        if (x0 >= BG_ART_W) x0 = BG_ART_W - 1;
+        int x1 = x0 + 1;
+        if (x1 >= BG_ART_W) { x1 = BG_ART_W - 1; wxi = 0; }
+        ix0[x] = x0; ix1[x] = x1; wx[x] = std::clamp(wxi, 0, 16);
+    }
+
+    static constexpr uint8_t bayer4[4][4] = {
+        {  0,  8,  2, 10 },
+        { 12,  4, 14,  6 },
+        {  3, 11,  1,  9 },
+        { 15,  7, 13,  5 }
+    };
+
+    for (int y = 0; y < dh; ++y) {
+        const float fy = (static_cast<float>(y) + 0.5f) * sy - 0.5f;
+        int y0 = static_cast<int>(std::floor(fy));
+        int wyi = (y0 < 0) ? (y0 = 0, 0) : static_cast<int>((fy - static_cast<float>(y0)) * 16.0f + 0.5f);
+        if (y0 >= BG_ART_H) y0 = BG_ART_H - 1;
+        int y1 = y0 + 1;
+        if (y1 >= BG_ART_H) { y1 = BG_ART_H - 1; wyi = 0; }
+        wyi = std::clamp(wyi, 0, 16);
+        const uint32_t uwy = static_cast<uint32_t>(wyi), unwy = 16u - uwy;
+
+        const uint32_t* sr0_rb = rb_q + static_cast<size_t>(y0) * BG_ART_W;
+        const uint32_t* sr1_rb = rb_q + static_cast<size_t>(y1) * BG_ART_W;
+        const uint32_t* sr0_g  = g_q  + static_cast<size_t>(y0) * BG_ART_W;
+        const uint32_t* sr1_g  = g_q  + static_cast<size_t>(y1) * BG_ART_W;
+        uint32_t* drow = g.screen->px + static_cast<size_t>(y) * dw;
+        const uint8_t* brow = bayer4[y & 3];
+
+        for (int x = 0; x < dw; ++x) {
+            const int p0 = ix0[x], p1 = ix1[x];
+            const uint32_t uwx = static_cast<uint32_t>(wx[x]), unwx = 16u - uwx;
+            const uint32_t d = static_cast<uint32_t>(brow[x & 3]) << 4;
+
+            const uint32_t trb = ((sr0_rb[p0] * unwx + sr0_rb[p1] * uwx + 0x00080008u) >> 4) & 0x0FFF0FFFu;
+            const uint32_t brb = ((sr1_rb[p0] * unwx + sr1_rb[p1] * uwx + 0x00080008u) >> 4) & 0x0FFF0FFFu;
+            const uint32_t orb = ((trb * unwy + brb * uwy + d * 0x00010001u) >> 8) & 0x00FF00FFu;
+
+            const uint32_t tg_i = (sr0_g[p0] * unwx + sr0_g[p1] * uwx + 8u) >> 4;
+            const uint32_t bg_i = (sr1_g[p0] * unwx + sr1_g[p1] * uwx + 8u) >> 4;
+            const uint32_t og_i = (tg_i * unwy + bg_i * uwy + d) & 0x0000FF00u;
+
+            drow[x] = 0xFF000000u | orb | og_i;
+        }
     }
 }
 
@@ -1048,7 +1138,6 @@ void load_track(int idx) {
     resample_cover_square(g.cover_src.data(), COVER_SRC_SZ, COVER_SRC_SZ, g.cover_mini.data(), MINI_ART_SZ, 1);
     g.cover_ready = 1;
     update_target_cover_colors();
-    spawn_ripple(g.W / 2, g.H / 2, g.C_ACCENT);
 
     g.lyr_req_id = 0;
     g.lyr.reset(lyrics_load_ex(g.tracks[idx].path.c_str(), g.p_title.c_str(), g.p_artist.c_str()));
@@ -1262,17 +1351,22 @@ void reset_hit_rects() {
     g.lyr_hits.clear();
 }
 
+inline uint8_t glass_rim(uint8_t dark_a = 48, uint8_t light_a = 205) {
+    return static_cast<uint8_t>(static_cast<float>(dark_a) + (static_cast<float>(light_a) - static_cast<float>(dark_a)) * g.light_t);
+}
+
 void draw_nav_rail(int mx, int my) {
     Canvas* s = g.screen.get();
     Font* f = g.font.get();
-    fill_rect_a(s, 0, 0, RAIL_W, g.H, g.C_RAIL, col_a(g.C_RAIL));
-    fill_rect_a(s, RAIL_W - 1, 0, 1, g.H, g.C_DIV, col_a(g.C_DIV));
+    const bool lt = g.light_t > 0.5f;
+    fill_frosted_round_rect(s, 0, 0, RAIL_W, g.H, 0, g.C_RAIL, lt ? 172 : 160, 3, 0);
+    fill_rect_a(s, RAIL_W - 1, 0, 1, g.H, g.C_DIV, col_a(g.C_DIV) + 14);
 
     const int top_y = 18;
     g.rc_menu_btn = Rect{ 16, top_y, 44, 44 };
     if (in_rc(mx, my, g.rc_menu_btn)) fill_round_rect_aa(s, 14, top_y - 2, 48, 48, 16, g.C_GLASS_HOV);
     if (!g.poster_ico.empty()) {
-        fill_round_rect_shadow(s, 19, top_y + 3, 38, 38, 14, 70);
+        fill_round_rect_shadow(s, 19, top_y + 3, 38, 38, 14, theme_shadow(70));
         blit_rgb_round_fit(s, 18, top_y + 2, 40, 40, g.poster_ico.data(), 40, 40, 14);
         stroke_round_rect_aa(s, 18, top_y + 2, 40, 40, 14, 1, g.C_ACCENT, 130);
     } else {
@@ -1290,8 +1384,8 @@ void draw_nav_rail(int mx, int my) {
     const float kp = 1.0f - std::exp(-16.0f * static_cast<float>(g.dt));
     g.rail_pill_y += (tgt_pill_y - g.rail_pill_y) * kp;
 
-    fill_round_rect_aa_a(s, 12, static_cast<int>(g.rail_pill_y + 0.5f), RAIL_W - 24, 34, 17,
-                         mix_col(g.C_SURFACE, g.C_ACCENT, 0.34f), static_cast<uint8_t>(210 + 15 * g.light_t));
+    fill_frosted_round_rect(s, 12, static_cast<int>(g.rail_pill_y + 0.5f), RAIL_W - 24, 34, 17,
+                            mix_col(g.C_SURFACE, g.C_ACCENT, 0.34f), 192, 2, glass_rim(62, 210));
     stroke_round_rect_aa(s, 12, static_cast<int>(g.rail_pill_y + 0.5f), RAIL_W - 24, 34, 17, 1, g.C_ACCENT, 130);
 
     const char* labels[4] = { "曲库", "喜欢", "歌词", "刷新" };
@@ -1336,6 +1430,7 @@ void draw_library_header(int mx, int my) {
     Font* f = g.font.get();
     const int lx = RAIL_W + 26;
     const int rx = g.W - 26;
+    const bool lt = g.light_t > 0.5f;
 
     std::string title = "音乐库";
     if (g.lib_tab == TAB_FAV) title = "我喜欢的";
@@ -1350,32 +1445,41 @@ void draw_library_header(int mx, int my) {
     snprintf(badge, sizeof(badge), "%d 首歌曲", static_cast<int>(g.vis_idx.size()));
     const int bw = text_width_bold(f, 13.0f, badge) + 24;
     const int bx = lx + tw + 12;
-    fill_round_rect_aa_a(s, bx, 21, bw, 28, 14, mix_col(g.C_SURFACE, g.C_ACCENT, 0.28f), 205);
-    stroke_round_rect_aa(s, bx, 21, bw, 28, 14, 1, g.C_ACCENT, 100);
+    fill_frosted_round_rect(s, bx, 21, bw, 28, 14, mix_col(g.C_SURFACE, g.C_ACCENT, 0.28f), 196, 2, glass_rim(54, 195));
+    stroke_round_rect_aa(s, bx, 21, bw, 28, 14, 1, g.C_ACCENT, 105);
     draw_text_centered_bold(s, f, 13.0f, bx, bx + bw, 27, g.C_ACCENT, badge);
 
     constexpr int fs_sz = 40;
     g.rc_fs_btn = Rect{ rx - fs_sz, 15, fs_sz, fs_sz };
-    fill_round_rect_aa(s, g.rc_fs_btn.x, g.rc_fs_btn.y, fs_sz, fs_sz, 14,
-                       in_rc(mx, my, g.rc_fs_btn) ? g.C_GLASS_HOV : g.C_GLASS);
-    stroke_round_rect_aa(s, g.rc_fs_btn.x, g.rc_fs_btn.y, fs_sz, fs_sz, 14, 1, g.C_DIV, col_a(g.C_DIV) + 12);
+    {
+        const bool hov = in_rc(mx, my, g.rc_fs_btn);
+        fill_frosted_round_rect(s, g.rc_fs_btn.x, g.rc_fs_btn.y, fs_sz, fs_sz, 14,
+                                g.C_SURFACE, hov ? 185 : (lt ? 156 : 132), 2, glass_rim(56, 210));
+        stroke_round_rect_aa(s, g.rc_fs_btn.x, g.rc_fs_btn.y, fs_sz, fs_sz, 14, 1, g.C_DIV, col_a(g.C_DIV) + 12);
+    }
     icon_expand(s, g.rc_fs_btn.x + 12, g.rc_fs_btn.y + 12, 16, g.C_TXT2);
 
     const char* view_lbl = g.view_grid ? "网格视图" : "列表视图";
     const int vw = text_width_bold(f, 13.5f, view_lbl) + 28;
     g.rc_view_pill = Rect{ g.rc_fs_btn.x - 10 - vw, 16, vw, 38 };
-    fill_round_rect_aa(s, g.rc_view_pill.x, g.rc_view_pill.y, vw, 38, 19,
-                       in_rc(mx, my, g.rc_view_pill) ? g.C_GLASS_HOV : g.C_GLASS);
-    stroke_round_rect_aa(s, g.rc_view_pill.x, g.rc_view_pill.y, vw, 38, 19, 1, g.C_DIV, col_a(g.C_DIV) + 12);
+    {
+        const bool hov = in_rc(mx, my, g.rc_view_pill);
+        fill_frosted_round_rect(s, g.rc_view_pill.x, g.rc_view_pill.y, vw, 38, 19,
+                                g.C_SURFACE, hov ? 185 : (lt ? 156 : 132), 2, glass_rim(56, 210));
+        stroke_round_rect_aa(s, g.rc_view_pill.x, g.rc_view_pill.y, vw, 38, 19, 1, g.C_DIV, col_a(g.C_DIV) + 12);
+    }
     draw_text_centered_bold(s, f, 13.5f, g.rc_view_pill.x, g.rc_view_pill.x + vw, 26, g.C_TXT2, view_lbl);
 
     const char* sort_lbls[4] = { "排序: 默认", "排序: 歌名", "排序: 歌手", "排序: 专辑" };
     const char* slbl = sort_lbls[g.sort_mode & 3];
     const int sw = text_width_bold(f, 13.5f, slbl) + 28;
     g.rc_sort_btn = Rect{ g.rc_view_pill.x - 10 - sw, 16, sw, 38 };
-    fill_round_rect_aa(s, g.rc_sort_btn.x, g.rc_sort_btn.y, sw, 38, 19,
-                       in_rc(mx, my, g.rc_sort_btn) ? g.C_GLASS_HOV : g.C_GLASS);
-    stroke_round_rect_aa(s, g.rc_sort_btn.x, g.rc_sort_btn.y, sw, 38, 19, 1, g.C_DIV, col_a(g.C_DIV) + 12);
+    {
+        const bool hov = in_rc(mx, my, g.rc_sort_btn);
+        fill_frosted_round_rect(s, g.rc_sort_btn.x, g.rc_sort_btn.y, sw, 38, 19,
+                                g.C_SURFACE, hov ? 185 : (lt ? 156 : 132), 2, glass_rim(56, 210));
+        stroke_round_rect_aa(s, g.rc_sort_btn.x, g.rc_sort_btn.y, sw, 38, 19, 1, g.C_DIV, col_a(g.C_DIV) + 12);
+    }
     draw_text_centered_bold(s, f, 13.5f, g.rc_sort_btn.x, g.rc_sort_btn.x + sw, 26, g.C_TXT2, slbl);
 
     const int s_left = bx + bw + 16;
@@ -1384,8 +1488,9 @@ void draw_library_header(int mx, int my) {
         const int sbox_w = std::min(430, s_right - s_left);
         const int sbox_x = s_left + (s_right - s_left - sbox_w) / 2;
         g.rc_search_box = Rect{ sbox_x, 14, sbox_w, 42 };
-        fill_round_rect_aa_a(s, g.rc_search_box.x, g.rc_search_box.y, g.rc_search_box.w, g.rc_search_box.h, 21,
-                             g.C_SURFACE, g.search_focused ? 222 : 168);
+        fill_frosted_round_rect(s, g.rc_search_box.x, g.rc_search_box.y, g.rc_search_box.w, g.rc_search_box.h, 21,
+                                g.C_SURFACE, g.search_focused ? 205 : (lt ? 168 : 142), 2,
+                                g.search_focused ? glass_rim(100, 235) : glass_rim(58, 210));
         stroke_round_rect_aa(s, g.rc_search_box.x, g.rc_search_box.y, g.rc_search_box.w, g.rc_search_box.h, 21,
                              g.search_focused ? 2 : 1, g.search_focused ? g.C_ACCENT : g.C_DIV,
                              g.search_focused ? 215 : (col_a(g.C_DIV) + 18));
@@ -1415,12 +1520,12 @@ void draw_library_header(int mx, int my) {
         const bool act = (g.fmt_filter == i);
         const bool hov = in_rc(mx, my, g.rc_filt_chips[i]);
         if (act) {
-            fill_round_rect_aa_a(s, cx, cy, cw, 36, 18, mix_col(g.C_SURFACE, g.C_ACCENT, 0.30f), 210);
+            fill_frosted_round_rect(s, cx, cy, cw, 36, 18, mix_col(g.C_SURFACE, g.C_ACCENT, 0.32f), 202, 2, glass_rim(66, 215));
             stroke_round_rect_aa(s, cx, cy, cw, 36, 18, 1, g.C_ACCENT, 145);
             fill_ellipse_aa(s, cx + 14, cy + 18, 4, 4, g.C_ACCENT);
             draw_text_bold(s, f, 13.5f, cx + 24, cy + 9, g.C_ACCENT, chips[i]);
         } else {
-            fill_round_rect_aa(s, cx, cy, cw, 36, 18, hov ? g.C_GLASS_HOV : g.C_GLASS);
+            fill_frosted_round_rect(s, cx, cy, cw, 36, 18, g.C_SURFACE, hov ? 185 : (lt ? 156 : 130), 2, glass_rim(50, 200));
             stroke_round_rect_aa(s, cx, cy, cw, 36, 18, 1, g.C_DIV, col_a(g.C_DIV) + 12);
             draw_text_centered_bold(s, f, 13.5f, cx, cx + cw, cy + 9, hov ? g.C_TXT : g.C_TXT2, chips[i]);
         }
@@ -1436,8 +1541,10 @@ void draw_library_header(int mx, int my) {
         if (rx - dw > cx + 10) {
             g.rc_dir_chip = Rect{ rx - dw, cy, dw, 36 };
             const bool act = (g.lib_tab == TAB_DIR);
-            if (act) fill_round_rect_aa_a(s, g.rc_dir_chip.x, g.rc_dir_chip.y, dw, 36, 18, mix_col(g.C_SURFACE, g.C_ACCENT, 0.26f), 210);
-            else     fill_round_rect_aa(s, g.rc_dir_chip.x, g.rc_dir_chip.y, dw, 36, 18, in_rc(mx, my, g.rc_dir_chip) ? g.C_GLASS_HOV : g.C_GLASS);
+            const bool hov = in_rc(mx, my, g.rc_dir_chip);
+            fill_frosted_round_rect(s, g.rc_dir_chip.x, g.rc_dir_chip.y, dw, 36, 18,
+                                    act ? mix_col(g.C_SURFACE, g.C_ACCENT, 0.28f) : g.C_SURFACE,
+                                    act ? 202 : (hov ? 185 : (lt ? 156 : 130)), 2, glass_rim(52, 205));
             stroke_round_rect_aa(s, g.rc_dir_chip.x, g.rc_dir_chip.y, dw, 36, 18, 1, act ? g.C_ACCENT : g.C_DIV, act ? 145 : (col_a(g.C_DIV) + 12));
             draw_text_centered_bold(s, f, 13.5f, g.rc_dir_chip.x, g.rc_dir_chip.x + dw, cy + 9,
                                     act ? g.C_ACCENT : g.C_TXT2, dlabel.c_str());
@@ -1449,16 +1556,17 @@ void draw_hero_card(Rect hero, int mx, int my) {
     if (hero.w < 240 || hero.h < 150) return;
     Canvas* s = g.screen.get();
     Font* f = g.font.get();
+    const bool lt = g.light_t > 0.5f;
     g.rc_hero_card = hero;
     constexpr int r = 24;
     fill_round_rect_shadow(s, hero.x, hero.y + 4, hero.w, hero.h, r, theme_shadow(84));
-    fill_round_rect_aa_a(s, hero.x, hero.y, hero.w, hero.h, r, g.C_HERO_L, static_cast<uint8_t>(194 + 24 * g.light_t));
+    fill_frosted_round_rect(s, hero.x, hero.y, hero.w, hero.h, r, g.C_HERO_L, lt ? 168 : 150, 3, glass_rim(62, 215));
 
     const int split_x = hero.x + static_cast<int>(hero.w * 0.65f);
     const float wave_amp = clampf(static_cast<float>(hero.h) * 0.032f, 6.0f, 10.0f);
     fill_m3_wave_panel_right(s, hero.x, hero.y, hero.w, hero.h, r,
                              split_x, wave_amp, 56.0f, g.wave_phase * 0.55f,
-                             g.C_HERO_R, static_cast<uint8_t>(205 + 8 * g.light_t));
+                             g.C_HERO_R, static_cast<uint8_t>(182 + 12 * g.light_t));
     stroke_round_rect_aa(s, hero.x, hero.y, hero.w, hero.h, r, 1, g.C_ACCENT, 88);
 
     int show_idx = g.playing_idx;
@@ -1595,8 +1703,13 @@ void draw_grid_view(int mx, int my) {
         const bool is_play = (idx == g.playing_idx);
 
         fill_round_rect_shadow(s, x, cy + 4, cw, ch, 18, theme_shadow(is_play ? 110 : 64));
-        fill_round_rect_aa_a(s, x, cy, cw, ch, 18, g.C_SURFACE,
-                             is_play ? 196 : (is_hov ? 184 : static_cast<uint8_t>(148 + 36 * g.light_t)));
+        const uint32_t card_tint = is_play ? mix_col(g.C_SURFACE, g.C_ACCENT, 0.16f)
+                                           : (is_hov ? mix_col(g.C_SURFACE, 0xFFFFFFFFu, 0.05f * (1.0f - g.light_t)) : g.C_SURFACE);
+        const uint8_t card_alpha = is_play ? static_cast<uint8_t>(180 + 18 * g.light_t)
+                                           : (is_hov ? static_cast<uint8_t>(168 + 20 * g.light_t)
+                                                     : static_cast<uint8_t>(142 + 34 * g.light_t));
+        fill_frosted_round_rect(s, x, cy, cw, ch, 18, card_tint, card_alpha, 2,
+                                is_play ? glass_rim(96, 230) : glass_rim(44, 195));
 
         constexpr int cov_pad = 6;
         const int cov_sz = cw - cov_pad * 2;
@@ -1681,7 +1794,8 @@ void draw_table_view(int mx, int my) {
     const int tw = rx - lx - 14;
     g.ui_list_x0 = lx; g.ui_list_x1 = lx + tw; g.ui_list_y0 = top_y; g.ui_list_y1 = top_y + vh;
 
-    fill_round_rect_aa(s, lx, top_y, tw, 30, 10, g.C_GLASS);
+    fill_frosted_round_rect(s, lx, top_y, tw, 30, 10, g.C_SURFACE,
+                            static_cast<uint8_t>(118 + 38 * g.light_t), 2, glass_rim(42, 180));
     draw_text_bold(s, f, 13.0f, lx + 56, top_y + 7, g.C_TXT3, "歌曲");
     draw_text_bold(s, f, 13.0f, lx + static_cast<int>(tw * 0.44f), top_y + 7, g.C_TXT3, "歌手");
     draw_text_bold(s, f, 13.0f, lx + static_cast<int>(tw * 0.68f), top_y + 7, g.C_TXT3, "格式");
@@ -1700,8 +1814,13 @@ void draw_table_view(int mx, int my) {
         const Rect row_rc{ lx, y + 2, tw, ROW_H - 4 };
         const bool hov = in_rect(mx, my, lx, body_y, tw, body_h) && in_rc(mx, my, row_rc);
         const bool is_play = (idx == g.playing_idx);
-        if (is_play) fill_round_rect_aa_a(s, row_rc.x, row_rc.y, row_rc.w, row_rc.h, 14, mix_col(g.C_SURFACE, g.C_ACCENT, 0.26f), 196);
-        else if (hov) fill_round_rect_aa(s, row_rc.x, row_rc.y, row_rc.w, row_rc.h, 14, g.C_GLASS_HOV);
+        if (is_play)
+            fill_frosted_round_rect(s, row_rc.x, row_rc.y, row_rc.w, row_rc.h, 14,
+                                    mix_col(g.C_SURFACE, g.C_ACCENT, 0.22f),
+                                    static_cast<uint8_t>(172 + 24 * g.light_t), 2, glass_rim(86, 225));
+        else if (hov)
+            fill_frosted_round_rect(s, row_rc.x, row_rc.y, row_rc.w, row_rc.h, 14,
+                                    g.C_SURFACE, static_cast<uint8_t>(128 + 38 * g.light_t), 1, glass_rim(44, 190));
 
         const uint32_t* art = !tr.thumb.empty() ? tr.thumb.data() : (!g.poster_mini.empty() ? g.poster_mini.data() : nullptr);
         const int asz = !tr.thumb.empty() ? THUMB_SZ : MINI_ART_SZ;
@@ -1771,9 +1890,11 @@ void draw_dynamic_island(int mx, int my) {
     g.rc_island = Rect{ ix, iy, iw, ih };
 
     fill_round_rect_shadow(s, ix, iy + 5, iw, ih, ir, theme_shadow(115));
-    const uint32_t isl_bg = mix_col(mix_col(COL(14, 18, 24, 255), COL(244, 247, 252, 255), g.light_t), g.C_HERO_L, 0.30f);
-    fill_round_rect_aa_a(s, ix, iy, iw, ih, ir, isl_bg, static_cast<uint8_t>(206 + 20 * g.light_t));
-    stroke_round_rect_aa(s, ix, iy, iw, ih, ir, 1, g.C_ACCENT, 105);
+    const uint32_t isl_bg = mix_col(mix_col(COL(16, 20, 28, 255), COL(246, 249, 255, 255), g.light_t), g.C_HERO_L, 0.24f);
+    fill_frosted_round_rect(s, ix, iy, iw, ih, ir, isl_bg, static_cast<uint8_t>(168 + 28 * g.light_t), 4, glass_rim(92, 240));
+    if (g.light_t < 0.7f) {
+        stroke_round_rect_aa(s, ix, iy, iw, ih, ir, 1, g.C_ACCENT, static_cast<uint8_t>(38.0f * (1.0f - g.light_t)));
+    }
 
     const int cov_sz = ih - 18;
     g.rc_bar_cov = Rect{ ix + 14, iy + (ih - cov_sz) / 2 - 2, cov_sz, cov_sz };
@@ -1824,13 +1945,19 @@ void draw_dynamic_island(int mx, int my) {
     const int rx = ix + iw - 16;
     g.rc_bar_lyr = Rect{ rx - 38, ctrl_y - 17, 40, 34 };
     const bool act_lyr = (g.lyr && g.lyr->n > 0);
-    if (act_lyr) fill_round_rect_aa_a(s, rx - 36, ctrl_y - 14, 36, 28, 14, mix_col(g.C_SURFACE, g.C_ACCENT, 0.30f), 205);
-    else         fill_round_rect_aa(s, rx - 36, ctrl_y - 14, 36, 28, 14, in_rc(mx, my, g.rc_bar_lyr) ? g.C_GLASS_HOV : g.C_GLASS);
+    if (act_lyr) {
+        fill_frosted_round_rect(s, rx - 36, ctrl_y - 14, 36, 28, 14,
+                                mix_col(g.C_SURFACE, g.C_ACCENT, 0.28f), 192, 1, glass_rim(92, 225));
+    } else {
+        fill_frosted_round_rect(s, rx - 36, ctrl_y - 14, 36, 28, 14,
+                                g.C_SURFACE, in_rc(mx, my, g.rc_bar_lyr) ? 168 : 122, 1, glass_rim(44, 180));
+    }
     draw_text_centered_bold(s, f, 13.0f, rx - 36, rx, ctrl_y - 9, act_lyr ? g.C_ACCENT : g.C_TXT2, "词");
 
     const char* mode_lbl = g.play_mode == MODE_LOOP_ONE ? "单曲" : (g.play_mode == MODE_SHUFFLE ? "随机" : "顺序");
     g.rc_bar_mode = Rect{ rx - 86, ctrl_y - 17, 46, 34 };
-    fill_round_rect_aa(s, rx - 85, ctrl_y - 14, 44, 28, 14, in_rc(mx, my, g.rc_bar_mode) ? g.C_GLASS_HOV : g.C_GLASS);
+    fill_frosted_round_rect(s, rx - 85, ctrl_y - 14, 44, 28, 14,
+                            g.C_SURFACE, in_rc(mx, my, g.rc_bar_mode) ? 168 : 122, 1, glass_rim(44, 180));
     draw_text_centered_bold(s, f, 12.5f, rx - 85, rx - 41, ctrl_y - 8, g.C_TXT2, mode_lbl);
 
     const int vol_w = (g.rc_bar_mode.x - g.rc_bar_next.x - g.rc_bar_next.w > 130) ? 68 : 54;
@@ -1859,27 +1986,30 @@ void draw_dynamic_island(int mx, int my) {
 }
 
 void draw_immersive_view(int mx, int my) {
-    draw_water_ripple_bg(1);
+    draw_frosted_ambient_bg(1);
     Canvas* s = g.screen.get();
     Font* f = g.font.get();
 
     g.rc_back_lib = Rect{ 26, 18, 132, 42 };
-    fill_round_rect_aa_a(s, g.rc_back_lib.x, g.rc_back_lib.y, g.rc_back_lib.w, g.rc_back_lib.h, 21,
-                         g.C_SURFACE, in_rc(mx, my, g.rc_back_lib) ? 210 : 165);
-    stroke_round_rect_aa(s, g.rc_back_lib.x, g.rc_back_lib.y, g.rc_back_lib.w, g.rc_back_lib.h, 21, 1, g.C_DIV, col_a(g.C_DIV) + 12);
+    const bool hov_back = in_rc(mx, my, g.rc_back_lib);
+    fill_frosted_round_rect(s, g.rc_back_lib.x, g.rc_back_lib.y, g.rc_back_lib.w, g.rc_back_lib.h, 21,
+                            g.C_SURFACE, hov_back ? 186 : static_cast<uint8_t>(138 + 34 * g.light_t), 3,
+                            glass_rim(hov_back ? 96 : 64, 235));
     icon_back(s, g.rc_back_lib.x + 15, g.rc_back_lib.y + 14, 14, g.C_TXT);
     draw_text_bold(s, f, 14.0f, g.rc_back_lib.x + 38, g.rc_back_lib.y + 11, g.C_TXT, "返回曲库");
 
     g.rc_lyr_fs = Rect{ g.W - 68, 18, 42, 42 };
-    fill_round_rect_aa_a(s, g.rc_lyr_fs.x, g.rc_lyr_fs.y, 42, 42, 21,
-                         g.C_SURFACE, in_rc(mx, my, g.rc_lyr_fs) ? 210 : 165);
-    stroke_round_rect_aa(s, g.rc_lyr_fs.x, g.rc_lyr_fs.y, 42, 42, 21, 1, g.C_DIV, col_a(g.C_DIV) + 12);
+    const bool hov_fs = in_rc(mx, my, g.rc_lyr_fs);
+    fill_frosted_round_rect(s, g.rc_lyr_fs.x, g.rc_lyr_fs.y, 42, 42, 21,
+                            g.C_SURFACE, hov_fs ? 186 : static_cast<uint8_t>(138 + 34 * g.light_t), 3,
+                            glass_rim(hov_fs ? 96 : 64, 235));
     icon_expand(s, g.rc_lyr_fs.x + 13, g.rc_lyr_fs.y + 13, 16, g.C_TXT);
 
     g.rc_lyr_theme = Rect{ g.W - 118, 18, 42, 42 };
-    fill_round_rect_aa_a(s, g.rc_lyr_theme.x, g.rc_lyr_theme.y, 42, 42, 21,
-                         g.C_SURFACE, in_rc(mx, my, g.rc_lyr_theme) ? 210 : 165);
-    stroke_round_rect_aa(s, g.rc_lyr_theme.x, g.rc_lyr_theme.y, 42, 42, 21, 1, g.C_DIV, col_a(g.C_DIV) + 12);
+    const bool hov_thm = in_rc(mx, my, g.rc_lyr_theme);
+    fill_frosted_round_rect(s, g.rc_lyr_theme.x, g.rc_lyr_theme.y, 42, 42, 21,
+                            g.C_SURFACE, hov_thm ? 186 : static_cast<uint8_t>(138 + 34 * g.light_t), 3,
+                            glass_rim(hov_thm ? 96 : 64, 235));
     icon_theme_orb(s, g.rc_lyr_theme.x + 21, g.rc_lyr_theme.y + 21, 8, mix_col(g.C_TXT, g.C_ACCENT, g.light_t));
 
     const int left_col_w = std::clamp(static_cast<int>(g.W * 0.40f), 340, 540);
@@ -1887,8 +2017,7 @@ void draw_immersive_view(int mx, int my) {
     const int cov_x = 36 + (left_col_w - cov_sz) / 2;
     const int cov_y = std::max(72, static_cast<int>(g.H * 0.11f));
 
-    fill_circle_a(s, cov_x + cov_sz / 2, cov_y + cov_sz / 2, static_cast<int>(cov_sz * 0.56f), g.C_ACCENT, 26);
-    fill_round_rect_shadow(s, cov_x, cov_y + 10, cov_sz, cov_sz, 24, 125);
+    fill_round_rect_shadow(s, cov_x, cov_y + 12, cov_sz, cov_sz, 24, 138);
     const uint32_t* art = (g.playing_idx >= 0 && g.cover_ready && !g.cover_src.empty()) ? g.cover_src.data()
                           : (!g.poster_hero.empty() ? g.poster_hero.data() : nullptr);
     if (art) blit_rgb_round_fit(s, cov_x, cov_y, cov_sz, cov_sz, art, COVER_SRC_SZ, COVER_SRC_SZ, 24);
@@ -1905,8 +2034,8 @@ void draw_immersive_view(int mx, int my) {
     char spec[96]{};
     snprintf(spec, sizeof(spec), "%s  %uHz  %uch", g.p_fmt, audio_sample_rate(), audio_channels());
     const int spw = text_width_bold(f, 12.5f, spec) + 22;
-    fill_round_rect_aa(s, info_x, ty + 64, spw, 25, 12, g.C_GLASS);
-    stroke_round_rect_aa(s, info_x, ty + 64, spw, 25, 12, 1, g.C_DIV, col_a(g.C_DIV));
+    fill_frosted_round_rect(s, info_x, ty + 64, spw, 25, 12,
+                            g.C_SURFACE, static_cast<uint8_t>(118 + 38 * g.light_t), 2, glass_rim(44, 185));
     draw_text_centered_bold(s, f, 12.5f, info_x, info_x + spw, ty + 68, g.C_ACCENT, spec);
 
     const double dur = g.playing_idx >= 0 ? audio_duration() : 0.0;
@@ -1942,8 +2071,9 @@ void draw_immersive_view(int mx, int my) {
     icon_next(s, cx + 58, cy, 14, g.C_TXT);
 
     const char* ml = g.play_mode == MODE_LOOP_ONE ? "单曲" : (g.play_mode == MODE_SHUFFLE ? "随机" : "顺序");
-    fill_round_rect_aa(s, g.rc_bar_mode.x, g.rc_bar_mode.y, 58, 38, 19, g.C_GLASS);
-    stroke_round_rect_aa(s, g.rc_bar_mode.x, g.rc_bar_mode.y, 58, 38, 19, 1, g.C_DIV, col_a(g.C_DIV));
+    const bool hov_m = in_rc(mx, my, g.rc_bar_mode);
+    fill_frosted_round_rect(s, g.rc_bar_mode.x, g.rc_bar_mode.y, 58, 38, 19,
+                            g.C_SURFACE, hov_m ? 180 : static_cast<uint8_t>(128 + 38 * g.light_t), 2, glass_rim(48, 205));
     draw_text_centered_bold(s, f, 13.5f, g.rc_bar_mode.x, g.rc_bar_mode.x + 58, g.rc_bar_mode.y + 10, g.C_TXT2, ml);
 
     const int lyr_x = cov_x + cov_sz + 56;
@@ -2021,11 +2151,13 @@ void draw_immersive_view(int mx, int my) {
             if (hov_l) alpha = std::max(alpha, 0.88f);
 
             if (is_cur) {
-                fill_round_rect_aa_a(s, lyr_x - 14, y - 8, lyr_w + 16, wl.h - 14, 18,
-                                     mix_col(g.C_SURFACE, g.C_ACCENT, 0.16f), static_cast<uint8_t>(92 + 72 * g.light_t));
-                fill_round_rect_aa(s, lyr_x - 14, y + 6, 4, wl.h - 42, 2, g.C_ACCENT);
+                fill_frosted_round_rect(s, lyr_x - 20, y - 8, lyr_w + 22, wl.h - 14, 18,
+                                        mix_col(g.C_SURFACE, g.C_ACCENT, 0.16f),
+                                        static_cast<uint8_t>(106 + 68 * g.light_t), 3, glass_rim(34, 155));
+                fill_round_rect_aa(s, lyr_x - 11, y + 10, 4, std::max(14, wl.h - 50), 2, g.C_ACCENT);
             } else if (hov_l) {
-                fill_round_rect_aa(s, lyr_x - 14, y - 8, lyr_w + 16, wl.h - 14, 18, g.C_GLASS);
+                fill_frosted_round_rect(s, lyr_x - 20, y - 8, lyr_w + 22, wl.h - 14, 18,
+                                        g.C_SURFACE, static_cast<uint8_t>(86 + 46 * g.light_t), 2, glass_rim(28, 140));
             }
 
             const uint8_t oa = static_cast<uint8_t>(clampf(alpha * edge_fade * 255.0f, 4.0f, 255.0f));
@@ -2061,9 +2193,10 @@ void draw_diag_modal() {
     Font* f = g.font.get();
     constexpr int mw = 520, mh = 250;
     const int mx = (g.W - mw) / 2, my = (g.H - mh) / 2;
-    fill_round_rect_shadow(s, mx, my + 8, mw, mh, 22, 160);
-    fill_round_rect_aa_a(s, mx, my, mw, mh, 22, g.C_SURFACE, 245);
-    stroke_round_rect_aa(s, mx, my, mw, mh, 22, 1, g.C_ACCENT, 160);
+    fill_round_rect_shadow(s, mx, my + 8, mw, mh, 22, theme_shadow(150));
+    fill_frosted_round_rect(s, mx, my, mw, mh, 22, g.C_SURFACE,
+                            static_cast<uint8_t>(210 + 26 * g.light_t), 4, glass_rim(96, 235));
+    stroke_round_rect_aa(s, mx, my, mw, mh, 22, 1, g.C_ACCENT, 130);
     draw_text_bold(s, f, 18.0f, mx + 24, my + 20, g.C_TXT, "Sir\xC3\xA8ne 音频与歌词诊断（学习研究版）");
     char adiag[256]{};
     audio_get_diag(adiag, sizeof(adiag));
@@ -2134,10 +2267,9 @@ void update_hover_cursor(int mx, int my) {
     if (ih != g.ui_cursor_hand) { g.ui_cursor_hand = ih; be_set_cursor(ih); }
 }
 
-void toggle_theme_smooth(int ox, int oy) {
+void toggle_theme_smooth() {
     g.is_light = !g.is_light;
     save_settings();
-    spawn_ripple(ox, oy, g.C_ACCENT);
     show_toast(g.is_light ? "已切换 · 柔和日间主题" : "已切换 · 深邃夜间主题");
 }
 
@@ -2179,7 +2311,7 @@ void handle_input() {
         save_settings();
         show_toast(g.play_mode == MODE_LOOP_ONE ? "单曲循环" : (g.play_mode == MODE_SHUFFLE ? "随机播放" : "顺序循环"));
     } else if (hk == 'c') {
-        toggle_theme_smooth(g.W / 2, g.H / 2);
+        toggle_theme_smooth();
     } else if (hk == 'v') {
         if (g.page == PAGE_LIBRARY) {
             capture_fade();
@@ -2219,7 +2351,6 @@ void handle_input() {
                 return;
             }
             if (in_rc(ti.x, ti.y, g.rc_fab_import)) {
-                spawn_ripple(ti.x, ti.y, g.C_ACCENT);
                 open_folder_dialog();
                 return;
             }
@@ -2250,9 +2381,9 @@ void handle_input() {
             return;
         }
         if (in_rc(ti.x, ti.y, g.rc_bar_fav))  { if (g.playing_idx >= 0) toggle_fav(g.playing_idx); return; }
-        if (in_rc(ti.x, ti.y, g.rc_bar_prev)) { spawn_ripple(ti.x, ti.y, g.C_ACCENT); if (!g.tracks.empty()) load_track(pick_prev(g.playing_idx)); return; }
-        if (in_rc(ti.x, ti.y, g.rc_bar_play)) { spawn_ripple(ti.x, ti.y, g.C_ACCENT); toggle_play_pause_action(); return; }
-        if (in_rc(ti.x, ti.y, g.rc_bar_next)) { spawn_ripple(ti.x, ti.y, g.C_ACCENT); if (!g.tracks.empty()) load_track(pick_next(g.playing_idx, 1)); return; }
+        if (in_rc(ti.x, ti.y, g.rc_bar_prev)) { if (!g.tracks.empty()) load_track(pick_prev(g.playing_idx)); return; }
+        if (in_rc(ti.x, ti.y, g.rc_bar_play)) { toggle_play_pause_action(); return; }
+        if (in_rc(ti.x, ti.y, g.rc_bar_next)) { if (!g.tracks.empty()) load_track(pick_next(g.playing_idx, 1)); return; }
         if (in_rc(ti.x, ti.y, g.rc_bar_mode)) {
             g.play_mode = (g.play_mode + 1) % 3;
             save_settings();
@@ -2268,7 +2399,7 @@ void handle_input() {
 
         if (g.page == PAGE_LYRICS) {
             if (in_rc(ti.x, ti.y, g.rc_back_lib))  { capture_fade(); g.page = PAGE_LIBRARY; return; }
-            if (in_rc(ti.x, ti.y, g.rc_lyr_theme)) { toggle_theme_smooth(ti.x, ti.y); return; }
+            if (in_rc(ti.x, ti.y, g.rc_lyr_theme)) { toggle_theme_smooth(); return; }
             if (in_rc(ti.x, ti.y, g.rc_lyr_fs))    { be_toggle_fullscreen(); return; }
             if (in_rect(ti.x, ti.y, g.ui_list_x0, g.ui_list_y0, g.ui_list_x1 - g.ui_list_x0, g.ui_list_y1 - g.ui_list_y0)) {
                 g.drag_mode = DRAG_LYRICS;
@@ -2293,7 +2424,7 @@ void handle_input() {
         if (in_rc(ti.x, ti.y, g.rc_nav_view) || in_rc(ti.x, ti.y, g.rc_view_pill)) {
             capture_fade(); g.view_grid = !g.view_grid; g.scroll_px = g.scroll_target = 0.0f; save_settings(); return;
         }
-        if (in_rc(ti.x, ti.y, g.rc_nav_theme)) { toggle_theme_smooth(ti.x, ti.y); return; }
+        if (in_rc(ti.x, ti.y, g.rc_nav_theme)) { toggle_theme_smooth(); return; }
         if (in_rc(ti.x, ti.y, g.rc_nav_diag))  { g.show_diag = !g.show_diag; return; }
 
         if (in_rc(ti.x, ti.y, g.rc_sort_btn)) { g.sort_mode = (g.sort_mode + 1) % 4; rebuild_visible(); save_settings(); return; }
@@ -2327,7 +2458,7 @@ void handle_input() {
                 }
                 return;
             }
-            if (in_rc(ti.x, ti.y, g.rc_hero_play)) { spawn_ripple(ti.x, ti.y, g.C_ACCENT); toggle_play_pause_action(); return; }
+            if (in_rc(ti.x, ti.y, g.rc_hero_play)) { toggle_play_pause_action(); return; }
 
             g.drag_mode = DRAG_LIST;
             g.drag_start_x = ti.x;
@@ -2394,7 +2525,6 @@ void handle_input() {
         g.sb_drag = 0;
         if (g.drag_mode == DRAG_LIST) {
             if (!g.drag_moved) {
-                spawn_ripple(ti.x, ti.y, g.C_ACCENT);
                 if (g.drag_cand_hero) {
                     if (g.playing_idx >= 0) { capture_fade(); g.page = PAGE_LYRICS; }
                     else if (!g.vis_idx.empty()) load_track(g.vis_idx[0]);
@@ -2409,7 +2539,6 @@ void handle_input() {
             }
         } else if (g.drag_mode == DRAG_LYRICS) {
             if (!g.drag_moved && g.drag_cand_lyr_t >= 0.0) {
-                spawn_ripple(ti.x, ti.y, g.C_ACCENT);
                 audio_seek(g.drag_cand_lyr_t);
                 if (audio_paused()) audio_resume();
                 g.lyr_manual_timer = 0.0f;
@@ -2477,7 +2606,7 @@ void render_frame(int mx, int my) {
     if (!g.screen) return;
     reset_hit_rects();
     if (g.page == PAGE_LIBRARY) {
-        draw_water_ripple_bg(0);
+        draw_frosted_ambient_bg(0);
         draw_nav_rail(mx, my);
         draw_library_header(mx, my);
         if (g.view_grid) draw_grid_view(mx, my);
@@ -2492,12 +2621,19 @@ void render_frame(int mx, int my) {
         Canvas* s = g.screen.get();
         const int tw = text_width_bold(g.font.get(), 13.5f, g.toast_text.c_str()) + 34;
         const int tx = (g.W - tw) / 2, ty = (g.page == PAGE_LYRICS) ? 20 : 66;
-        const uint8_t a = g.toast_timer < 20 ? static_cast<uint8_t>(g.toast_timer * 11) : 230;
+        const uint8_t a = g.toast_timer < 18 ? static_cast<uint8_t>(g.toast_timer * 12) : 220;
         const uint8_t sha = static_cast<uint8_t>(static_cast<float>(a) * (0.42f - 0.24f * g.light_t));
         fill_round_rect_shadow(s, tx, ty + 3, tw, 36, 18, sha);
-        fill_round_rect_aa_a(s, tx, ty, tw, 36, 18, g.C_SURFACE, a);
-        stroke_round_rect_aa(s, tx, ty, tw, 36, 18, 1, g.C_ACCENT, a);
-        draw_text_centered_bold(s, g.font.get(), 13.5f, tx, tx + tw, ty + 9, g.C_TXT, g.toast_text.c_str());
+        if (g.toast_timer >= 18) {
+            fill_frosted_round_rect(s, tx, ty, tw, 36, 18, g.C_SURFACE,
+                                    static_cast<uint8_t>(178 + 30 * g.light_t), 3, glass_rim(96, 235));
+            stroke_round_rect_aa(s, tx, ty, tw, 36, 18, 1, g.C_ACCENT, 95);
+        } else {
+            fill_round_rect_aa_a(s, tx, ty, tw, 36, 18, g.C_SURFACE, a);
+            stroke_round_rect_aa(s, tx, ty, tw, 36, 18, 1, g.C_ACCENT, static_cast<uint8_t>(a / 2));
+        }
+        const uint8_t ta = g.toast_timer < 18 ? static_cast<uint8_t>(std::min(255, g.toast_timer * 14)) : 255;
+        draw_text_centered_bold(s, g.font.get(), 13.5f, tx, tx + tw, ty + 9, with_alpha(g.C_TXT, ta), g.toast_text.c_str());
         --g.toast_timer;
     }
 
@@ -2545,7 +2681,7 @@ int main(int argc, char** argv) {
 
     load_settings();
     load_dirs_cfg();
-    step_palette_and_water_ripples();
+    step_palette_and_ambient();
     scan_library(0);
     for (int i = 0; i < 16 && i < static_cast<int>(g.vis_idx.size()); ++i) {
         ensure_track_meta(g.vis_idx[i], 1);
@@ -2597,7 +2733,7 @@ int main(int argc, char** argv) {
 
         const bool playing_active = (g.playing_idx >= 0 && !audio_paused());
         g.wave_phase  += static_cast<float>(g.dt) * (playing_active ? 2.6f : 0.45f);
-        g.ripple_time += static_cast<float>(g.dt) * (playing_active ? 0.90f : 0.25f);
+        g.ambient_t   += static_cast<float>(g.dt) * (playing_active ? 0.48f : 0.14f);
         g.scallop_rot += static_cast<float>(g.dt) * (playing_active ? 0.50f : 0.08f);
         if (g.hov_card_idx >= 0) {
             g.hov_card_t = clampf(g.hov_card_t + static_cast<float>(g.dt) * 9.0f, 0.0f, 1.0f);
@@ -2623,22 +2759,23 @@ int main(int argc, char** argv) {
             g.lyr_manual_timer = std::max(g.lyr_manual_timer, 3.0f);
         }
 
-        step_palette_and_water_ripples();
+        step_palette_and_ambient();
 
         const bool scroll_moving = (g.drag_mode != DRAG_NONE) || g.scrub_drag || g.vol_drag || g.sb_drag ||
                                    (std::fabs(g.scroll_vel) > 3.0f) || (std::fabs(g.lyr_scroll_vel) > 3.0f) ||
                                    (std::fabs(g.scroll_target - g.scroll_px) > 1.0f);
         const bool theme_moving  = std::fabs(g.theme_pos - (g.is_light ? 1.0f : 0.0f)) > 0.001f;
-        bool any_ripple = false;
-        for (const auto& rp : g.click_ripples) if (rp.active) { any_ripple = true; break; }
         if (!scroll_moving && !theme_moving && !g.fade_armed) {
             pump_background_meta();
         }
         be_set_idle_mode((!dump_mode && !playing_active && !scroll_moving && !theme_moving &&
-                          !g.fade_armed && !any_ripple && g.toast_timer <= 0) ? 1 : 0);
+                          !g.fade_armed && g.toast_timer <= 0) ? 1 : 0);
 
         if (dump_mode) {
             if (dump_frame == 2) {
+                g.is_light = 0; g.theme_pos = 0.0f; g.light_t = 0.0f;
+                g.view_grid = 1;
+                step_palette_and_ambient();
                 if (g.playing_idx < 0 && !g.vis_idx.empty()) load_track(g.vis_idx[0]);
                 audio_set_volume(0.0f);
                 if (g.playing_idx >= 0) audio_seek(58.0);
@@ -2647,21 +2784,21 @@ int main(int argc, char** argv) {
                 render_frame(0, 0);
                 dump_rgba_shot(dump_dir, "shot_lib.rgba");
                 g.is_light = 1;
-                spawn_ripple(42, g.H - 100, g.C_ACCENT);
             }
-            if (dump_frame == 35) {
+            if (dump_frame == 48) {
                 render_frame(0, 0);
                 dump_rgba_shot(dump_dir, "shot_mid.rgba");
+                g.view_grid = 0;
             }
-            if (dump_frame == 88) {
+            if (dump_frame == 94) {
                 render_frame(0, 0);
                 dump_rgba_shot(dump_dir, "shot_day.rgba");
                 g.is_light = 0; g.theme_pos = 0.0f; g.light_t = 0.0f;
-                step_palette_and_water_ripples();
+                step_palette_and_ambient();
                 g.page = PAGE_LYRICS;
                 g.fade_armed = 0;
             }
-            if (dump_frame == 106) {
+            if (dump_frame == 112) {
                 render_frame(0, 0);
                 dump_rgba_shot(dump_dir, "shot_lyr.rgba");
                 break;

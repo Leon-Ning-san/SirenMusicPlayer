@@ -416,13 +416,13 @@ void resample_bilinear(const uint32_t* src, int sw, int sh, uint32_t* dst, int d
             uint32_t c00 = sr0[p0], c10 = sr0[p1];
             uint32_t c01 = sr1[p0], c11 = sr1[p1];
 
-            uint32_t top_rb = (((c00 & 0x00FF00FFu) * unwx + (c10 & 0x00FF00FFu) * uwx) >> 8) & 0x00FF00FFu;
-            uint32_t bot_rb = (((c01 & 0x00FF00FFu) * unwx + (c11 & 0x00FF00FFu) * uwx) >> 8) & 0x00FF00FFu;
-            uint32_t out_rb = ((top_rb * unwy + bot_rb * uwy) >> 8) & 0x00FF00FFu;
+            uint32_t top_rb = (((c00 & 0x00FF00FFu) * unwx + (c10 & 0x00FF00FFu) * uwx + 0x00800080u) >> 8) & 0x00FF00FFu;
+            uint32_t bot_rb = (((c01 & 0x00FF00FFu) * unwx + (c11 & 0x00FF00FFu) * uwx + 0x00800080u) >> 8) & 0x00FF00FFu;
+            uint32_t out_rb = ((top_rb * unwy + bot_rb * uwy + 0x00800080u) >> 8) & 0x00FF00FFu;
 
-            uint32_t top_ag = ((((c00 >> 8) & 0x00FF00FFu) * unwx + ((c10 >> 8) & 0x00FF00FFu) * uwx) >> 8) & 0x00FF00FFu;
-            uint32_t bot_ag = ((((c01 >> 8) & 0x00FF00FFu) * unwx + ((c11 >> 8) & 0x00FF00FFu) * uwx) >> 8) & 0x00FF00FFu;
-            uint32_t out_ag = (top_ag * unwy + bot_ag * uwy) & 0xFF00FF00u;
+            uint32_t top_ag = ((((c00 >> 8) & 0x00FF00FFu) * unwx + ((c10 >> 8) & 0x00FF00FFu) * uwx + 0x00800080u) >> 8) & 0x00FF00FFu;
+            uint32_t bot_ag = ((((c01 >> 8) & 0x00FF00FFu) * unwx + ((c11 >> 8) & 0x00FF00FFu) * uwx + 0x00800080u) >> 8) & 0x00FF00FFu;
+            uint32_t out_ag = (top_ag * unwy + bot_ag * uwy + 0x00800080u) & 0xFF00FF00u;
 
             drow[x] = out_ag | out_rb;
         }
@@ -1051,12 +1051,12 @@ static void blit_scaled_round_px(Canvas* dst, int dx, int dy, int dw, int dh,
                 int p0 = ix0[k], p1 = ix1[k];
                 uint32_t uwx = (uint32_t)wx[k], unwx = 256u - uwx;
                 uint32_t c00 = sr0[p0], c10 = sr0[p1], c01 = sr1[p0], c11 = sr1[p1];
-                uint32_t top_rb = (((c00 & 0x00FF00FFu) * unwx + (c10 & 0x00FF00FFu) * uwx) >> 8) & 0x00FF00FFu;
-                uint32_t bot_rb = (((c01 & 0x00FF00FFu) * unwx + (c11 & 0x00FF00FFu) * uwx) >> 8) & 0x00FF00FFu;
-                uint32_t out_rb = ((top_rb * unwy + bot_rb * uwy) >> 8) & 0x00FF00FFu;
-                uint32_t top_g  = ((((c00 >> 8) & 0xFFu) * unwx + ((c10 >> 8) & 0xFFu) * uwx) >> 8);
-                uint32_t bot_g  = ((((c01 >> 8) & 0xFFu) * unwx + ((c11 >> 8) & 0xFFu) * uwx) >> 8);
-                uint32_t out_g  = (top_g * unwy + bot_g * uwy) & 0x0000FF00u;
+                uint32_t top_rb = (((c00 & 0x00FF00FFu) * unwx + (c10 & 0x00FF00FFu) * uwx + 0x00800080u) >> 8) & 0x00FF00FFu;
+                uint32_t bot_rb = (((c01 & 0x00FF00FFu) * unwx + (c11 & 0x00FF00FFu) * uwx + 0x00800080u) >> 8) & 0x00FF00FFu;
+                uint32_t out_rb = ((top_rb * unwy + bot_rb * uwy + 0x00800080u) >> 8) & 0x00FF00FFu;
+                uint32_t top_g  = ((((c00 >> 8) & 0xFFu) * unwx + ((c10 >> 8) & 0xFFu) * uwx + 128u) >> 8);
+                uint32_t bot_g  = ((((c01 >> 8) & 0xFFu) * unwx + ((c11 >> 8) & 0xFFu) * uwx + 128u) >> 8);
+                uint32_t out_g  = (top_g * unwy + bot_g * uwy + 128u) & 0x0000FF00u;
                 drow[x0 + k] = 0xFF000000u | out_g | out_rb;
             }
             continue;
@@ -1076,13 +1076,13 @@ static void blit_scaled_round_px(Canvas* dst, int dx, int dy, int dw, int dh,
             uint32_t uwx = (uint32_t)wx[k], unwx = 256u - uwx;
             uint32_t c00 = sr0[p0], c10 = sr0[p1], c01 = sr1[p0], c11 = sr1[p1];
 
-            uint32_t top_rb = (((c00 & 0x00FF00FFu) * unwx + (c10 & 0x00FF00FFu) * uwx) >> 8) & 0x00FF00FFu;
-            uint32_t bot_rb = (((c01 & 0x00FF00FFu) * unwx + (c11 & 0x00FF00FFu) * uwx) >> 8) & 0x00FF00FFu;
-            uint32_t out_rb = ((top_rb * unwy + bot_rb * uwy) >> 8) & 0x00FF00FFu;
+            uint32_t top_rb = (((c00 & 0x00FF00FFu) * unwx + (c10 & 0x00FF00FFu) * uwx + 0x00800080u) >> 8) & 0x00FF00FFu;
+            uint32_t bot_rb = (((c01 & 0x00FF00FFu) * unwx + (c11 & 0x00FF00FFu) * uwx + 0x00800080u) >> 8) & 0x00FF00FFu;
+            uint32_t out_rb = ((top_rb * unwy + bot_rb * uwy + 0x00800080u) >> 8) & 0x00FF00FFu;
 
-            uint32_t top_ag = ((((c00 >> 8) & 0x00FF00FFu) * unwx + ((c10 >> 8) & 0x00FF00FFu) * uwx) >> 8) & 0x00FF00FFu;
-            uint32_t bot_ag = ((((c01 >> 8) & 0x00FF00FFu) * unwx + ((c11 >> 8) & 0x00FF00FFu) * uwx) >> 8) & 0x00FF00FFu;
-            uint32_t out_ag = (top_ag * unwy + bot_ag * uwy) & 0xFF00FF00u;
+            uint32_t top_ag = ((((c00 >> 8) & 0x00FF00FFu) * unwx + ((c10 >> 8) & 0x00FF00FFu) * uwx + 0x00800080u) >> 8) & 0x00FF00FFu;
+            uint32_t bot_ag = ((((c01 >> 8) & 0x00FF00FFu) * unwx + ((c11 >> 8) & 0x00FF00FFu) * uwx + 0x00800080u) >> 8) & 0x00FF00FFu;
+            uint32_t out_ag = (top_ag * unwy + bot_ag * uwy + 0x00800080u) & 0xFF00FF00u;
 
             uint32_t px_col = opaque_src ? (0xFF000000u | (out_ag & 0x0000FF00u) | out_rb) : (out_ag | out_rb);
             uint32_t eff = (ga < 255) ? ((uint32_t)cov * ga / 255u) : (uint32_t)cov;
@@ -1183,6 +1183,202 @@ void fill_round_rect_shadow(Canvas* c, int x, int y, int w, int h, int r, uint8_
     if (!c) return;
     if (fabsf(c->s - 1.0f) < 0.001f) fill_round_rect_shadow_px(c, x, y, w, h, r, max_alpha);
     else fill_round_rect_shadow_px(c, sc_i(c->s, x), sc_i(c->s, y), sc_sz(c->s, w), sc_sz(c->s, h), sc_i(c->s, r), max_alpha);
+}
+
+void fill_frosted_round_rect(Canvas* c, int x, int y, int w, int h, int r,
+                             uint32_t tint_col, uint8_t tint_alpha, int blur_radius, uint8_t rim_alpha) {
+    if (!c || !c->px || w <= 0 || h <= 0) return;
+    float s = c->s > 0.0f ? c->s : 1.0f;
+    int px = (fabsf(s - 1.0f) < 0.001f) ? x : sc_i(s, x);
+    int py = (fabsf(s - 1.0f) < 0.001f) ? y : sc_i(s, y);
+    int pw = (fabsf(s - 1.0f) < 0.001f) ? w : sc_sz(s, w);
+    int ph = (fabsf(s - 1.0f) < 0.001f) ? h : sc_sz(s, h);
+    int pr = (fabsf(s - 1.0f) < 0.001f) ? r : sc_i(s, r);
+    if (pw <= 0 || ph <= 0) return;
+    if (pr < 0) pr = 0;
+    if (pr > pw / 2) pr = pw / 2;
+    if (pr > ph / 2) pr = ph / 2;
+
+    int cx0, cy0, cx1, cy1;
+    canvas_clip_bounds(c, &cx0, &cy0, &cx1, &cy1);
+    int vx0 = px < cx0 ? cx0 : px;
+    int vy0 = py < cy0 ? cy0 : py;
+    int vx1 = (px + pw > cx1) ? cx1 : (px + pw);
+    int vy1 = (py + ph > cy1) ? cy1 : (py + ph);
+    int vw = vx1 - vx0;
+    int vh = vy1 - vy0;
+    if (vw <= 0 || vh <= 0) return;
+
+    if (vw < 8 || vh < 8 || blur_radius <= 0) {
+        fill_round_rect_aa_a_px(c, px, py, pw, ph, pr, tint_col, tint_alpha);
+        if (rim_alpha > 0 && pr > 0) {
+            stroke_round_rect_aa_px(c, px, py, pw, ph, pr, sc_sz(s, 1), COL(255, 255, 255, 255), rim_alpha);
+        }
+        return;
+    }
+
+    int ds = (int)(s * (blur_radius >= 3 ? 6.0f : 4.5f) + 0.5f);
+    if (ds < 4) ds = 4;
+    while ((vw / ds) > 80 || (vh / ds) > 48) ds++;
+    int bw = vw / ds; if (bw < 6) bw = (vw < 6 ? vw : 6); if (bw > 80) bw = 80;
+    int bh = vh / ds; if (bh < 6) bh = (vh < 6 ? vh : 6); if (bh > 48) bh = 48;
+
+    uint32_t buf_a[80 * 48], buf_b[80 * 48];
+    for (int by = 0; by < bh; by++) {
+        int sy0 = vy0 + (by * vh) / bh;
+        int sy1 = vy0 + ((by + 1) * vh - 1) / bh;
+        if (sy0 >= c->h) sy0 = c->h - 1;
+        if (sy1 >= c->h) sy1 = c->h - 1;
+        const uint32_t* r0 = c->px + (size_t)sy0 * c->w;
+        const uint32_t* r1 = c->px + (size_t)sy1 * c->w;
+        for (int bx = 0; bx < bw; bx++) {
+            int sx0 = vx0 + (bx * vw) / bw;
+            int sx1 = vx0 + ((bx + 1) * vw - 1) / bw;
+            if (sx0 >= c->w) sx0 = c->w - 1;
+            if (sx1 >= c->w) sx1 = c->w - 1;
+            uint32_t p0 = r0[sx0], p1 = r0[sx1], p2 = r1[sx0], p3 = r1[sx1];
+            uint32_t sr = (p0 & 0xFFu) + (p1 & 0xFFu) + (p2 & 0xFFu) + (p3 & 0xFFu);
+            uint32_t sg = ((p0 >> 8) & 0xFFu) + ((p1 >> 8) & 0xFFu) + ((p2 >> 8) & 0xFFu) + ((p3 >> 8) & 0xFFu);
+            uint32_t sb = ((p0 >> 16) & 0xFFu) + ((p1 >> 16) & 0xFFu) + ((p2 >> 16) & 0xFFu) + ((p3 >> 16) & 0xFFu);
+            buf_a[(size_t)by * bw + bx] = 0xFF000000u | ((sb >> 2) << 16) | ((sg >> 2) << 8) | (sr >> 2);
+        }
+    }
+
+    int rad = (blur_radius > 3) ? 3 : blur_radius;
+    int passes = 2;
+    for (int p = 0; p < passes; p++) {
+        for (int by = 0; by < bh; by++) {
+            const uint32_t* sr = buf_a + (size_t)by * bw;
+            uint32_t* dr = buf_b + (size_t)by * bw;
+            for (int bx = 0; bx < bw; bx++) {
+                uint32_t rsum = 0, gsum = 0, bsum = 0, cnt = 0;
+                int k0 = bx - rad; if (k0 < 0) k0 = 0;
+                int k1 = bx + rad; if (k1 >= bw) k1 = bw - 1;
+                for (int k = k0; k <= k1; k++) {
+                    uint32_t c0 = sr[k];
+                    rsum += c0 & 0xFFu; gsum += (c0 >> 8) & 0xFFu; bsum += (c0 >> 16) & 0xFFu;
+                    cnt++;
+                }
+                dr[bx] = 0xFF000000u | ((bsum / cnt) << 16) | ((gsum / cnt) << 8) | (rsum / cnt);
+            }
+        }
+        for (int by = 0; by < bh; by++) {
+            int k0 = by - rad; if (k0 < 0) k0 = 0;
+            int k1 = by + rad; if (k1 >= bh) k1 = bh - 1;
+            uint32_t* dr = buf_a + (size_t)by * bw;
+            for (int bx = 0; bx < bw; bx++) {
+                uint32_t rsum = 0, gsum = 0, bsum = 0, cnt = 0;
+                for (int k = k0; k <= k1; k++) {
+                    uint32_t c0 = buf_b[(size_t)k * bw + bx];
+                    rsum += c0 & 0xFFu; gsum += (c0 >> 8) & 0xFFu; bsum += (c0 >> 16) & 0xFFu;
+                    cnt++;
+                }
+                dr[bx] = 0xFF000000u | ((bsum / cnt) << 16) | ((gsum / cnt) << 8) | (rsum / cnt);
+            }
+        }
+    }
+
+    uint32_t ua = tint_alpha;
+    uint32_t na = 255u - ua;
+    uint32_t tr_a = (tint_col & 0x00FF00FFu) * ua;
+    uint32_t tg_a = (tint_col & 0x0000FF00u) * ua;
+    int bn = bw * bh;
+    for (int i = 0; i < bn; i++) {
+        uint32_t d = buf_a[i];
+        uint32_t rb = (tr_a + (d & 0x00FF00FFu) * na) >> 8;
+        uint32_t g  = (tg_a + (d & 0x0000FF00u) * na) >> 8;
+        buf_a[i] = 0xFF000000u | (rb & 0x00FF00FFu) | (g & 0x0000FF00u);
+    }
+
+    int ix0[2048], ix1[2048], wx[2048];
+    int use_stk = (vw <= 2048);
+    int* p_ix0 = use_stk ? ix0 : (int*)malloc((size_t)vw * sizeof(int));
+    int* p_ix1 = use_stk ? ix1 : (int*)malloc((size_t)vw * sizeof(int));
+    int* p_wx  = use_stk ? wx  : (int*)malloc((size_t)vw * sizeof(int));
+    if (!p_ix0 || !p_ix1 || !p_wx) {
+        if (!use_stk) { free(p_ix0); free(p_ix1); free(p_wx); }
+        return;
+    }
+
+    float fsx = (float)bw / (float)vw;
+    float fsy = (float)bh / (float)vh;
+    for (int k = 0; k < vw; k++) {
+        float fx = ((float)k + 0.5f) * fsx - 0.5f;
+        int xa = (int)floorf(fx);
+        int wxi = (xa < 0) ? (xa = 0, 0) : (int)((fx - (float)xa) * 256.0f + 0.5f);
+        if (xa >= bw) xa = bw - 1;
+        int xb = xa + 1;
+        if (xb >= bw) { xb = bw - 1; wxi = 0; }
+        if (wxi < 0) wxi = 0; else if (wxi > 256) wxi = 256;
+        p_ix0[k] = xa; p_ix1[k] = xb; p_wx[k] = wxi;
+    }
+
+    for (int gy = vy0; gy < vy1; gy++) {
+        int lk = gy - vy0;
+        float fy = ((float)lk + 0.5f) * fsy - 0.5f;
+        int ya = (int)floorf(fy);
+        int wyi = (ya < 0) ? (ya = 0, 0) : (int)((fy - (float)ya) * 256.0f + 0.5f);
+        if (ya >= bh) ya = bh - 1;
+        int yb = ya + 1;
+        if (yb >= bh) { yb = bh - 1; wyi = 0; }
+        if (wyi < 0) wyi = 0; else if (wyi > 256) wyi = 256;
+        uint32_t uwy = (uint32_t)wyi, unwy = 256u - uwy;
+
+        const uint32_t* sr0 = buf_a + (size_t)ya * bw;
+        const uint32_t* sr1 = buf_a + (size_t)yb * bw;
+        uint32_t* drow = c->px + (size_t)gy * c->w;
+
+        int j = gy - py;
+        int cy_dist = 0;
+        if (pr > 0) {
+            if (j < pr) cy_dist = pr - j;
+            else if (j >= ph - pr) cy_dist = j - (ph - 1 - pr);
+        }
+
+        if (cy_dist == 0) {
+            for (int k = 0; k < vw; k++) {
+                int p0 = p_ix0[k], p1 = p_ix1[k];
+                uint32_t uwx = (uint32_t)p_wx[k], unwx = 256u - uwx;
+                uint32_t c00 = sr0[p0], c10 = sr0[p1], c01 = sr1[p0], c11 = sr1[p1];
+                uint32_t top_rb = (((c00 & 0x00FF00FFu) * unwx + (c10 & 0x00FF00FFu) * uwx + 0x00800080u) >> 8) & 0x00FF00FFu;
+                uint32_t bot_rb = (((c01 & 0x00FF00FFu) * unwx + (c11 & 0x00FF00FFu) * uwx + 0x00800080u) >> 8) & 0x00FF00FFu;
+                uint32_t out_rb = ((top_rb * unwy + bot_rb * uwy + 0x00800080u) >> 8) & 0x00FF00FFu;
+                uint32_t top_g  = ((((c00 >> 8) & 0xFFu) * unwx + ((c10 >> 8) & 0xFFu) * uwx + 128u) >> 8);
+                uint32_t bot_g  = ((((c01 >> 8) & 0xFFu) * unwx + ((c11 >> 8) & 0xFFu) * uwx + 128u) >> 8);
+                uint32_t out_g  = (top_g * unwy + bot_g * uwy + 128u) & 0x0000FF00u;
+                drow[vx0 + k] = 0xFF000000u | out_g | out_rb;
+            }
+        } else {
+            for (int k = 0; k < vw; k++) {
+                int gx = vx0 + k;
+                int li = gx - px;
+                int cov = 255;
+                if (li < pr) cov = corner_cov(pr - li, cy_dist, pr);
+                else if (li >= pw - pr) cov = corner_cov(li - (pw - 1 - pr), cy_dist, pr);
+                if (cov <= 0) continue;
+
+                int p0 = p_ix0[k], p1 = p_ix1[k];
+                uint32_t uwx = (uint32_t)p_wx[k], unwx = 256u - uwx;
+                uint32_t c00 = sr0[p0], c10 = sr0[p1], c01 = sr1[p0], c11 = sr1[p1];
+                uint32_t top_rb = (((c00 & 0x00FF00FFu) * unwx + (c10 & 0x00FF00FFu) * uwx + 0x00800080u) >> 8) & 0x00FF00FFu;
+                uint32_t bot_rb = (((c01 & 0x00FF00FFu) * unwx + (c11 & 0x00FF00FFu) * uwx + 0x00800080u) >> 8) & 0x00FF00FFu;
+                uint32_t out_rb = ((top_rb * unwy + bot_rb * uwy + 0x00800080u) >> 8) & 0x00FF00FFu;
+                uint32_t top_g  = ((((c00 >> 8) & 0xFFu) * unwx + ((c10 >> 8) & 0xFFu) * uwx + 128u) >> 8);
+                uint32_t bot_g  = ((((c01 >> 8) & 0xFFu) * unwx + ((c11 >> 8) & 0xFFu) * uwx + 128u) >> 8);
+                uint32_t out_g  = (top_g * unwy + bot_g * uwy + 128u) & 0x0000FF00u;
+                uint32_t frost_col = 0xFF000000u | out_g | out_rb;
+
+                if (cov >= 255) drow[gx] = frost_col;
+                else            px_blend(c, gx, gy, frost_col, (uint8_t)cov);
+            }
+        }
+    }
+
+    if (!use_stk) { free(p_ix0); free(p_ix1); free(p_wx); }
+
+    if (rim_alpha > 0 && pr > 0) {
+        stroke_round_rect_aa_px(c, px, py, pw, ph, pr, sc_sz(s, 1), COL(255, 255, 255, 255), rim_alpha);
+    }
 }
 void stroke_circle_aa(Canvas* c, int cx, int cy, int r, int thickness, uint32_t col, uint8_t alpha) {
     if (!c) return;

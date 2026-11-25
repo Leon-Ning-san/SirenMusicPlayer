@@ -59,6 +59,9 @@ void fill_round_rect_aa_a(Canvas* c, int x, int y, int w, int h, int r, uint32_t
 void stroke_round_rect_aa(Canvas* c, int x, int y, int w, int h, int r, int thickness, uint32_t col, uint8_t alpha);
 // 柔和多层半透明投影（替代纯黑阴影方块）
 void fill_round_rect_shadow(Canvas* c, int x, int y, int w, int h, int r, uint8_t max_alpha);
+// 实时真毛玻璃圆角容器（采样底层像素 -> 降采样双pass模糊 -> 柔润着色混合 -> 玻璃高光描边）
+void fill_frosted_round_rect(Canvas* c, int x, int y, int w, int h, int r,
+                             uint32_t tint_col, uint8_t tint_alpha, int blur_radius, uint8_t rim_alpha);
 // 抗锯齿椭圆填充
 void fill_ellipse_aa(Canvas* c, int cx, int cy, int rx, int ry, uint32_t col);
 // 抗锯齿空心圆环
