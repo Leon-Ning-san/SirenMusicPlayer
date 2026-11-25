@@ -53,6 +53,10 @@ struct SdlState {
     int hover_x = -1, hover_y = -1;
     int cursor_hand = 0;
     int touch_reset = 0;
+    int is_touch = 0;
+    int idle_mode = 0;
+    SDL_FingerID active_finger = 0;
+    int finger_active = 0;
     int wheel_frame = 0;
 
     uint64_t key_held = 0, key_prev = 0, key_down = 0, key_down_pending = 0;
@@ -241,6 +245,7 @@ void be_end(void) {
     SDL_RenderClear(g_sdl.ren.get());
     SDL_RenderCopy(g_sdl.ren.get(), g_sdl.tex.get(), nullptr, nullptr);
     SDL_RenderPresent(g_sdl.ren.get());
+    if (g_sdl.idle_mode) SDL_Delay(20);
 }
 
 void be_input_update(void) {
@@ -259,8 +264,51 @@ void be_input_update(void) {
                 g_sdl.hover_y = -1;
             }
             break;
+        case SDL_FINGERDOWN: {
+            if (!g_sdl.finger_active) {
+                g_sdl.finger_active = 1;
+                g_sdl.active_finger = ev.tfinger.fingerId;
+                g_sdl.is_touch = 1;
+                g_sdl.idle_mode = 0;
+                const int px = static_cast<int>(ev.tfinger.x * static_cast<float>(g_sdl.win_w));
+                const int py = static_cast<int>(ev.tfinger.y * static_cast<float>(g_sdl.win_h));
+                map_mouse_xy(px, py, &g_sdl.m_x, &g_sdl.m_y);
+                g_sdl.hover_x = g_sdl.m_x;
+                g_sdl.hover_y = g_sdl.m_y;
+                g_sdl.m_held = 1;
+                g_sdl.m_down = 1;
+            }
+            break;
+        }
+        case SDL_FINGERMOTION: {
+            if (g_sdl.finger_active && ev.tfinger.fingerId == g_sdl.active_finger) {
+                g_sdl.idle_mode = 0;
+                const int px = static_cast<int>(ev.tfinger.x * static_cast<float>(g_sdl.win_w));
+                const int py = static_cast<int>(ev.tfinger.y * static_cast<float>(g_sdl.win_h));
+                map_mouse_xy(px, py, &g_sdl.m_x, &g_sdl.m_y);
+                g_sdl.hover_x = g_sdl.m_x;
+                g_sdl.hover_y = g_sdl.m_y;
+            }
+            break;
+        }
+        case SDL_FINGERUP: {
+            if (g_sdl.finger_active && ev.tfinger.fingerId == g_sdl.active_finger) {
+                g_sdl.idle_mode = 0;
+                const int px = static_cast<int>(ev.tfinger.x * static_cast<float>(g_sdl.win_w));
+                const int py = static_cast<int>(ev.tfinger.y * static_cast<float>(g_sdl.win_h));
+                map_mouse_xy(px, py, &g_sdl.m_x, &g_sdl.m_y);
+                g_sdl.m_held = 0;
+                g_sdl.m_up = 1;
+                g_sdl.finger_active = 0;
+                g_sdl.hover_x = -1;
+                g_sdl.hover_y = -1;
+            }
+            break;
+        }
         case SDL_MOUSEBUTTONDOWN:
-            if (ev.button.button == SDL_BUTTON_LEFT) {
+            if (ev.button.button == SDL_BUTTON_LEFT && ev.button.which != SDL_TOUCH_MOUSEID) {
+                g_sdl.is_touch = 0;
+                g_sdl.idle_mode = 0;
                 map_mouse_xy(ev.button.x, ev.button.y, &g_sdl.m_x, &g_sdl.m_y);
                 g_sdl.hover_x = g_sdl.m_x;
                 g_sdl.hover_y = g_sdl.m_y;
@@ -269,14 +317,18 @@ void be_input_update(void) {
             }
             break;
         case SDL_MOUSEMOTION:
-            map_mouse_xy(ev.motion.x, ev.motion.y, &g_sdl.hover_x, &g_sdl.hover_y);
-            if (g_sdl.m_held) {
-                g_sdl.m_x = g_sdl.hover_x;
-                g_sdl.m_y = g_sdl.hover_y;
+            if (ev.motion.which != SDL_TOUCH_MOUSEID) {
+                g_sdl.is_touch = 0;
+                g_sdl.idle_mode = 0;
+                map_mouse_xy(ev.motion.x, ev.motion.y, &g_sdl.hover_x, &g_sdl.hover_y);
+                if (g_sdl.m_held) {
+                    g_sdl.m_x = g_sdl.hover_x;
+                    g_sdl.m_y = g_sdl.hover_y;
+                }
             }
             break;
         case SDL_MOUSEBUTTONUP:
-            if (ev.button.button == SDL_BUTTON_LEFT) {
+            if (ev.button.button == SDL_BUTTON_LEFT && ev.button.which != SDL_TOUCH_MOUSEID) {
                 map_mouse_xy(ev.button.x, ev.button.y, &g_sdl.m_x, &g_sdl.m_y);
                 g_sdl.m_held = 0;
                 g_sdl.m_up = 1;
@@ -504,5 +556,8 @@ void be_set_media_state(int has_track, int playing, float frac, const char* titl
         SDL_SetWindowTitle(g_sdl.win.get(), cap);
     }
 }
+
+int  be_input_is_touch(void) { return g_sdl.is_touch; }
+void be_set_idle_mode(int idle) { g_sdl.idle_mode = idle ? 1 : 0; }
 
 #endif

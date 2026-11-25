@@ -89,12 +89,15 @@ typedef struct Font Font;
 Font* font_load(const void* data, size_t len);
 void font_free(Font* f);
 int  text_width(Font* f, float px, const char* utf8);
+int  text_width_bold(Font* f, float px, const char* utf8);
 // draw single line, top-anchored at y
 void draw_text(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8);
 // centered horizontally in [x0,x1]
 void draw_text_centered(Canvas* c, Font* f, float px, int x0, int x1, int y, uint32_t col, const char* utf8);
+void draw_text_centered_bold(Canvas* c, Font* f, float px, int x0, int x1, int y, uint32_t col, const char* utf8);
 // right-aligned at x1
 void draw_text_right(Canvas* c, Font* f, float px, int x1, int y, uint32_t col, const char* utf8);
+void draw_text_right_bold(Canvas* c, Font* f, float px, int x1, int y, uint32_t col, const char* utf8);
 // truncate with ellipsis if wider than max_w; returns 1 if truncated
 int  draw_text_max(Canvas* c, Font* f, float px, int x, int y, uint32_t col, const char* utf8, int max_w);
 int  text_width_max(Font* f, float px, const char* utf8, int max_w);

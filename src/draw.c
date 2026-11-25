@@ -367,42 +367,70 @@ void blit_rgba_round_px(Canvas* dst, int dx, int dy, const uint32_t* src, int sw
 
 void resample_bilinear(const uint32_t* src, int sw, int sh, uint32_t* dst, int dw, int dh) {
     if (!src || !dst || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
+    int stk_x0[2048], stk_x1[2048], stk_wx[2048];
+    int* ix0 = (dw <= 2048) ? stk_x0 : (int*)malloc((size_t)dw * sizeof(int));
+    int* ix1 = (dw <= 2048) ? stk_x1 : (int*)malloc((size_t)dw * sizeof(int));
+    int* wx  = (dw <= 2048) ? stk_wx : (int*)malloc((size_t)dw * sizeof(int));
+    if (!ix0 || !ix1 || !wx) {
+        if (ix0 != stk_x0) free(ix0);
+        if (ix1 != stk_x1) free(ix1);
+        if (wx  != stk_wx) free(wx);
+        return;
+    }
+
     float sx = (float)sw / (float)dw;
     float sy = (float)sh / (float)dh;
+    for (int x = 0; x < dw; x++) {
+        float fx = ((float)x + 0.5f) * sx - 0.5f;
+        int x0 = (int)floorf(fx);
+        int wxi;
+        if (x0 < 0) { x0 = 0; wxi = 0; }
+        else        { wxi = (int)((fx - (float)x0) * 256.0f + 0.5f); }
+        if (x0 >= sw) x0 = sw - 1;
+        int x1 = x0 + 1;
+        if (x1 >= sw) { x1 = sw - 1; wxi = 0; }
+        if (wxi < 0) wxi = 0; else if (wxi > 256) wxi = 256;
+        ix0[x] = x0; ix1[x] = x1; wx[x] = wxi;
+    }
+
     for (int y = 0; y < dh; y++) {
-        float fy = (y + 0.5f) * sy - 0.5f;
-        int y0 = (int)fy;
-        float ty = fy - y0;
-        if (y0 < 0) { y0 = 0; ty = 0; }
-        int y1 = y0 + 1; if (y1 >= sh) y1 = sh - 1;
+        float fy = ((float)y + 0.5f) * sy - 0.5f;
+        int y0 = (int)floorf(fy);
+        int wy;
+        if (y0 < 0) { y0 = 0; wy = 0; }
+        else        { wy = (int)((fy - (float)y0) * 256.0f + 0.5f); }
+        if (y0 >= sh) y0 = sh - 1;
+        int y1 = y0 + 1;
+        if (y1 >= sh) { y1 = sh - 1; wy = 0; }
+        if (wy < 0) wy = 0; else if (wy > 256) wy = 256;
+        uint32_t uwy = (uint32_t)wy;
+        uint32_t unwy = 256u - uwy;
+
+        const uint32_t* sr0 = src + (size_t)y0 * sw;
+        const uint32_t* sr1 = src + (size_t)y1 * sw;
+        uint32_t* drow = dst + (size_t)y * dw;
         for (int x = 0; x < dw; x++) {
-            float fx = (x + 0.5f) * sx - 0.5f;
-            int x0 = (int)fx;
-            float tx = fx - x0;
-            if (x0 < 0) { x0 = 0; tx = 0; }
-            int x1 = x0 + 1; if (x1 >= sw) x1 = sw - 1;
-            const uint32_t* p00 = src + (size_t)y0 * sw + x0;
-            const uint32_t* p10 = src + (size_t)y0 * sw + x1;
-            const uint32_t* p01 = src + (size_t)y1 * sw + x0;
-            const uint32_t* p11 = src + (size_t)y1 * sw + x1;
-            uint32_t out = 0;
-            for (int ch = 0; ch < 4; ch++) {
-                int shift = ch * 8;
-                float a = (float)((*p00 >> shift) & 0xFF);
-                float b = (float)((*p10 >> shift) & 0xFF);
-                float cc = (float)((*p01 >> shift) & 0xFF);
-                float d = (float)((*p11 >> shift) & 0xFF);
-                float top = a + (b - a) * tx;
-                float bot = cc + (d - cc) * tx;
-                float v = top + (bot - top) * ty;
-                int iv = (int)(v + 0.5f);
-                if (iv < 0) iv = 0;
-                if (iv > 255) iv = 255;
-                out |= ((uint32_t)iv) << shift;
-            }
-            dst[(size_t)y * dw + x] = out;
+            int p0 = ix0[x], p1 = ix1[x];
+            uint32_t uwx = (uint32_t)wx[x];
+            uint32_t unwx = 256u - uwx;
+            uint32_t c00 = sr0[p0], c10 = sr0[p1];
+            uint32_t c01 = sr1[p0], c11 = sr1[p1];
+
+            uint32_t top_rb = (((c00 & 0x00FF00FFu) * unwx + (c10 & 0x00FF00FFu) * uwx) >> 8) & 0x00FF00FFu;
+            uint32_t bot_rb = (((c01 & 0x00FF00FFu) * unwx + (c11 & 0x00FF00FFu) * uwx) >> 8) & 0x00FF00FFu;
+            uint32_t out_rb = ((top_rb * unwy + bot_rb * uwy) >> 8) & 0x00FF00FFu;
+
+            uint32_t top_ag = ((((c00 >> 8) & 0x00FF00FFu) * unwx + ((c10 >> 8) & 0x00FF00FFu) * uwx) >> 8) & 0x00FF00FFu;
+            uint32_t bot_ag = ((((c01 >> 8) & 0x00FF00FFu) * unwx + ((c11 >> 8) & 0x00FF00FFu) * uwx) >> 8) & 0x00FF00FFu;
+            uint32_t out_ag = (top_ag * unwy + bot_ag * uwy) & 0xFF00FF00u;
+
+            drow[x] = out_ag | out_rb;
         }
     }
+
+    if (ix0 != stk_x0) free(ix0);
+    if (ix1 != stk_x1) free(ix1);
+    if (wx  != stk_wx) free(wx);
 }
 
 void box_blur(uint32_t* img, int w, int h, int radius, int passes) {
@@ -965,18 +993,49 @@ static void blit_scaled_round_px(Canvas* dst, int dx, int dy, int dw, int dh,
     int y0 = dy < cy0 ? cy0 - dy : 0;
     int x1 = (dx + dw > cx1) ? cx1 - dx : dw;
     int y1 = (dy + dh > cy1) ? cy1 - dy : dh;
-    if (x1 <= x0 || y1 <= y0) return;
+    int span = x1 - x0;
+    if (span <= 0 || y1 <= y0) return;
+
+    int stk_x0[2048], stk_x1[2048], stk_wx[2048];
+    int* ix0 = (span <= 2048) ? stk_x0 : (int*)malloc((size_t)span * sizeof(int));
+    int* ix1 = (span <= 2048) ? stk_x1 : (int*)malloc((size_t)span * sizeof(int));
+    int* wx  = (span <= 2048) ? stk_wx : (int*)malloc((size_t)span * sizeof(int));
+    if (!ix0 || !ix1 || !wx) {
+        if (ix0 != stk_x0) free(ix0);
+        if (ix1 != stk_x1) free(ix1);
+        if (wx  != stk_wx) free(wx);
+        return;
+    }
 
     float sx = (float)sw / (float)dw;
     float sy = (float)sh / (float)dh;
+    for (int k = 0; k < span; k++) {
+        int i = x0 + k;
+        float fx = ((float)i + 0.5f) * sx - 0.5f;
+        int x_a = (int)floorf(fx);
+        int wxi;
+        if (x_a < 0) { x_a = 0; wxi = 0; }
+        else         { wxi = (int)((fx - (float)x_a) * 256.0f + 0.5f); }
+        if (x_a >= sw) x_a = sw - 1;
+        int x_b = x_a + 1;
+        if (x_b >= sw) { x_b = sw - 1; wxi = 0; }
+        if (wxi < 0) wxi = 0; else if (wxi > 256) wxi = 256;
+        ix0[k] = x_a; ix1[k] = x_b; wx[k] = wxi;
+    }
+
     for (int j = y0; j < y1; j++) {
-        float fy = (j + 0.5f) * sy - 0.5f;
+        float fy = ((float)j + 0.5f) * sy - 0.5f;
         int iy0 = (int)floorf(fy);
-        float ty = fy - (float)iy0;
-        if (iy0 < 0) { iy0 = 0; ty = 0.0f; }
-        int iy1 = iy0 + 1;
-        if (iy1 >= sh) iy1 = sh - 1;
+        int wy;
+        if (iy0 < 0) { iy0 = 0; wy = 0; }
+        else         { wy = (int)((fy - (float)iy0) * 256.0f + 0.5f); }
         if (iy0 >= sh) iy0 = sh - 1;
+        int iy1 = iy0 + 1;
+        if (iy1 >= sh) { iy1 = sh - 1; wy = 0; }
+        if (wy < 0) wy = 0; else if (wy > 256) wy = 256;
+        uint32_t uwy = (uint32_t)wy;
+        uint32_t unwy = 256u - uwy;
+
         const uint32_t* sr0 = src + (size_t)iy0 * sw;
         const uint32_t* sr1 = src + (size_t)iy1 * sw;
         uint32_t* drow = dst->px + (size_t)(dy + j) * dst->w + dx;
@@ -987,37 +1046,55 @@ static void blit_scaled_round_px(Canvas* dst, int dx, int dy, int dw, int dh,
             else if (j >= dh - corner) cy_dist = j - (dh - 1 - corner);
         }
 
+        if (cy_dist == 0 && opaque_src && ga == 255) {
+            for (int k = 0; k < span; k++) {
+                int p0 = ix0[k], p1 = ix1[k];
+                uint32_t uwx = (uint32_t)wx[k], unwx = 256u - uwx;
+                uint32_t c00 = sr0[p0], c10 = sr0[p1], c01 = sr1[p0], c11 = sr1[p1];
+                uint32_t top_rb = (((c00 & 0x00FF00FFu) * unwx + (c10 & 0x00FF00FFu) * uwx) >> 8) & 0x00FF00FFu;
+                uint32_t bot_rb = (((c01 & 0x00FF00FFu) * unwx + (c11 & 0x00FF00FFu) * uwx) >> 8) & 0x00FF00FFu;
+                uint32_t out_rb = ((top_rb * unwy + bot_rb * uwy) >> 8) & 0x00FF00FFu;
+                uint32_t top_g  = ((((c00 >> 8) & 0xFFu) * unwx + ((c10 >> 8) & 0xFFu) * uwx) >> 8);
+                uint32_t bot_g  = ((((c01 >> 8) & 0xFFu) * unwx + ((c11 >> 8) & 0xFFu) * uwx) >> 8);
+                uint32_t out_g  = (top_g * unwy + bot_g * uwy) & 0x0000FF00u;
+                drow[x0 + k] = 0xFF000000u | out_g | out_rb;
+            }
+            continue;
+        }
+
+        int mid_s = (cy_dist == 0) ? x0 : (x0 < corner ? corner : x0);
+        int mid_e = (cy_dist == 0) ? x1 : (x1 > dw - corner ? dw - corner : x1);
         for (int i = x0; i < x1; i++) {
             int cov = 255;
-            if (cy_dist > 0) {
+            if (cy_dist > 0 && (i < mid_s || i >= mid_e)) {
                 if (i < corner) cov = corner_cov(corner - i, cy_dist, corner);
-                else if (i >= dw - corner) cov = corner_cov(i - (dw - 1 - corner), cy_dist, corner);
+                else            cov = corner_cov(i - (dw - 1 - corner), cy_dist, corner);
                 if (cov == 0) continue;
             }
-            float fx = (i + 0.5f) * sx - 0.5f;
-            int ix0 = (int)floorf(fx);
-            float tx = fx - (float)ix0;
-            if (ix0 < 0) { ix0 = 0; tx = 0.0f; }
-            int ix1 = ix0 + 1;
-            if (ix1 >= sw) ix1 = sw - 1;
-            if (ix0 >= sw) ix0 = sw - 1;
+            int k = i - x0;
+            int p0 = ix0[k], p1 = ix1[k];
+            uint32_t uwx = (uint32_t)wx[k], unwx = 256u - uwx;
+            uint32_t c00 = sr0[p0], c10 = sr0[p1], c01 = sr1[p0], c11 = sr1[p1];
 
-            uint32_t c00 = sr0[ix0], c10 = sr0[ix1], c01 = sr1[ix0], c11 = sr1[ix1];
-            float w00 = (1.0f - tx) * (1.0f - ty);
-            float w10 = tx * (1.0f - ty);
-            float w01 = (1.0f - tx) * ty;
-            float w11 = tx * ty;
-            uint32_t r = (uint32_t)((c00 & 0xFF) * w00 + (c10 & 0xFF) * w10 + (c01 & 0xFF) * w01 + (c11 & 0xFF) * w11 + 0.5f);
-            uint32_t g = (uint32_t)(((c00 >> 8) & 0xFF) * w00 + ((c10 >> 8) & 0xFF) * w10 + ((c01 >> 8) & 0xFF) * w01 + ((c11 >> 8) & 0xFF) * w11 + 0.5f);
-            uint32_t b = (uint32_t)(((c00 >> 16) & 0xFF) * w00 + ((c10 >> 16) & 0xFF) * w10 + ((c01 >> 16) & 0xFF) * w01 + ((c11 >> 16) & 0xFF) * w11 + 0.5f);
-            uint32_t a = opaque_src ? 255u : (uint32_t)(((c00 >> 24) & 0xFF) * w00 + ((c10 >> 24) & 0xFF) * w10 + ((c01 >> 24) & 0xFF) * w01 + ((c11 >> 24) & 0xFF) * w11 + 0.5f);
-            uint32_t px_col = (a << 24) | (b << 16) | (g << 8) | r;
+            uint32_t top_rb = (((c00 & 0x00FF00FFu) * unwx + (c10 & 0x00FF00FFu) * uwx) >> 8) & 0x00FF00FFu;
+            uint32_t bot_rb = (((c01 & 0x00FF00FFu) * unwx + (c11 & 0x00FF00FFu) * uwx) >> 8) & 0x00FF00FFu;
+            uint32_t out_rb = ((top_rb * unwy + bot_rb * uwy) >> 8) & 0x00FF00FFu;
+
+            uint32_t top_ag = ((((c00 >> 8) & 0x00FF00FFu) * unwx + ((c10 >> 8) & 0x00FF00FFu) * uwx) >> 8) & 0x00FF00FFu;
+            uint32_t bot_ag = ((((c01 >> 8) & 0x00FF00FFu) * unwx + ((c11 >> 8) & 0x00FF00FFu) * uwx) >> 8) & 0x00FF00FFu;
+            uint32_t out_ag = (top_ag * unwy + bot_ag * uwy) & 0xFF00FF00u;
+
+            uint32_t px_col = opaque_src ? (0xFF000000u | (out_ag & 0x0000FF00u) | out_rb) : (out_ag | out_rb);
             uint32_t eff = (ga < 255) ? ((uint32_t)cov * ga / 255u) : (uint32_t)cov;
-            if (eff >= 255u && opaque_src) drow[i] = px_col | 0xFF000000u;
+            if (eff >= 255u && opaque_src) drow[i] = px_col;
             else if (eff >= 255u) drow[i] = blend_px(drow[i], px_col);
             else if (eff > 0u) drow[i] = blend_px_a(drow[i], px_col, (uint8_t)eff);
         }
     }
+
+    if (ix0 != stk_x0) free(ix0);
+    if (ix1 != stk_x1) free(ix1);
+    if (wx  != stk_wx) free(wx);
 }
 
 void canvas_set_clip(Canvas* c, int x0, int y0, int x1, int y1) {
@@ -1164,19 +1241,50 @@ void fill_m3_scallop(Canvas* c, int cx, int cy, int r, int lobes, float rot, uin
     if (ga == 0) ga = 255;
     float r_base = (float)pr * 0.90f;
     float r_amp  = (float)pr * 0.10f;
+    float r_in2  = (r_base - r_amp - 1.0f); r_in2 = (r_in2 > 0.0f) ? (r_in2 * r_in2) : 0.0f;
+    float r_out  = (float)pr + 1.5f;
+    float r_out2 = r_out * r_out;
+    float cr = cosf((float)lobes * rot), sr = sinf((float)lobes * rot);
+    uint32_t opaque = col | 0xFF000000u;
+
     for (int y = y0; y <= y1; y++) {
         float dy = (float)(y - py) + 0.5f;
+        float dy2 = dy * dy;
         for (int x = x0; x <= x1; x++) {
             float dx = (float)(x - px) + 0.5f;
-            float dist = sqrtf(dx * dx + dy * dy);
-            if (dist > (float)pr + 1.5f) continue;
-            float ang = atan2f(dy, dx) + rot;
-            float target_r = r_base + r_amp * cosf((float)lobes * ang);
+            float d2 = dx * dx + dy2;
+            if (d2 > r_out2) continue;
+            if (d2 <= r_in2) {
+                if (ga >= 255) c->px[(size_t)y * c->w + x] = opaque;
+                else px_blend(c, x, y, col, ga);
+                continue;
+            }
+            float dist = sqrtf(d2);
+            float u = (dist > 1e-4f) ? (dx / dist) : 1.0f;
+            float v = (dist > 1e-4f) ? (dy / dist) : 0.0f;
+            float zr = 1.0f, zi = 0.0f;
+            int e = lobes;
+            while (e > 0) {
+                if (e & 1) {
+                    float nr = zr * u - zi * v;
+                    float ni = zr * v + zi * u;
+                    zr = nr; zi = ni;
+                }
+                e >>= 1;
+                if (e) {
+                    float nu = u * u - v * v;
+                    float nv = 2.0f * u * v;
+                    u = nu; v = nv;
+                }
+            }
+            float target_r = r_base + r_amp * (zr * cr - zi * sr);
             float cov = target_r - dist + 0.55f;
             if (cov <= 0.0f) continue;
-            if (cov > 1.0f) cov = 1.0f;
-            uint8_t aa = (uint8_t)(cov * (float)ga + 0.5f);
-            px_blend(c, x, y, col, aa);
+            if (cov >= 1.0f && ga >= 255) c->px[(size_t)y * c->w + x] = opaque;
+            else {
+                if (cov > 1.0f) cov = 1.0f;
+                px_blend(c, x, y, col, (uint8_t)(cov * (float)ga + 0.5f));
+            }
         }
     }
 }
@@ -1247,6 +1355,8 @@ void draw_m3_water_progress(Canvas* c, int x0, int x1, int mid_y, float frac,
     int iy1 = py + (int)ceilf(r + 1.0f); if (iy1 >= cy1) iy1 = cy1 - 1;
     int ix0 = px0 - 1; if (ix0 < cx0) ix0 = cx0;
     int ix1 = px1 + 1; if (ix1 >= cx1) ix1 = cx1 - 1;
+    int span = ix1 - ix0 + 1;
+    if (span <= 0 || iy1 < iy0) return;
 
     uint8_t ta = (uint8_t)(col_track >> 24);
     if (ta == 0) ta = 255;
@@ -1260,14 +1370,42 @@ void draw_m3_water_progress(Canvas* c, int x0, int x1, int mid_y, float frac,
 
     uint32_t ar = col_active & 0xFFu, ag = (col_active >> 8) & 0xFFu, ab = (col_active >> 16) & 0xFFu;
     uint32_t tr = col_track & 0xFFu,  tg = (col_track >> 8) & 0xFFu,  tb = (col_track >> 16) & 0xFFu;
+    uint32_t track_rgb = COL(tr, tg, tb, 255);
+
+    float wx1[2048], sx2[2048], cx2[2048];
+    int use_lut = (span <= 2048);
+    if (use_lut && frac > 0.002f) {
+        int active_end = (int)ceilf(thumb_x + 1.0f);
+        if (active_end > ix1) active_end = ix1;
+        for (int x = ix0; x <= active_end; x++) {
+            float fx = (float)x + 0.5f;
+            float nx = (fx - (float)px0) / s;
+            float ang2 = nx * 0.25f + phase * 1.5f;
+            int k = x - ix0;
+            wx1[k] = sinf(nx * 0.14f - phase * 2.6f);
+            sx2[k] = sinf(ang2);
+            cx2[k] = cosf(ang2);
+        }
+    }
 
     for (int y = iy0; y <= iy1; y++) {
         float dy = (float)y + 0.5f - (float)py;
-        if (fabsf(dy) > r + 1.0f) continue;
+        float abs_dy = fabsf(dy);
+        if (abs_dy > r + 1.0f) continue;
+        float ny = dy / r;
+        float siny = sinf(ny * 1.8f), cosy = cosf(ny * 1.8f);
+        float top_sheen = (ny < 0.0f ? (-ny) * 0.14f : 0.0f);
+
         for (int x = ix0; x <= ix1; x++) {
             float fx = (float)x + 0.5f;
-            float dx = (fx < fx0) ? (fx0 - fx) : ((fx > fx1) ? (fx - fx1) : 0.0f);
-            float dist = sqrtf(dx * dx + dy * dy);
+            float dist = abs_dy;
+            if (fx < fx0) {
+                float dx = fx0 - fx;
+                dist = sqrtf(dx * dx + dy * dy);
+            } else if (fx > fx1) {
+                float dx = fx - fx1;
+                dist = sqrtf(dx * dx + dy * dy);
+            }
             float cov = r - dist + 0.5f;
             if (cov <= 0.0f) continue;
             if (cov > 1.0f) cov = 1.0f;
@@ -1278,38 +1416,41 @@ void draw_m3_water_progress(Canvas* c, int x0, int x1, int mid_y, float frac,
                     float ec = (thumb_x + 0.5f) - fx;
                     if (ec < acov) acov = ec < 0.0f ? 0.0f : ec;
                 }
-                // Background track blend first on edge, then liquid water ripple fill
                 if (cov > acov && acov < 1.0f) {
-                    px_blend(c, x, y, COL(tr, tg, tb, 255), (uint8_t)((cov - acov) * (float)ta + 0.5f));
+                    px_blend(c, x, y, track_rgb, (uint8_t)((cov - acov) * (float)ta + 0.5f));
                 }
                 if (acov > 0.0f) {
-                    float nx = (fx - (float)px0) / s;
-                    float ny = dy / r;
-                    float w1 = sinf(nx * 0.14f - phase * 2.6f);
-                    float w2 = sinf(nx * 0.25f + phase * 1.5f + ny * 1.8f);
+                    float w1, w2;
+                    if (use_lut) {
+                        int k = x - ix0;
+                        w1 = wx1[k];
+                        w2 = sx2[k] * cosy + cx2[k] * siny;
+                    } else {
+                        float nx = (fx - (float)px0) / s;
+                        w1 = sinf(nx * 0.14f - phase * 2.6f);
+                        w2 = sinf(nx * 0.25f + phase * 1.5f + ny * 1.8f);
+                    }
                     float ripple = (w1 + w2 * 0.6f) * 0.5f;
-                    // Liquid sheen along top edge + flowing caustic wave
-                    float sheen = (ny < 0.0f ? (-ny) * 0.14f : 0.0f) + (ripple > 0.0f ? ripple * 0.36f : ripple * 0.14f);
-                    // Travelling crest glow near playhead
+                    float sheen = top_sheen + (ripple > 0.0f ? ripple * 0.24f : ripple * 0.10f);
                     float dhead = fabsf(fx - thumb_x) / s;
-                    if (dhead < 28.0f) sheen += (1.0f - dhead / 28.0f) * 0.18f;
+                    if (dhead < 24.0f) sheen += (1.0f - dhead / 24.0f) * 0.15f;
 
                     float wr = (float)ar, wg = (float)ag, wb = (float)ab;
                     if (sheen >= 0.0f) {
-                        float t = sheen > 0.52f ? 0.52f : sheen;
+                        float t = sheen > 0.42f ? 0.42f : sheen;
                         wr += (255.0f - wr) * t;
                         wg += (255.0f - wg) * t;
                         wb += (255.0f - wb) * t;
                     } else {
                         float k = 1.0f + sheen;
-                        if (k < 0.72f) k = 0.72f;
+                        if (k < 0.78f) k = 0.78f;
                         wr *= k; wg *= k; wb *= k;
                     }
                     uint32_t wc = COL((uint8_t)wr, (uint8_t)wg, (uint8_t)wb, 255);
                     px_blend(c, x, y, wc, (uint8_t)(acov * (float)aa_base + 0.5f));
                 }
             } else {
-                px_blend(c, x, y, COL(tr, tg, tb, 255), (uint8_t)(cov * (float)ta + 0.5f));
+                px_blend(c, x, y, track_rgb, (uint8_t)(cov * (float)ta + 0.5f));
             }
         }
     }
@@ -1319,7 +1460,7 @@ void draw_m3_water_progress(Canvas* c, int x0, int x1, int mid_y, float frac,
         float hr = r + 3.2f * s;
         fill_circle_a_px(c, ttx, py, (int)(hr + 3.0f * s), col_active, 48);
         fill_ellipse_aa_px(c, ttx, py, (int)hr, (int)hr, COL(250, 252, 255, 255));
-        fill_ellipse_aa_px(c, ttx, py, (int)(hr - 2.0f * s) > 1 ? (int)(hr - 2.0f * s) : 1,
-                           (int)(hr - 2.0f * s) > 1 ? (int)(hr - 2.0f * s) : 1, col_active);
+        int inner_r = (int)(hr - 2.0f * s) > 1 ? (int)(hr - 2.0f * s) : 1;
+        fill_ellipse_aa_px(c, ttx, py, inner_r, inner_r, col_active);
     }
 }

@@ -218,7 +218,7 @@ static Bucket* get_bucket_ex(Font* f, int px, int bold) {
 #ifdef _WIN32
     HDC hdc = win_font_dc();
     if (hdc) {
-        int weight = bold ? FW_BOLD : FW_NORMAL;
+        int weight = bold ? FW_BOLD : FW_MEDIUM;
         b->hfont = CreateFontW(-px, 0, 0, 0, weight, FALSE, FALSE, FALSE,
                                DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
                                ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Microsoft YaHei UI");
@@ -332,17 +332,29 @@ int text_width(Font* f, float px, const char* utf8) {
     return text_width_ex(f, px, utf8, 0);
 }
 
-static uint8_t lut_light[256], lut_dark[256];
+int text_width_bold(Font* f, float px, const char* utf8) {
+    return text_width_ex(f, px, utf8, 1);
+}
+
+static uint8_t lut_reg_light[256], lut_reg_dark[256], lut_bold_light[256], lut_bold_dark[256];
 static int lut_ready = 0;
 static void ensure_luts(void) {
     if (lut_ready) return;
     for (int i = 0; i < 256; i++) {
-        // Crisp anti-aliased edge mapping (avoid low-alpha halo bloat)
+        // Stem-strengthened crisp anti-aliased LUTs (sharp edges, fuller stroke body)
         float n = (float)i / 255.0f;
-        float vl = (i < 8) ? 0.0f : powf(n, 0.90f) * 255.0f + 0.5f;
-        float vd = (i < 6) ? 0.0f : powf(n, 0.86f) * 255.0f + 0.5f;
-        lut_light[i] = vl > 255.0f ? 255 : (uint8_t)vl;
-        lut_dark[i]  = vd > 255.0f ? 255 : (uint8_t)vd;
+        if (i < 6) {
+            lut_reg_light[i] = lut_reg_dark[i] = lut_bold_light[i] = lut_bold_dark[i] = 0;
+            continue;
+        }
+        float vrl = powf(n, 0.65f) * 255.0f * 1.12f + 0.5f;
+        float vrd = powf(n, 0.61f) * 255.0f * 1.15f + 0.5f;
+        float vbl = powf(n, 0.62f) * 255.0f * 1.10f + 0.5f;
+        float vbd = powf(n, 0.58f) * 255.0f * 1.12f + 0.5f;
+        lut_reg_light[i]  = vrl > 255.0f ? 255 : (uint8_t)vrl;
+        lut_reg_dark[i]   = vrd > 255.0f ? 255 : (uint8_t)vrd;
+        lut_bold_light[i] = vbl > 255.0f ? 255 : (uint8_t)vbl;
+        lut_bold_dark[i]  = vbd > 255.0f ? 255 : (uint8_t)vbd;
     }
     lut_ready = 1;
 }
@@ -354,7 +366,10 @@ static void draw_text_px_bucket(Canvas* c, Font* f, Bucket* b, int x, int y, uin
     uint32_t cr = col & 0xFFu, cg = (col >> 8) & 0xFFu, cb = (col >> 16) & 0xFFu;
     uint32_t ca = (col >> 24) & 0xFFu;
     if (ca == 0) ca = 255;
-    const uint8_t* lut = (((cr * 299u + cg * 587u + cb * 114u) / 1000u) >= 128u) ? lut_light : lut_dark;
+    int is_light_fg = ((cr * 299u + cg * 587u + cb * 114u) / 1000u) >= 128u;
+    const uint8_t* lut = b->bold
+                         ? (is_light_fg ? lut_bold_light : lut_bold_dark)
+                         : (is_light_fg ? lut_reg_light  : lut_reg_dark);
 
     float fcx = (float)x;
     const char* p = utf8;
@@ -436,6 +451,16 @@ void draw_text_centered(Canvas* c, Font* f, float px, int x0, int x1, int y, uin
     draw_text_px_ex(c, f, px * s, px0 + (px1 - px0 - w) / 2, py, col, utf8, 0);
 }
 
+void draw_text_centered_bold(Canvas* c, Font* f, float px, int x0, int x1, int y, uint32_t col, const char* utf8) {
+    if (!c) return;
+    float s = c->s > 0.0f ? c->s : 1.0f;
+    int px0 = (int)floorf((float)x0 * s + 0.5f);
+    int px1 = (int)floorf((float)x1 * s + 0.5f);
+    int py  = (int)floorf((float)y * s + 0.5f);
+    int w = text_width_bold(f, px * s, utf8);
+    draw_text_px_ex(c, f, px * s, px0 + (px1 - px0 - w) / 2, py, col, utf8, 1);
+}
+
 void draw_text_right(Canvas* c, Font* f, float px, int x1, int y, uint32_t col, const char* utf8) {
     if (!c) return;
     float s = c->s > 0.0f ? c->s : 1.0f;
@@ -443,6 +468,15 @@ void draw_text_right(Canvas* c, Font* f, float px, int x1, int y, uint32_t col, 
     int py  = (int)floorf((float)y * s + 0.5f);
     int w = text_width(f, px * s, utf8);
     draw_text_px_ex(c, f, px * s, px1 - w, py, col, utf8, 0);
+}
+
+void draw_text_right_bold(Canvas* c, Font* f, float px, int x1, int y, uint32_t col, const char* utf8) {
+    if (!c) return;
+    float s = c->s > 0.0f ? c->s : 1.0f;
+    int px1 = (int)floorf((float)x1 * s + 0.5f);
+    int py  = (int)floorf((float)y * s + 0.5f);
+    int w = text_width_bold(f, px * s, utf8);
+    draw_text_px_ex(c, f, px * s, px1 - w, py, col, utf8, 1);
 }
 
 int text_width_max(Font* f, float px, const char* utf8, int max_w) {

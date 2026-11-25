@@ -2,6 +2,14 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#if !defined(_WIN32_WINNT) || (_WIN32_WINNT < 0x0603)
+#undef _WIN32_WINNT
+#define _WIN32_WINNT 0x0603
+#endif
+#if !defined(WINVER) || (WINVER < 0x0603)
+#undef WINVER
+#define WINVER 0x0603
+#endif
 
 #include <windows.h>
 #include <windowsx.h>
@@ -148,6 +156,11 @@ struct WinState {
     int hover_x = -1, hover_y = -1;
     int track_leave = 0, cursor_hand = 0, has_frame = 0;
     int touch_reset = 0;
+    int is_touch = 0;
+    int idle_mode = 0;
+    UINT32 active_ptr_id = 0;
+    using GetPtrTypeFn = BOOL(WINAPI*)(UINT32, POINTER_INPUT_TYPE*);
+    GetPtrTypeFn fn_get_ptr_type = nullptr;
     int wheel_accum = 0, wheel_frame = 0;
 
     uint64_t key_held = 0, key_prev = 0, key_down = 0, key_down_pending = 0;
@@ -607,8 +620,62 @@ LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_CAPTURECHANGED:
         g_win.m_held = 0;
+        g_win.active_ptr_id = 0;
         return 0;
+    case WM_POINTERDOWN:
+    case WM_POINTERUPDATE:
+    case WM_POINTERUP:
+    case WM_POINTERCAPTURECHANGED: {
+        if (!g_win.fn_get_ptr_type) break;
+        const UINT32 pid = GET_POINTERID_WPARAM(wp);
+        POINTER_INPUT_TYPE ptype = PT_MOUSE;
+        if (!g_win.fn_get_ptr_type(pid, &ptype)) break;
+        if (ptype != PT_TOUCH && ptype != PT_PEN) break;
+
+        if (msg == WM_POINTERDOWN) {
+            if (g_win.active_ptr_id != 0 && g_win.active_ptr_id != pid && !IS_POINTER_PRIMARY_WPARAM(wp)) {
+                return 0;
+            }
+            g_win.active_ptr_id = pid;
+            g_win.is_touch = (ptype == PT_TOUCH) ? 1 : 0;
+            g_win.idle_mode = 0;
+            POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            ScreenToClient(hwnd, &pt);
+            map_mouse_xy(pt.x, pt.y, &g_win.m_x, &g_win.m_y);
+            g_win.hover_x = g_win.m_x;
+            g_win.hover_y = g_win.m_y;
+            g_win.m_held = 1;
+            g_win.m_down = 1;
+            SetFocus(hwnd);
+            return 0;
+        }
+        if (pid != g_win.active_ptr_id) return 0;
+        g_win.idle_mode = 0;
+        POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        ScreenToClient(hwnd, &pt);
+        map_mouse_xy(pt.x, pt.y, &g_win.m_x, &g_win.m_y);
+        if (msg == WM_POINTERUPDATE) {
+            if (g_win.m_held) {
+                g_win.hover_x = g_win.m_x;
+                g_win.hover_y = g_win.m_y;
+            }
+            return 0;
+        }
+        g_win.m_held = 0;
+        g_win.m_up = 1;
+        g_win.active_ptr_id = 0;
+        if (g_win.is_touch) {
+            g_win.hover_x = -1;
+            g_win.hover_y = -1;
+        }
+        return 0;
+    }
     case WM_LBUTTONDOWN:
+        if (g_win.fn_get_ptr_type && (static_cast<ULONG_PTR>(GetMessageExtraInfo()) & 0xFFFFFF00UL) == 0xFF515700UL) {
+            return 0;
+        }
+        g_win.is_touch = 0;
+        g_win.idle_mode = 0;
         SetCapture(hwnd);
         map_mouse_xy(GET_X_LPARAM(lp), GET_Y_LPARAM(lp), &g_win.m_x, &g_win.m_y);
         g_win.hover_x = g_win.m_x;
@@ -617,6 +684,11 @@ LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         g_win.m_down = 1;
         return 0;
     case WM_MOUSEMOVE:
+        if (g_win.fn_get_ptr_type && (static_cast<ULONG_PTR>(GetMessageExtraInfo()) & 0xFFFFFF00UL) == 0xFF515700UL) {
+            return 0;
+        }
+        g_win.is_touch = 0;
+        g_win.idle_mode = 0;
         if (!g_win.track_leave) {
             TRACKMOUSEEVENT tme{};
             tme.cbSize = sizeof(tme);
@@ -637,12 +709,16 @@ LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         g_win.hover_y = -1;
         return 0;
     case WM_LBUTTONUP:
+        if (g_win.fn_get_ptr_type && (static_cast<ULONG_PTR>(GetMessageExtraInfo()) & 0xFFFFFF00UL) == 0xFF515700UL) {
+            return 0;
+        }
         if (GetCapture() == hwnd) ReleaseCapture();
         map_mouse_xy(GET_X_LPARAM(lp), GET_Y_LPARAM(lp), &g_win.m_x, &g_win.m_y);
         g_win.m_held = 0;
         g_win.m_up = 1;
         return 0;
     case WM_MOUSEWHEEL:
+        g_win.idle_mode = 0;
         g_win.wheel_accum += GET_WHEEL_DELTA_WPARAM(wp);
         return 0;
     case WM_CHAR:
@@ -711,6 +787,7 @@ LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_KILLFOCUS:
         g_win.key_held = 0;
         g_win.m_held = 0;
+        g_win.active_ptr_id = 0;
         return 0;
     case WM_DROPFILES: {
         auto hd = reinterpret_cast<HDROP>(wp);
@@ -735,12 +812,21 @@ LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 int be_init(void) {
     using SetDpiCtxFn = BOOL(WINAPI*)(HANDLE);
     using SetDpiFn = BOOL(WINAPI*)();
+    using GetSysDpiFn = UINT(WINAPI*)(void);
     HMODULE u32 = GetModuleHandleW(L"user32.dll");
+    float init_scale = 1.0f;
     if (u32) {
         auto fn2 = reinterpret_cast<SetDpiCtxFn>(reinterpret_cast<void*>(GetProcAddress(u32, "SetProcessDpiAwarenessContext")));
         if (!fn2 || !fn2(reinterpret_cast<HANDLE>(static_cast<intptr_t>(-4)))) {
             auto fn = reinterpret_cast<SetDpiFn>(reinterpret_cast<void*>(GetProcAddress(u32, "SetProcessDPIAware")));
             if (fn) fn();
+        }
+        g_win.fn_get_ptr_type = reinterpret_cast<WinState::GetPtrTypeFn>(
+            reinterpret_cast<void*>(GetProcAddress(u32, "GetPointerType")));
+        auto gdpi = reinterpret_cast<GetSysDpiFn>(reinterpret_cast<void*>(GetProcAddress(u32, "GetDpiForSystem")));
+        if (gdpi) {
+            const UINT d = gdpi();
+            if (d >= 72 && d <= 384) init_scale = std::clamp(static_cast<float>(d) / 96.0f, 1.0f, 2.5f);
         }
     }
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -771,9 +857,10 @@ int be_init(void) {
     const int work_w = wa.right - wa.left;
     const int work_h = wa.bottom - wa.top;
 
-    int init_w = 1360, init_h = 840;
+    int init_w = static_cast<int>(1280.0f * init_scale);
+    int init_h = static_cast<int>(800.0f * init_scale);
     if (work_w > 0 && work_h > 0) {
-        const int max_w = static_cast<int>(work_w * 0.86);
+        const int max_w = static_cast<int>(work_w * 0.88);
         const int max_h = static_cast<int>(work_h * 0.88);
         if (init_w > max_w) init_w = max_w;
         if (init_h > max_h) init_h = max_h;
@@ -798,6 +885,10 @@ int be_init(void) {
         win_w, win_h,
         nullptr, nullptr, hInst, nullptr);
     if (!g_win.hwnd) return -1;
+
+    // Disable Windows press-and-hold right-click delay ring and pen flicks for Surface touch responsiveness
+    SetPropW(g_win.hwnd, L"MicrosoftTabletPenServiceProperty",
+             reinterpret_cast<HANDLE>(static_cast<uintptr_t>(0x00010019)));
 
     if (ico_big) SendMessageW(g_win.hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(ico_big));
     if (ico_sm || ico_big) SendMessageW(g_win.hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(ico_sm ? ico_sm : ico_big));
@@ -907,18 +998,29 @@ void be_end(void) {
         }
     }
 
+    const uint64_t frame_ns = g_win.idle_mode ? 40000000ULL : 16666667ULL;
     static uint64_t next_frame_ns = 0;
     uint64_t now = plat_ticks_ns();
-    if (next_frame_ns == 0 || now > next_frame_ns + 50000000ULL) {
-        next_frame_ns = now + 16666667ULL;
+    if (next_frame_ns == 0 || now > next_frame_ns + frame_ns * 2ULL) {
+        next_frame_ns = now + frame_ns;
     } else {
         while (now < next_frame_ns) {
-            const uint64_t rem_ms = (next_frame_ns - now) / 1000000ULL;
-            if (rem_ms > 1) Sleep(static_cast<DWORD>(rem_ms - 1));
-            else Sleep(0);
+            const uint64_t rem_ns = next_frame_ns - now;
+            const DWORD rem_ms = static_cast<DWORD>(rem_ns / 1000000ULL);
+            if (g_win.idle_mode && rem_ms > 2) {
+                const DWORD res = MsgWaitForMultipleObjects(0, nullptr, FALSE, rem_ms - 1, QS_INPUT);
+                if (res == WAIT_OBJECT_0) {
+                    next_frame_ns = plat_ticks_ns();
+                    break;
+                }
+            } else if (rem_ms > 1) {
+                Sleep(rem_ms - 1);
+            } else {
+                Sleep(1);
+            }
             now = plat_ticks_ns();
         }
-        next_frame_ns += 16666667ULL;
+        next_frame_ns += frame_ns;
     }
 }
 
@@ -1211,5 +1313,8 @@ void be_set_media_state(int has_track, int playing, float frac, const char* titl
         }
     }
 }
+
+int  be_input_is_touch(void) { return g_win.is_touch; }
+void be_set_idle_mode(int idle) { g_win.idle_mode = idle ? 1 : 0; }
 
 #endif

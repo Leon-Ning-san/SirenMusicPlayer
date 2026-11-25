@@ -142,3 +142,5 @@ int  be_poll_media_cmd(void) { return 0; }
 void be_set_media_state(int has_track, int playing, float frac, const char* title, const char* artist) {
     (void)has_track; (void)playing; (void)frac; (void)title; (void)artist;
 }
+int  be_input_is_touch(void) { return 1; }
+void be_set_idle_mode(int idle) { (void)idle; }
