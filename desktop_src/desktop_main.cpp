@@ -6,6 +6,7 @@
 #include "draw.h"
 #include "util.h"
 #include "plat.h"
+#include "desktop_plugin.h"
 #include "stb_image.h"
 
 #include <algorithm>
@@ -157,11 +158,16 @@ enum {
     SET_LIGHT = 1, SET_ACCENT_FOLLOW = 2, SET_BG_PICK = 3, SET_BG_CLEAR = 4,
     SET_VIEW = 5, SET_MODE = 6, SET_ADD_DIR = 7, SET_RESCAN = 8,
     SET_RM_DIR = 9, SET_VOL_TRK = 10, SET_BACK = 11,
-    SET_THEME_LIGHT = 12, SET_THEME_DARK = 13, SET_PLAY_MODE = 14, SET_DIR_REMOVE = 15
+    SET_THEME_LIGHT = 12, SET_THEME_DARK = 13, SET_PLAY_MODE = 14, SET_DIR_REMOVE = 15,
+    SET_OPEN_PLG_DIR = 16, SET_CLEAR_PLG_CACHE = 17,
+    PLG_TAB_BROWSE = 100, PLG_TAB_MANAGE = 101, PLG_RESCAN = 102, PLG_CLEAR_CACHE = 103,
+    PLG_SELECT = 104, PLG_TOGGLE = 105, PLG_LOGIN = 106, PLG_LOGOUT = 107,
+    PLG_REMOVE = 108, PLG_PLAYLIST = 109, PLG_TRACK = 110, PLG_SEARCH_GO = 111,
+    PLG_CFG_EDIT = 112, PLG_HOME = 113
 };
 struct SetHit  { Rect rc{}; int id = 0; int arg = 0; };
 
-enum { PAGE_LIBRARY = 0, PAGE_LYRICS = 1, PAGE_SETTINGS = 2 };
+enum { PAGE_LIBRARY = 0, PAGE_LYRICS = 1, PAGE_SETTINGS = 2, PAGE_PLUGINS = 3 };
 enum { TAB_ALL = 0, TAB_FAV = 1, TAB_DIR = 2 };
 enum { FMT_FILT_ALL = 0, FMT_FILT_FAV = 1, FMT_FILT_LOSSLESS = 2, FMT_FILT_MP3 = 3, FMT_FILT_OTHER = 4 };
 enum { MODE_LOOP_ALL = 0, MODE_LOOP_ONE = 1, MODE_SHUFFLE = 2 };
@@ -274,7 +280,7 @@ struct AppState {
     uint32_t C_ACCENT = 0, C_ON_ACCENT = 0, C_HERO_L = 0, C_HERO_R = 0;
     uint32_t C_TXT = 0, C_TXT2 = 0, C_TXT3 = 0, C_DIV = 0, C_TRACK_BG = 0, C_HEART = 0, C_PLAY_BTN = 0, C_PLAY_ICO = 0;
 
-    Rect rc_menu_btn{}, rc_nav_all{}, rc_nav_fav{}, rc_nav_lyr{}, rc_nav_add{}, rc_nav_set{};
+    Rect rc_menu_btn{}, rc_nav_all{}, rc_nav_fav{}, rc_nav_lyr{}, rc_nav_plg{}, rc_nav_add{}, rc_nav_set{};
     Rect rc_nav_bg{}, rc_nav_theme{}, rc_nav_rescan{};
     Rect rc_search_box{}, rc_search_clear{}, rc_sort_btn{}, rc_fs_btn{}, rc_view_pill{}, rc_bg_btn{}, rc_bg_clear{};
     std::array<Rect, 5> rc_filt_chips{};
@@ -286,7 +292,7 @@ struct AppState {
     Rect rc_back_lib{}, rc_lyr_bg{}, rc_lyr_bg_clear{}, rc_lyr_theme{}, rc_lyr_fs{};
     Rect rc_island{}, rc_bar_cov{}, rc_bar_fav{}, rc_bar_prev{}, rc_bar_play{}, rc_bar_next{};
     Rect rc_bar_mode{}, rc_bar_lyr{}, rc_bar_vol_ico{}, rc_bar_vol_trk{}, rc_bar_prog{};
-    Rect rc_set_back{};
+    Rect rc_set_back{}, rc_plg_back{}, rc_plg_qr_close{};
     int ui_px0 = 0, ui_px1 = 100, ui_py = 0;
     int ui_vx0 = 0, ui_vx1 = 100;
     int ui_list_x0 = 0, ui_list_x1 = 0, ui_list_y0 = 0, ui_list_y1 = 0;
@@ -296,6 +302,19 @@ struct AppState {
     std::vector<LyrHit> lyr_hits;
     std::vector<DirHit> rc_dir_rows;
     std::vector<SetHit> set_hits;
+
+    int playing_online = 0;
+    int online_play_pos = -1;
+    int plg_subtab = 0;
+    float plg_content_h = 600.0f;
+    float qr_poll_timer = 0.0f;
+    std::string active_plugin_id;
+    std::string cfg_edit_pid, cfg_edit_key, cfg_edit_val;
+    int cfg_editing = 0;
+    PluginUiSnapshot plg_snap;
+    std::vector<PluginInfo> plg_list;
+    std::vector<SetHit> plg_hits;
+    std::vector<std::string> plg_hit_keys;
 };
 
 AppState g;
@@ -657,12 +676,13 @@ void render_wallpaper_backdrop(int is_immersive) {
         const float t = static_cast<float>(lt_q) / 255.0f;
         const float u_bright = clampf((g.bg_img_avg_lum - 60.0f) / 160.0f, 0.0f, 1.0f);
         const float u_dim    = clampf((180.0f - g.bg_img_avg_lum) / 130.0f, 0.0f, 1.0f);
-        const float scrim_dark  = imm_flag ? (0.34f + 0.34f * u_bright) : (0.20f + 0.38f * u_bright);
-        const float scrim_light = imm_flag ? (0.54f + 0.18f * u_dim)    : (0.46f + 0.20f * u_dim);
-        const float scrim_f = scrim_dark + (scrim_light - scrim_dark) * t;
+        const float scrim_dark  = imm_flag ? (0.46f + 0.26f * u_bright) : (0.20f + 0.38f * u_bright);
+        const float scrim_light = imm_flag ? scrim_dark                 : (0.46f + 0.20f * u_dim);
+        const float scrim_f = scrim_dark + (scrim_light - scrim_dark) * (imm_flag ? 0.0f : t);
         const uint32_t ua = static_cast<uint32_t>(std::clamp(static_cast<int>(scrim_f * 256.0f + 0.5f), 0, 256));
         const uint32_t na = 256u - ua;
-        const uint32_t scrim_col = mix_col(COL(10, 12, 18, 255), COL(238, 242, 248, 255), t);
+        const uint32_t scrim_col = imm_flag ? COL(8, 10, 16, 255)
+                                            : mix_col(COL(10, 12, 18, 255), COL(238, 242, 248, 255), t);
         const uint32_t sc_rb = (scrim_col & 0x00FF00FFu) * ua;
         const uint32_t sc_g  = ((scrim_col >> 8) & 0xFFu) * ua;
 
@@ -695,8 +715,10 @@ void draw_frosted_ambient_bg(int is_immersive) {
     const float lt = g.light_t;
     const float art_w = (is_immersive ? 0.62f : 0.46f) * (1.0f - lt) + (is_immersive ? 0.54f : 0.40f) * lt;
     const float breath = 0.04f * std::sin(g.ambient_t * 0.45f);
-    const float bx1 = (is_immersive ? 0.22f : 0.25f) + 0.05f * std::cos(g.ambient_t * 0.22f);
-    const float by1 = (is_immersive ? 0.42f : 0.30f) + 0.05f * std::sin(g.ambient_t * 0.19f);
+    const float bx1 = (is_immersive ? 0.28f : 0.25f) + 0.08f * std::cos(g.ambient_t * 0.22f);
+    const float by1 = (is_immersive ? 0.38f : 0.30f) + 0.07f * std::sin(g.ambient_t * 0.19f);
+    const float bx2 = 0.72f + 0.09f * std::sin(g.ambient_t * 0.16f);
+    const float by2 = 0.66f + 0.08f * std::cos(g.ambient_t * 0.21f);
 
     const float ar = static_cast<float>(g.C_ACCENT & 0xFFu);
     const float ag = static_cast<float>((g.C_ACCENT >> 8) & 0xFFu);
@@ -714,6 +736,36 @@ void draw_frosted_ambient_bg(int is_immersive) {
             const size_t idx = p * 3;
             const float dx = fx - bx1, dy = fy - by1;
             const float glow = clampf(0.22f / (1.0f + (dx * dx + dy * dy) * 3.6f) + breath * (1.0f - fy) + 0.14f, 0.08f, 0.44f);
+
+            if (is_immersive) {
+                // High-blur dynamic gradient sourced directly from current cover + orbiting quadrant blooms
+                const float dx2 = fx - bx2, dy2 = fy - by2;
+                const float g1 = clampf(0.32f / (1.0f + (dx * dx + dy * dy) * 2.8f), 0.0f, 0.36f);
+                const float g2 = clampf(0.28f / (1.0f + (dx2 * dx2 + dy2 * dy2) * 2.6f), 0.0f, 0.32f);
+                float cr = g.cur_bg_art[idx + 0] * (1.0f - g1 - g2) + g.cur_qf[0][0] * g1 + g.cur_qf[3][0] * g2;
+                float cg = g.cur_bg_art[idx + 1] * (1.0f - g1 - g2) + g.cur_qf[0][1] * g1 + g.cur_qf[3][1] * g2;
+                float cb = g.cur_bg_art[idx + 2] * (1.0f - g1 - g2) + g.cur_qf[0][2] * g1 + g.cur_qf[3][2] * g2;
+
+                // Subtle vibrancy lift + highlight ceiling so cover mood reads vividly behind lyrics
+                const float cavg = (cr + cg + cb) / 3.0f;
+                cr = clampf(cavg + (cr - cavg) * 1.28f, 0.0f, 255.0f);
+                cg = clampf(cavg + (cg - cavg) * 1.28f, 0.0f, 255.0f);
+                cb = clampf(cavg + (cb - cavg) * 1.28f, 0.0f, 255.0f);
+                const float lum = 0.299f * cr + 0.587f * cg + 0.114f * cb;
+                if (lum > 186.0f) {
+                    const float sc = 186.0f / lum;
+                    cr *= sc; cg *= sc; cb *= sc;
+                }
+
+                // Translucent dark scrim + gentle edge vignette for crisp text & pure-white lyric contrast
+                const float vx = fx - 0.5f, vy = fy - 0.5f;
+                const float dark_scrim = clampf(0.50f + 0.24f * (vx * vx + vy * vy) + 0.02f * std::sin(g.ambient_t * 0.35f), 0.46f, 0.66f);
+                const float keep = 1.0f - dark_scrim;
+                mr[p] = cr * keep + 8.0f  * dark_scrim;
+                mg[p] = cg * keep + 10.0f * dark_scrim;
+                mb[p] = cb * keep + 16.0f * dark_scrim;
+                continue;
+            }
 
             const float cr = g.cur_bg_art[idx + 0] + (ar - g.cur_bg_art[idx + 0]) * glow;
             const float cg = g.cur_bg_art[idx + 1] + (ag - g.cur_bg_art[idx + 1]) * glow;
@@ -746,8 +798,9 @@ void draw_frosted_ambient_bg(int is_immersive) {
         }
     }
 
-    // Two tiny float [1 2 1]/4 separable passes keep gradients ultra-smooth
-    for (int pass = 0; pass < 2; ++pass) {
+    // Separable [1 2 1]/4 smoothing passes keep cover gradients ultra-smooth
+    const int blur_passes = is_immersive ? 3 : 2;
+    for (int pass = 0; pass < blur_passes; ++pass) {
         for (int y = 0; y < BG_ART_H; ++y) {
             const int row = y * BG_ART_W;
             for (int x = 0; x < BG_ART_W; ++x) {
@@ -1378,6 +1431,12 @@ void icon_gear(Canvas* c, int cx, int cy, int r, uint32_t col) {
         fill_rect_a(c, cx - dx - 1, cy - dy - 1, 2, 2, col, 230);
     }
 }
+void icon_plug(Canvas* c, int x, int y, int sz, uint32_t col) {
+    stroke_round_rect_aa(c, x + 2, y + 4, sz - 4, sz - 7, 4, 2, col, 230);
+    fill_round_rect_aa(c, x + sz / 3 - 1, y + 1, 2, 4, 1, col);
+    fill_round_rect_aa(c, x + (sz * 2) / 3 - 1, y + 1, 2, 4, 1, col);
+    fill_round_rect_aa(c, x + sz / 2 - 1, y + sz - 4, 2, 4, 1, col);
+}
 
 void toggle_fav(int idx) {
     if (idx < 0 || idx >= static_cast<int>(g.tracks.size())) return;
@@ -1386,8 +1445,82 @@ void toggle_fav(int idx) {
     if (g.lib_tab == TAB_FAV || g.fmt_filter == FMT_FILT_FAV) rebuild_visible();
 }
 
+void play_online_ready(const PluginReadyPlay& rp) {
+    if (!rp.ok || rp.audio_path.empty()) {
+        show_toast(!rp.error.empty() ? rp.error.c_str() : "在线音轨缓冲失败");
+        return;
+    }
+    g.scrub_drag = 0; g.scrub_sec = 0.0;
+    g.lyr_cam_valid = 0; g.lyr_manual_timer = 0.0f;
+    g.lyr_scroll_vel = 0.0f;
+    g.lyr_wrap_ptr = nullptr;
+    g.lyr_wrapped.clear();
+    g.playing_idx = -1;
+    g.playing_online = 1;
+    audio_play(rp.audio_path.c_str());
+
+    g.meta.clear();
+    g.lyr.reset();
+    g.p_title  = rp.track.title;
+    g.p_artist = rp.track.artist;
+    g.p_album  = rp.track.album;
+    std::snprintf(g.p_fmt, sizeof(g.p_fmt), "%s", rp.track.fmt[0] ? rp.track.fmt : "STREAM");
+
+    g.cover_src.resize(static_cast<size_t>(COVER_SRC_SZ) * COVER_SRC_SZ);
+    g.cover_mini.resize(static_cast<size_t>(MINI_ART_SZ) * MINI_ART_SZ);
+    bool got_cov = false;
+    if (!rp.cover_path.empty()) {
+        FILE* cf = plat_fopen(rp.cover_path.c_str(), "rb");
+        if (cf) {
+            std::fseek(cf, 0, SEEK_END);
+            long sz = std::ftell(cf);
+            std::fseek(cf, 0, SEEK_SET);
+            if (sz > 16 && sz < 16 * 1024 * 1024) {
+                std::vector<uint8_t> raw(static_cast<size_t>(sz));
+                size_t rd = std::fread(raw.data(), 1, static_cast<size_t>(sz), cf);
+                int cw = 0, ch = 0, cc = 0;
+                unsigned char* img = stbi_load_from_memory(raw.data(), static_cast<int>(rd), &cw, &ch, &cc, 4);
+                if (img && cw > 0 && ch > 0) {
+                    std::vector<uint32_t> tmp(static_cast<size_t>(cw) * ch);
+                    for (size_t i = 0; i < tmp.size(); ++i) {
+                        const unsigned char* sp = img + i * 4;
+                        tmp[i] = COL(sp[0], sp[1], sp[2], 255);
+                    }
+                    resample_cover_square(tmp.data(), cw, ch, g.cover_src.data(), COVER_SRC_SZ, 1);
+                    got_cov = true;
+                }
+                if (img) stbi_image_free(img);
+            }
+            std::fclose(cf);
+        }
+    }
+    if (!got_cov) make_default_art(g.cover_src.data(), COVER_SRC_SZ, rp.track.title.c_str());
+    resample_cover_square(g.cover_src.data(), COVER_SRC_SZ, COVER_SRC_SZ, g.cover_mini.data(), MINI_ART_SZ, 1);
+    g.cover_ready = 1;
+    update_target_cover_colors();
+
+    g.lyr_req_id = 0;
+    if (!rp.lrc_orig.empty()) {
+        std::string lrc_tmp = std::string(be_config_dir()) + "/stream_cache/active_online.lrc";
+        std::string combined = rp.lrc_orig;
+        if (!rp.lrc_trans.empty()) combined += "\n" + rp.lrc_trans;
+        FILE* lf = plat_fopen(lrc_tmp.c_str(), "wb");
+        if (lf) {
+            std::fwrite(combined.data(), 1, combined.size(), lf);
+            std::fclose(lf);
+            g.lyr.reset(lyrics_load_file(lrc_tmp.c_str()));
+        }
+    }
+    if (!g.lyr) {
+        g.lyr_req_id = lyrics_start_online(rp.audio_path.c_str(), g.p_title.c_str(), g.p_artist.c_str(),
+                                           rp.track.dur > 1.0 ? rp.track.dur : audio_duration());
+    }
+    g.bars.fill(0.0f);
+}
+
 void load_track(int idx) {
     if (idx < 0 || idx >= static_cast<int>(g.tracks.size())) return;
+    g.playing_online = 0;
     g.scrub_drag = 0; g.scrub_sec = 0.0;
     g.lyr_cam_valid = 0; g.lyr_manual_timer = 0.0f;
     g.lyr_scroll_vel = 0.0f;
@@ -1476,6 +1609,22 @@ void handle_dropped(const char* raw) {
     if (!raw || !*raw) return;
     std::string path(raw);
     std::replace(path.begin(), path.end(), '\\', '/');
+
+    if (ci_ends_with(path.c_str(), ".lua")) {
+        std::string perr;
+        if (plugin_import_file(path, &perr)) {
+            g.plg_list = plugin_list();
+            if (g.active_plugin_id.empty()) g.active_plugin_id = plugin_default_id();
+            capture_fade();
+            g.page = PAGE_PLUGINS;
+            g.plg_subtab = 1;
+            g.scroll_px = g.scroll_target = g.scroll_vel = 0.0f;
+            show_toast("已导入并加载扩展插件");
+        } else {
+            show_toast(!perr.empty() ? perr.c_str() : "扩展插件导入失败");
+        }
+        return;
+    }
 
     if (ci_ends_with(path.c_str(), ".lrc") || ci_ends_with(path.c_str(), ".txt")) {
         LyricsPtr ext(lyrics_load_file(path.c_str()));
@@ -1590,6 +1739,10 @@ float max_scroll_px() {
         const float ch = g.set_content_h + static_cast<float>(DOCK_CLEAR);
         return ch > static_cast<float>(vh) ? (ch - static_cast<float>(vh)) : 0.0f;
     }
+    if (g.page == PAGE_PLUGINS) {
+        const float ch = g.plg_content_h + static_cast<float>(DOCK_CLEAR);
+        return ch > static_cast<float>(vh) ? (ch - static_cast<float>(vh)) : 0.0f;
+    }
     const int nvis = static_cast<int>(g.vis_idx.size());
     if (g.view_grid) {
         int cols, gap, cw, ch;
@@ -1630,7 +1783,7 @@ void pump_background_meta() {
 }
 
 void reset_hit_rects() {
-    g.rc_menu_btn = g.rc_nav_all = g.rc_nav_fav = g.rc_nav_lyr = g.rc_nav_add = g.rc_nav_set = {};
+    g.rc_menu_btn = g.rc_nav_all = g.rc_nav_fav = g.rc_nav_lyr = g.rc_nav_plg = g.rc_nav_add = g.rc_nav_set = {};
     g.rc_nav_bg = g.rc_nav_theme = g.rc_nav_rescan = {};
     g.rc_search_box = g.rc_search_clear = g.rc_sort_btn = g.rc_fs_btn = g.rc_view_pill = g.rc_bg_btn = g.rc_bg_clear = {};
     g.rc_filt_chips.fill(Rect{});
@@ -1641,11 +1794,13 @@ void reset_hit_rects() {
     g.rc_sb_track = g.rc_back_lib = g.rc_lyr_bg = g.rc_lyr_bg_clear = g.rc_lyr_theme = g.rc_lyr_fs = {};
     g.rc_island = g.rc_bar_cov = g.rc_bar_fav = g.rc_bar_prev = g.rc_bar_play = g.rc_bar_next = {};
     g.rc_bar_mode = g.rc_bar_lyr = g.rc_bar_vol_ico = g.rc_bar_vol_trk = g.rc_bar_prog = {};
-    g.rc_set_back = {};
+    g.rc_set_back = g.rc_plg_back = g.rc_plg_qr_close = {};
     g.grid_hits.clear();
     g.lyr_hits.clear();
     g.rc_dir_rows.clear();
     g.set_hits.clear();
+    g.plg_hits.clear();
+    g.plg_hit_keys.clear();
 }
 
 inline uint8_t glass_rim(uint8_t dark_a = 48, uint8_t light_a = 205) {
@@ -1696,14 +1851,15 @@ void draw_nav_rail(int mx, int my) {
     }
 
     int active_slot = -1;
-    if (g.page == PAGE_SETTINGS) active_slot = 4;
+    if (g.page == PAGE_SETTINGS) active_slot = 5;
+    else if (g.page == PAGE_PLUGINS) active_slot = 3;
     else if (g.page == PAGE_LYRICS) active_slot = 2;
     else if (g.lib_tab == TAB_ALL) active_slot = 0;
     else if (g.lib_tab == TAB_FAV) active_slot = 1;
 
     constexpr int nav_y0 = 66;
-    const int nav_step = wide ? 42 : 48;
-    const int pill_h = wide ? 36 : 38;
+    const int nav_step = wide ? 38 : 42;
+    const int pill_h = wide ? 34 : 36;
     if (active_slot >= 0) {
         const float tgt_pill_y = static_cast<float>(nav_y0 + active_slot * nav_step);
         const float kp = 1.0f - std::exp(-16.0f * static_cast<float>(g.dt));
@@ -1714,10 +1870,10 @@ void draw_nav_rail(int mx, int my) {
         stroke_round_rect_aa(s, 12, py, sw - 24, pill_h, 10, 1, g.C_ACCENT, 125);
     }
 
-    const char* labels_wide[5]  = { "为你推荐", "我喜欢的", "歌词", "刷新曲库", "设置" };
-    const char* labels_short[5] = { "推荐", "喜欢", "歌词", "刷新", "设置" };
-    Rect* nav_rcs[5] = { &g.rc_nav_all, &g.rc_nav_fav, &g.rc_nav_lyr, &g.rc_nav_rescan, &g.rc_nav_set };
-    for (int i = 0; i < 5; ++i) {
+    const char* labels_wide[6]  = { "为你推荐", "我喜欢的", "歌词", "扩展插件", "刷新曲库", "设置" };
+    const char* labels_short[6] = { "推荐", "喜欢", "歌词", "插件", "刷新", "设置" };
+    Rect* nav_rcs[6] = { &g.rc_nav_all, &g.rc_nav_fav, &g.rc_nav_lyr, &g.rc_nav_plg, &g.rc_nav_rescan, &g.rc_nav_set };
+    for (int i = 0; i < 6; ++i) {
         const int iy = nav_y0 + i * nav_step;
         *nav_rcs[i] = Rect{ 12, iy, sw - 24, pill_h };
         const int is_act = (i == active_slot);
@@ -1726,25 +1882,26 @@ void draw_nav_rail(int mx, int my) {
             fill_round_rect_aa(s, 12, iy, sw - 24, pill_h, 10, g.C_GLASS_HOV);
         }
         const uint32_t icol = is_act ? g.C_ACCENT : (is_hov ? g.C_TXT : g.C_TXT2);
-        const int cy = iy + (wide ? 18 : 14);
+        const int cy = iy + (wide ? 17 : 13);
         const int ix = wide ? 24 : (sw / 2 - 8);
         if (i == 0) icon_library_grid(s, ix, cy - 8, 16, icol);
         else if (i == 1) icon_heart_ex(s, ix, cy - 7, 16, is_act ? g.C_HEART : icol, is_act);
         else if (i == 2) icon_lyrics_waves(s, ix, cy - 8, 16, icol);
-        else if (i == 3) icon_refresh(s, ix + 8, cy, 7, icol);
+        else if (i == 3) icon_plug(s, ix, cy - 8, 16, icol);
+        else if (i == 4) icon_refresh(s, ix + 8, cy, 7, icol);
         else icon_gear(s, ix + 8, cy, 7, icol);
 
         if (wide) {
-            draw_text_max_bold(s, f, 14.0f, 50, iy + 9,
+            draw_text_max_bold(s, f, 14.0f, 50, iy + 8,
                                is_act ? g.C_ACCENT : (is_hov ? g.C_TXT : g.C_TXT2),
                                labels_wide[i], sw - 64);
         } else {
-            draw_text_centered_bold(s, f, 11.5f, 8, sw - 8, iy + 24,
+            draw_text_centered_bold(s, f, 11.0f, 8, sw - 8, iy + 22,
                                     is_act ? g.C_ACCENT : g.C_TXT2, labels_short[i]);
         }
     }
 
-    const int div_y = nav_y0 + 5 * nav_step + 8;
+    const int div_y = nav_y0 + 6 * nav_step + 8;
     fill_rect_a(s, 14, div_y, sw - 28, 1, g.C_DIV, col_a(g.C_DIV) + 12);
 
     const int bot_top = wide ? (g.H - 60) : (g.H - 104);
@@ -2476,71 +2633,87 @@ void draw_immersive_view(int mx, int my) {
     Font* f = g.font.get();
     const bool lt = g.light_t > 0.5f;
 
+    // Dark-scrimmed high-blur album backdrop always pairs with dark translucent glass & light ink
+    const uint32_t imm_surface   = mix_col_a(g.C_SURFACE, COL(18, 22, 32, 168), g.light_t);
+    const uint32_t imm_txt       = COL(250, 252, 255, 255);
+    const uint32_t imm_txt2      = COL(214, 222, 236, 225);
+    const uint32_t imm_txt3      = COL(188, 198, 216, 185);
+    const uint32_t imm_hov       = COL(255, 255, 255, 34);
+    const uint32_t imm_trk_bg    = COL(255, 255, 255, 48);
+    const uint32_t imm_div       = COL(255, 255, 255, 36);
+    const uint8_t  imm_rim_norm  = 64;
+    const uint8_t  imm_rim_hov   = 96;
+    const uint32_t imm_accent    = lt ? mix_col(g.C_ACCENT, COL(255, 255, 255, 255), 0.30f) : g.C_ACCENT;
+    const uint32_t imm_on_accent = COL(14, 18, 24, 255);
+
     g.rc_back_lib = Rect{ 26, 18, 124, 40 };
     const bool hov_back = in_rc(mx, my, g.rc_back_lib);
     fill_frosted_round_rect(s, g.rc_back_lib.x, g.rc_back_lib.y, g.rc_back_lib.w, g.rc_back_lib.h, 20,
-                            g.C_SURFACE, hov_back ? 186 : static_cast<uint8_t>(138 + 34 * g.light_t), 3,
-                            glass_rim(hov_back ? 96 : 64, 235));
-    icon_back(s, g.rc_back_lib.x + 14, g.rc_back_lib.y + 13, 14, g.C_TXT);
-    draw_text_bold(s, f, 13.5f, g.rc_back_lib.x + 36, g.rc_back_lib.y + 10, g.C_TXT, "返回曲库");
+                            imm_surface, hov_back ? 186 : 142, 3,
+                            hov_back ? imm_rim_hov : imm_rim_norm);
+    icon_back(s, g.rc_back_lib.x + 14, g.rc_back_lib.y + 13, 14, imm_txt);
+    draw_text_bold(s, f, 13.5f, g.rc_back_lib.x + 36, g.rc_back_lib.y + 10, imm_txt, "返回曲库");
 
     g.rc_lyr_fs = Rect{ g.W - 66, 18, 40, 40 };
     const bool hov_fs = in_rc(mx, my, g.rc_lyr_fs);
     fill_frosted_round_rect(s, g.rc_lyr_fs.x, g.rc_lyr_fs.y, 40, 40, 20,
-                            g.C_SURFACE, hov_fs ? 186 : static_cast<uint8_t>(138 + 34 * g.light_t), 3,
-                            glass_rim(hov_fs ? 96 : 64, 235));
-    icon_expand(s, g.rc_lyr_fs.x + 12, g.rc_lyr_fs.y + 12, 16, g.C_TXT);
+                            imm_surface, hov_fs ? 186 : 142, 3,
+                            hov_fs ? imm_rim_hov : imm_rim_norm);
+    icon_expand(s, g.rc_lyr_fs.x + 12, g.rc_lyr_fs.y + 12, 16, imm_txt);
 
     g.rc_lyr_theme = Rect{ g.W - 114, 18, 40, 40 };
     const bool hov_thm = in_rc(mx, my, g.rc_lyr_theme);
     fill_frosted_round_rect(s, g.rc_lyr_theme.x, g.rc_lyr_theme.y, 40, 40, 20,
-                            g.C_SURFACE, hov_thm ? 186 : static_cast<uint8_t>(138 + 34 * g.light_t), 3,
-                            glass_rim(hov_thm ? 96 : 64, 235));
-    icon_theme_orb(s, g.rc_lyr_theme.x + 20, g.rc_lyr_theme.y + 20, 8, mix_col(g.C_TXT, g.C_ACCENT, g.light_t));
+                            imm_surface, hov_thm ? 186 : 142, 3,
+                            hov_thm ? imm_rim_hov : imm_rim_norm);
+    icon_theme_orb(s, g.rc_lyr_theme.x + 20, g.rc_lyr_theme.y + 20, 8, mix_col(imm_txt, imm_accent, g.light_t));
 
     g.rc_lyr_bg = Rect{ g.W - 162, 18, 40, 40 };
     const bool has_bg = !g.bg_img_raw.empty();
     const bool hov_lbg = in_rc(mx, my, g.rc_lyr_bg);
     fill_frosted_round_rect(s, g.rc_lyr_bg.x, g.rc_lyr_bg.y, 40, 40, 20,
-                            has_bg ? mix_col(g.C_SURFACE, g.C_ACCENT, 0.24f) : g.C_SURFACE,
-                            has_bg ? 194 : (hov_lbg ? 186 : static_cast<uint8_t>(138 + 34 * g.light_t)), 3,
-                            glass_rim((has_bg || hov_lbg) ? 96 : 64, 235));
-    icon_wallpaper(s, g.rc_lyr_bg.x + 12, g.rc_lyr_bg.y + 12, 16, has_bg ? g.C_ACCENT : g.C_TXT);
+                            has_bg ? mix_col(imm_surface, imm_accent, 0.24f) : imm_surface,
+                            has_bg ? 194 : (hov_lbg ? 186 : 142), 3,
+                            (has_bg || hov_lbg) ? imm_rim_hov : imm_rim_norm);
+    icon_wallpaper(s, g.rc_lyr_bg.x + 12, g.rc_lyr_bg.y + 12, 16, has_bg ? imm_accent : imm_txt);
 
     if (has_bg) {
         g.rc_lyr_bg_clear = Rect{ g.W - 210, 18, 40, 40 };
         const bool hov_lcl = in_rc(mx, my, g.rc_lyr_bg_clear);
         fill_frosted_round_rect(s, g.rc_lyr_bg_clear.x, g.rc_lyr_bg_clear.y, 40, 40, 20,
-                                g.C_SURFACE, hov_lcl ? 190 : static_cast<uint8_t>(138 + 34 * g.light_t), 3,
-                                glass_rim(hov_lcl ? 96 : 64, 235));
-        icon_close_x(s, g.rc_lyr_bg_clear.x + 20, g.rc_lyr_bg_clear.y + 20, 4, hov_lcl ? g.C_HEART : g.C_TXT2);
+                                imm_surface, hov_lcl ? 190 : 142, 3,
+                                hov_lcl ? imm_rim_hov : imm_rim_norm);
+        icon_close_x(s, g.rc_lyr_bg_clear.x + 20, g.rc_lyr_bg_clear.y + 20, 4, hov_lcl ? g.C_HEART : imm_txt2);
     }
 
-    const int left_col_w = std::clamp(static_cast<int>(g.W * 0.36f), 280, 440);
+    // Centered, tightly capped two-column layout eliminating excess right-side whitespace
+    const int content_w = std::clamp(g.W - 88, 640, 1020);
+    const int content_x0 = (g.W - content_w) / 2;
     constexpr int chrome_below = 194;
-    const int max_cov_h = std::max(140, g.H - 72 - 26 - chrome_below);
-    const int cov_sz = std::clamp(std::min(max_cov_h, std::min(static_cast<int>(g.H * 0.42f), left_col_w - 40)), 140, 340);
+    const int max_cov_h = std::max(140, g.H - 74 - 24 - chrome_below);
+    const int left_target = static_cast<int>(static_cast<float>(content_w) * 0.40f);
+    const int cov_sz = std::clamp(std::min(max_cov_h, std::min(static_cast<int>(g.H * 0.50f), left_target)), 150, 396);
     const int block_h = cov_sz + chrome_below;
-    const int cov_x = 40 + (left_col_w - cov_sz) / 2;
-    const int cov_y = std::max(72, 72 + (g.H - 96 - block_h) / 2);
+    const int cov_x = content_x0;
+    const int cov_y = std::max(74, 74 + (g.H - 98 - block_h) / 2);
 
-    fill_round_rect_shadow(s, cov_x, cov_y + 10, cov_sz, cov_sz, 14, theme_shadow(130));
+    fill_round_rect_shadow(s, cov_x, cov_y + 10, cov_sz, cov_sz, 16, 140);
     const uint32_t* art = (g.playing_idx >= 0 && g.cover_ready && !g.cover_src.empty()) ? g.cover_src.data()
                           : (!g.poster_hero.empty() ? g.poster_hero.data() : nullptr);
-    if (art) blit_rgb_round_fit(s, cov_x, cov_y, cov_sz, cov_sz, art, COVER_SRC_SZ, COVER_SRC_SZ, 14);
-    else     fill_round_rect_aa(s, cov_x, cov_y, cov_sz, cov_sz, 14, g.C_GLASS_ACT);
-    stroke_round_rect_aa(s, cov_x, cov_y, cov_sz, cov_sz, 14, 1, g.C_DIV, col_a(g.C_DIV) + 14);
+    if (art) blit_rgb_round_fit(s, cov_x, cov_y, cov_sz, cov_sz, art, COVER_SRC_SZ, COVER_SRC_SZ, 16);
+    else     fill_round_rect_aa(s, cov_x, cov_y, cov_sz, cov_sz, 16, COL(255, 255, 255, 24));
+    stroke_round_rect_aa(s, cov_x, cov_y, cov_sz, cov_sz, 16, 1, imm_div, col_a(imm_div) + 18);
 
     const int info_x = cov_x;
     const int info_w = cov_sz;
     const int ty = cov_y + cov_sz + 18;
     g.rc_bar_fav = Rect{ info_x + info_w - 32, ty - 2, 32, 32 };
     const int is_fav = (g.playing_idx >= 0 && g.tracks[g.playing_idx].fav);
-    if (in_rc(mx, my, g.rc_bar_fav)) fill_round_rect_aa(s, g.rc_bar_fav.x, g.rc_bar_fav.y, 32, 32, 16, g.C_GLASS_HOV);
-    icon_heart_ex(s, g.rc_bar_fav.x + 7, g.rc_bar_fav.y + 7, 18, is_fav ? g.C_HEART : g.C_TXT2, is_fav);
+    if (in_rc(mx, my, g.rc_bar_fav)) fill_round_rect_aa(s, g.rc_bar_fav.x, g.rc_bar_fav.y, 32, 32, 16, imm_hov);
+    icon_heart_ex(s, g.rc_bar_fav.x + 7, g.rc_bar_fav.y + 7, 18, is_fav ? g.C_HEART : imm_txt2, is_fav);
 
-    draw_text_max_bold(s, f, 22.0f, info_x, ty, g.C_TXT, g.p_title.c_str(), info_w - 38);
-    draw_text_max_bold(s, f, 14.5f, info_x, ty + 30, g.C_TXT2,
+    draw_text_max_bold(s, f, 22.0f, info_x, ty, imm_txt, g.p_title.c_str(), info_w - 38);
+    draw_text_max_bold(s, f, 14.5f, info_x, ty + 30, imm_txt2,
                        !g.p_artist.empty() ? g.p_artist.c_str() : (!g.p_album.empty() ? g.p_album.c_str() : "Sir\xC3\xA8ne Hi-Res"), info_w);
 
     const double dur = g.playing_idx >= 0 ? audio_duration() : 0.0;
@@ -2551,17 +2724,17 @@ void draw_immersive_view(int mx, int my) {
     g.ui_px1 = info_x + info_w;
     g.ui_py = py;
     g.rc_bar_prog = Rect{ g.ui_px0 - 8, py - 14, info_w + 16, 28 };
-    fill_round_rect_aa(s, g.ui_px0, py - 2, info_w, 5, 2, g.C_TRACK_BG);
+    fill_round_rect_aa(s, g.ui_px0, py - 2, info_w, 5, 2, imm_trk_bg);
     const int fpw = static_cast<int>(frac * static_cast<float>(info_w));
-    if (fpw > 0) fill_round_rect_aa(s, g.ui_px0, py - 2, fpw, 5, 2, g.C_ACCENT);
+    if (fpw > 0) fill_round_rect_aa(s, g.ui_px0, py - 2, fpw, 5, 2, imm_accent);
     fill_ellipse_aa(s, g.ui_px0 + fpw, py, (in_rc(mx, my, g.rc_bar_prog) || g.scrub_drag == 1) ? 7 : 5,
-                    (in_rc(mx, my, g.rc_bar_prog) || g.scrub_drag == 1) ? 7 : 5, g.C_ACCENT);
+                    (in_rc(mx, my, g.rc_bar_prog) || g.scrub_drag == 1) ? 7 : 5, imm_accent);
 
     char bpos[20]{}, bdur[20]{};
     fmt_time(pos, bpos, sizeof(bpos));
     fmt_time(dur, bdur, sizeof(bdur));
-    draw_text_bold(s, f, 12.0f, g.ui_px0, py + 11, g.C_TXT3, bpos);
-    draw_text_right_bold(s, f, 12.0f, g.ui_px1, py + 11, g.C_TXT3, bdur);
+    draw_text_bold(s, f, 12.0f, g.ui_px0, py + 11, imm_txt3, bpos);
+    draw_text_right_bold(s, f, 12.0f, g.ui_px1, py + 11, imm_txt3, bdur);
 
     const int cy = py + 48;
     const int cx = info_x + info_w / 2;
@@ -2569,31 +2742,31 @@ void draw_immersive_view(int mx, int my) {
     g.rc_bar_prev = Rect{ cx - 74, cy - 18, 36, 36 };
     g.rc_bar_next = Rect{ cx + 38, cy - 18, 36, 36 };
 
-    if (in_rc(mx, my, g.rc_bar_prev)) fill_round_rect_aa(s, g.rc_bar_prev.x, g.rc_bar_prev.y, 36, 36, 18, g.C_GLASS_HOV);
-    icon_prev(s, cx - 56, cy, 13, g.C_TXT);
+    if (in_rc(mx, my, g.rc_bar_prev)) fill_round_rect_aa(s, g.rc_bar_prev.x, g.rc_bar_prev.y, 36, 36, 18, imm_hov);
+    icon_prev(s, cx - 56, cy, 13, imm_txt);
 
     const bool hov_p = in_rc(mx, my, g.rc_bar_play);
-    fill_ellipse_aa(s, cx, cy, hov_p ? 23 : 22, hov_p ? 23 : 22, g.C_ACCENT);
-    if (g.playing_idx >= 0 && !audio_paused()) icon_pause(s, cx, cy, 11, g.C_ON_ACCENT);
-    else                                       icon_play(s, cx + 2, cy, 12, g.C_ON_ACCENT);
+    fill_ellipse_aa(s, cx, cy, hov_p ? 23 : 22, hov_p ? 23 : 22, imm_accent);
+    if (g.playing_idx >= 0 && !audio_paused()) icon_pause(s, cx, cy, 11, imm_on_accent);
+    else                                       icon_play(s, cx + 2, cy, 12, imm_on_accent);
 
-    if (in_rc(mx, my, g.rc_bar_next)) fill_round_rect_aa(s, g.rc_bar_next.x, g.rc_bar_next.y, 36, 36, 18, g.C_GLASS_HOV);
-    icon_next(s, cx + 56, cy, 13, g.C_TXT);
+    if (in_rc(mx, my, g.rc_bar_next)) fill_round_rect_aa(s, g.rc_bar_next.x, g.rc_bar_next.y, 36, 36, 18, imm_hov);
+    icon_next(s, cx + 56, cy, 13, imm_txt);
 
     const int vy = cy + 40;
     char spec[64]{};
     snprintf(spec, sizeof(spec), "%s  %ukHz", g.p_fmt, audio_sample_rate() / 1000u);
     const int spw = text_width_bold(f, 11.5f, spec) + 18;
     fill_frosted_round_rect(s, info_x, vy - 13, spw, 26, 13,
-                            g.C_SURFACE, lt ? 168 : 138, 1, glass_rim(44, 185));
-    draw_text_centered_bold(s, f, 11.5f, info_x, info_x + spw, vy - 7, g.C_ACCENT, spec);
+                            imm_surface, 146, 1, 48);
+    draw_text_centered_bold(s, f, 11.5f, info_x, info_x + spw, vy - 7, imm_accent, spec);
 
     const char* ml = g.play_mode == MODE_LOOP_ONE ? "单曲" : (g.play_mode == MODE_SHUFFLE ? "随机" : "顺序");
     g.rc_bar_mode = Rect{ info_x + info_w - 50, vy - 13, 50, 26 };
     const bool hov_m = in_rc(mx, my, g.rc_bar_mode);
     fill_frosted_round_rect(s, g.rc_bar_mode.x, g.rc_bar_mode.y, 50, 26, 13,
-                            g.C_SURFACE, hov_m ? 182 : (lt ? 156 : 132), 1, glass_rim(48, 200));
-    draw_text_centered_bold(s, f, 12.0f, g.rc_bar_mode.x, g.rc_bar_mode.x + 50, vy - 7, g.C_TXT2, ml);
+                            imm_surface, hov_m ? 184 : 142, 1, 52);
+    draw_text_centered_bold(s, f, 12.0f, g.rc_bar_mode.x, g.rc_bar_mode.x + 50, vy - 7, imm_txt2, ml);
 
     if (g.rc_bar_mode.x - (info_x + spw) >= 88) {
         const int vw_tot = std::min(72, g.rc_bar_mode.x - (info_x + spw) - 34);
@@ -2602,55 +2775,78 @@ void draw_immersive_view(int mx, int my) {
         g.rc_bar_vol_trk = Rect{ g.ui_vx0 - 6, vy - 14, vw_tot + 12, 28 };
         g.rc_bar_vol_ico = Rect{ g.ui_vx0 - 28, vy - 14, 22, 28 };
         const float vol = audio_volume();
-        icon_vol(s, g.ui_vx0 - 17, vy, 12, g.C_TXT2, vol <= 0.01f);
-        fill_round_rect_aa(s, g.ui_vx0, vy - 2, vw_tot, 4, 2, g.C_TRACK_BG);
+        icon_vol(s, g.ui_vx0 - 17, vy, 12, imm_txt2, vol <= 0.01f);
+        fill_round_rect_aa(s, g.ui_vx0, vy - 2, vw_tot, 4, 2, imm_trk_bg);
         const int vfill = static_cast<int>(vol * static_cast<float>(vw_tot));
-        if (vfill > 0) fill_round_rect_aa(s, g.ui_vx0, vy - 2, vfill, 4, 2, g.C_ACCENT);
-        fill_ellipse_aa(s, g.ui_vx0 + vfill, vy, 5, 5, g.C_ACCENT);
+        if (vfill > 0) fill_round_rect_aa(s, g.ui_vx0, vy - 2, vfill, 4, 2, imm_accent);
+        fill_ellipse_aa(s, g.ui_vx0 + vfill, vy, 5, 5, imm_accent);
     }
 
-    const int lyr_x = cov_x + cov_sz + 56;
-    const int lyr_w = std::max(240, g.W - lyr_x - 48);
-    constexpr int lyr_y0 = 64;
-    const int lyr_y1 = g.H - 36;
-    g.ui_list_x0 = lyr_x - 16; g.ui_list_x1 = lyr_x + lyr_w + 16;
-    g.ui_list_y0 = lyr_y0;     g.ui_list_y1 = lyr_y1;
+    const int col_gap = std::clamp(content_w / 18, 40, 56);
+    const int lyr_x = cov_x + cov_sz + col_gap;
+    const int lyr_w = std::max(240, (content_x0 + content_w) - lyr_x);
+    constexpr int lyr_y0 = 70;
+    const int lyr_y1 = g.H - 42;
+    g.ui_list_x0 = std::max(0, lyr_x - 16);
+    g.ui_list_x1 = std::min(s->w, lyr_x + lyr_w + 16);
+    g.ui_list_y0 = lyr_y0;
+    g.ui_list_y1 = lyr_y1;
+
+    // Snapshot top & bottom backdrop strips so pixel-smooth edge mask matches CSS mask-image
+    const int mask_w = std::max(0, g.ui_list_x1 - g.ui_list_x0);
+    const int fade_h = (mask_w > 0 && lyr_y1 - lyr_y0 > 80) ? std::min(92, (lyr_y1 - lyr_y0) / 4) : 0;
+    std::vector<uint32_t> mask_top_bg, mask_bot_bg;
+    if (fade_h > 0 && s->px) {
+        mask_top_bg.resize(static_cast<size_t>(mask_w) * fade_h);
+        mask_bot_bg.resize(static_cast<size_t>(mask_w) * fade_h);
+        for (int ry = 0; ry < fade_h; ++ry) {
+            std::memcpy(mask_top_bg.data() + static_cast<size_t>(ry) * mask_w,
+                        s->px + static_cast<size_t>(lyr_y0 + ry) * s->w + g.ui_list_x0,
+                        static_cast<size_t>(mask_w) * 4);
+            std::memcpy(mask_bot_bg.data() + static_cast<size_t>(ry) * mask_w,
+                        s->px + static_cast<size_t>(lyr_y1 - fade_h + ry) * s->w + g.ui_list_x0,
+                        static_cast<size_t>(mask_w) * 4);
+        }
+    }
+
     canvas_set_clip(s, g.ui_list_x0, lyr_y0, g.ui_list_x1, lyr_y1);
 
-    const float orig_px = clampf(static_cast<float>(g.W) * 0.029f, 34.0f, 48.0f);
-    const float sub_px  = clampf(orig_px * 0.62f, 20.0f, 30.0f);
+    const float orig_px = std::round(clampf(std::min(static_cast<float>(g.W) * 0.025f, static_cast<float>(lyr_w) * 0.062f), 26.0f, 36.0f));
+    const float cur_orig_px = std::round(orig_px * 1.12f);
+    const float sub_px  = std::round(clampf(orig_px * 0.62f, 17.0f, 23.0f));
+    const float cur_sub_px  = std::round(sub_px * 1.08f);
 
     if (!g.lyr || g.lyr->n <= 0) {
         g.lyr_max_scroll = 0.0f;
         const char* msg = lyrics_online_busy(g.lyr_req_id) ? "正在从云端匹配双语歌词..." :
                           (g.playing_idx >= 0 ? "当前曲目暂无内嵌/匹配歌词，可将 .lrc 拖入窗口" : "请先选择一首音乐开始播放");
-        draw_text_max_bold(s, f, 26.0f, lyr_x, g.H / 2 - 20, g.C_TXT2, msg, lyr_w);
+        draw_text_max_bold(s, f, 26.0f, lyr_x, g.H / 2 - 20, imm_txt2, msg, lyr_w);
     } else {
         const int max_n = g.lyr->n;
         const int cur_idx = std::clamp(lyrics_index(g.lyr.get(), pos), 0, max_n - 1);
 
-        if (g.lyr_wrap_ptr != g.lyr.get() || g.lyr_wrap_w != (lyr_w - 24) ||
-            std::fabs(g.lyr_wrap_opx - orig_px) > 0.25f || std::fabs(g.lyr_wrap_spx - sub_px) > 0.25f ||
+        if (g.lyr_wrap_ptr != g.lyr.get() || g.lyr_wrap_w != (lyr_w - 16) ||
+            std::fabs(g.lyr_wrap_opx - cur_orig_px) > 0.25f || std::fabs(g.lyr_wrap_spx - cur_sub_px) > 0.25f ||
             static_cast<int>(g.lyr_wrapped.size()) != max_n) {
             g.lyr_wrapped.resize(static_cast<size_t>(max_n));
             int cur_acc_y = 0;
             for (int i = 0; i < max_n; ++i) {
                 auto& wl = g.lyr_wrapped[i];
                 const char* orig_s = g.lyr->lines[i].orig[0] ? g.lyr->lines[i].orig : g.lyr->lines[i].text;
-                wl.o_lines = wrap_utf8_lines(orig_s, orig_px, lyr_w - 24, 4, 1);
+                wl.o_lines = wrap_utf8_lines(orig_s, cur_orig_px, lyr_w - 16, 4, 1);
                 if (wl.o_lines.empty()) wl.o_lines.emplace_back(orig_s);
-                if (g.lyr->lines[i].sub[0]) wl.s_lines = wrap_utf8_lines(g.lyr->lines[i].sub, sub_px, lyr_w - 24, 3, 1);
+                if (g.lyr->lines[i].sub[0]) wl.s_lines = wrap_utf8_lines(g.lyr->lines[i].sub, cur_sub_px, lyr_w - 16, 3, 1);
                 else wl.s_lines.clear();
                 const int no = static_cast<int>(wl.o_lines.size());
                 const int ns = static_cast<int>(wl.s_lines.size());
-                wl.h = no * static_cast<int>(orig_px * 1.28f) + (ns > 0 ? ns * static_cast<int>(sub_px * 1.32f) + 6 : 0) + 28;
+                wl.h = no * static_cast<int>(orig_px * 1.32f) + (ns > 0 ? ns * static_cast<int>(sub_px * 1.34f) + 6 : 0) + 32;
                 wl.y = cur_acc_y;
                 cur_acc_y += wl.h;
             }
             g.lyr_wrap_ptr = g.lyr.get();
-            g.lyr_wrap_w   = lyr_w - 24;
-            g.lyr_wrap_opx = orig_px;
-            g.lyr_wrap_spx = sub_px;
+            g.lyr_wrap_w   = lyr_w - 16;
+            g.lyr_wrap_opx = cur_orig_px;
+            g.lyr_wrap_spx = cur_sub_px;
             const auto& last_wl = g.lyr_wrapped[max_n - 1];
             g.lyr_max_scroll = static_cast<float>(last_wl.y + last_wl.h);
         }
@@ -2664,7 +2860,7 @@ void draw_immersive_view(int mx, int my) {
         }
         g.lyr_cam_y = clampf(g.lyr_cam_y, 0.0f, std::max(0.0f, g.lyr_max_scroll));
 
-        const int anchor_y = lyr_y0 + static_cast<int>((lyr_y1 - lyr_y0) * 0.42f);
+        const int anchor_y = lyr_y0 + static_cast<int>((lyr_y1 - lyr_y0) * 0.40f);
         for (int i = 0; i < max_n; ++i) {
             const auto& wl = g.lyr_wrapped[i];
             const int y = anchor_y + wl.y - static_cast<int>(g.lyr_cam_y);
@@ -2672,52 +2868,68 @@ void draw_immersive_view(int mx, int my) {
 
             const bool is_cur = (i == cur_idx);
             const int dist = std::abs(i - cur_idx);
-            float alpha = is_cur ? 1.0f : clampf(0.72f - static_cast<float>(dist) * 0.10f, 0.28f, 0.72f);
-            float edge_fade = 1.0f;
-            if (y < lyr_y0 + 68) edge_fade = clampf(static_cast<float>(y - lyr_y0 + 6) / 74.0f, 0.0f, 1.0f);
-            if (y + wl.h > lyr_y1 - 56) {
-                edge_fade = std::min(edge_fade, clampf(static_cast<float>(lyr_y1 - y - wl.h / 2) / 64.0f, 0.0f, 1.0f));
-            }
-            if (!is_cur && edge_fade <= 0.03f) continue;
+            // Frameless fluid typography: pure white + subtle scale on current, <= 35% opacity on others
+            float alpha = is_cur ? 1.0f : clampf(0.35f - static_cast<float>(std::max(0, dist - 1)) * 0.045f, 0.16f, 0.35f);
+            const bool hov_l = in_rect(mx, my, lyr_x - 8, y - 4, lyr_w, wl.h - 10);
+            if (!is_cur && hov_l) alpha = 0.72f;
 
-            const bool hov_l = in_rect(mx, my, lyr_x - 10, y - 4, lyr_w, wl.h - 12);
-            if (hov_l) alpha = std::max(alpha, 0.88f);
+            const uint8_t oa = static_cast<uint8_t>(clampf(alpha * 255.0f, 4.0f, 255.0f));
+            const uint8_t sa = static_cast<uint8_t>(clampf(alpha * 222.0f, 4.0f, 255.0f));
+            const uint32_t col_orig = with_alpha(COL(255, 255, 255, 255), oa);
+            const uint32_t col_sub  = with_alpha(COL(240, 244, 252, 255), sa);
+            const float draw_opx = is_cur ? cur_orig_px : orig_px;
+            const float draw_spx = is_cur ? cur_sub_px  : sub_px;
+            const int y_nudge = is_cur ? -2 : 0;
 
-            if (is_cur) {
-                fill_frosted_round_rect(s, lyr_x - 20, y - 8, lyr_w + 22, wl.h - 14, 18,
-                                        mix_col(g.C_SURFACE, g.C_ACCENT, 0.16f),
-                                        static_cast<uint8_t>(106 + 68 * g.light_t), 3, glass_rim(34, 155));
-                fill_round_rect_aa(s, lyr_x - 11, y + 10, 4, std::max(14, wl.h - 50), 2, g.C_ACCENT);
-            } else if (hov_l) {
-                fill_frosted_round_rect(s, lyr_x - 20, y - 8, lyr_w + 22, wl.h - 14, 18,
-                                        g.C_SURFACE, static_cast<uint8_t>(86 + 46 * g.light_t), 2, glass_rim(28, 140));
-            }
-
-            const uint8_t oa = static_cast<uint8_t>(clampf(alpha * edge_fade * 255.0f, 4.0f, 255.0f));
-            const uint8_t sa = static_cast<uint8_t>(clampf(alpha * edge_fade * 235.0f, 4.0f, 255.0f));
-            const uint32_t col_orig = with_alpha(is_cur ? g.C_TXT : g.C_TXT2, oa);
-            const uint32_t col_sub  = with_alpha(is_cur ? g.C_ACCENT : g.C_TXT2, sa);
-
-            int cur_y = y;
+            int cur_y = y + y_nudge;
             for (const auto& line : wl.o_lines) {
-                draw_text_bold(s, f, orig_px, lyr_x, cur_y, col_orig, line.c_str());
-                cur_y += static_cast<int>(orig_px * 1.28f);
+                draw_text_bold(s, f, draw_opx, lyr_x, cur_y, col_orig, line.c_str());
+                cur_y += static_cast<int>(draw_opx * 1.24f);
             }
             if (!wl.s_lines.empty()) {
                 cur_y += 4;
                 for (const auto& line : wl.s_lines) {
-                    if (is_cur || dist <= 1) draw_text_bold(s, f, sub_px, lyr_x, cur_y, col_sub, line.c_str());
-                    else                     draw_text(s, f, sub_px, lyr_x, cur_y, col_sub, line.c_str());
-                    cur_y += static_cast<int>(sub_px * 1.32f);
+                    if (is_cur) draw_text_bold(s, f, draw_spx, lyr_x, cur_y, col_sub, line.c_str());
+                    else        draw_text(s, f, draw_spx, lyr_x, cur_y, col_sub, line.c_str());
+                    cur_y += static_cast<int>(draw_spx * 1.28f);
                 }
             }
 
             if (static_cast<int>(g.lyr_hits.size()) < LYRIC_MAX_HITS) {
-                g.lyr_hits.push_back(LyrHit{ Rect{ lyr_x - 14, y - 8, lyr_w + 16, wl.h - 14 }, g.lyr->lines[i].t });
+                g.lyr_hits.push_back(LyrHit{ Rect{ lyr_x - 8, y - 4, lyr_w, wl.h - 10 }, g.lyr->lines[i].t });
             }
         }
     }
     canvas_reset_clip(s);
+
+    // Apply smooth pixel-level top/bottom gradient fade mask over the lyrics container
+    if (fade_h > 0 && s->px && !mask_top_bg.empty()) {
+        for (int ry = 0; ry < fade_h; ++ry) {
+            const float kt = smooth_u(static_cast<float>(ry) / static_cast<float>(fade_h));
+            const uint32_t kfg = static_cast<uint32_t>(std::clamp(static_cast<int>(kt * 256.0f + 0.5f), 0, 256));
+            const uint32_t kbg = 256u - kfg;
+            uint32_t* drow = s->px + static_cast<size_t>(lyr_y0 + ry) * s->w + g.ui_list_x0;
+            const uint32_t* brow = mask_top_bg.data() + static_cast<size_t>(ry) * mask_w;
+            for (int rx = 0; rx < mask_w; ++rx) {
+                const uint32_t fg = drow[rx], bg = brow[rx];
+                const uint32_t rb = ((((fg & 0x00FF00FFu) * kfg + (bg & 0x00FF00FFu) * kbg + 0x00800080u) >> 8) & 0x00FF00FFu);
+                const uint32_t gv = (((((fg >> 8) & 0xFFu) * kfg + ((bg >> 8) & 0xFFu) * kbg + 128u) & 0xFF00u));
+                drow[rx] = 0xFF000000u | rb | gv;
+            }
+
+            const float kb_f = smooth_u(static_cast<float>(fade_h - 1 - ry) / static_cast<float>(fade_h));
+            const uint32_t bfg = static_cast<uint32_t>(std::clamp(static_cast<int>(kb_f * 256.0f + 0.5f), 0, 256));
+            const uint32_t bbg = 256u - bfg;
+            uint32_t* bdrow = s->px + static_cast<size_t>(lyr_y1 - fade_h + ry) * s->w + g.ui_list_x0;
+            const uint32_t* bbrow = mask_bot_bg.data() + static_cast<size_t>(ry) * mask_w;
+            for (int rx = 0; rx < mask_w; ++rx) {
+                const uint32_t fg = bdrow[rx], bg = bbrow[rx];
+                const uint32_t rb = ((((fg & 0x00FF00FFu) * bfg + (bg & 0x00FF00FFu) * bbg + 0x00800080u) >> 8) & 0x00FF00FFu);
+                const uint32_t gv = (((((fg >> 8) & 0xFFu) * bfg + ((bg >> 8) & 0xFFu) * bbg + 128u) & 0xFF00u));
+                bdrow[rx] = 0xFF000000u | rb | gv;
+            }
+        }
+    }
 }
 
 void draw_switch(int x, int y, float t, uint32_t acc, int mx, int my) {
@@ -2949,14 +3161,392 @@ void draw_settings_view(int mx, int my) {
     }
 }
 
+void draw_plugins_view(int mx, int my) {
+    Canvas* s = g.screen.get();
+    Font* f = g.font.get();
+    const bool lt = g.light_t > 0.5f;
+    const int lx = side_w() + 26;
+    const int rx = g.W - 26;
+
+    g.rc_plg_back = Rect{ lx, 22, 88, 38 };
+    const bool hov_back = in_rc(mx, my, g.rc_plg_back);
+    fill_frosted_round_rect(s, g.rc_plg_back.x, g.rc_plg_back.y, g.rc_plg_back.w, g.rc_plg_back.h, 19,
+                            g.C_SURFACE, hov_back ? 188 : (lt ? 156 : 132), 2, glass_rim(56, 210));
+    stroke_round_rect_aa(s, g.rc_plg_back.x, g.rc_plg_back.y, g.rc_plg_back.w, g.rc_plg_back.h, 19, 1,
+                         g.C_DIV, col_a(g.C_DIV) + 12);
+    icon_back(s, g.rc_plg_back.x + 14, g.rc_plg_back.y + 12, 13, g.C_TXT);
+    draw_text_bold(s, f, 13.5f, g.rc_plg_back.x + 34, g.rc_plg_back.y + 10, g.C_TXT, "返回");
+    draw_text_bold(s, f, 23.5f, lx + 104, 26, g.C_TXT, g.plg_subtab == 0 ? "在线扩展" : "插件管理");
+
+    auto reg_hit = [&](const Rect& r, int id, int arg, const std::string& key = "") {
+        g.plg_hits.push_back(SetHit{ r, id, arg });
+        g.plg_hit_keys.push_back(key);
+    };
+
+    const int seg_w = 176;
+    const int seg_x = rx - seg_w;
+    {
+        fill_frosted_round_rect(s, seg_x, 25, seg_w, 32, 16, g.C_SURFACE, lt ? 148 : 118, 1, glass_rim(42, 185));
+        const char* tabs[2] = { "浏览音源", "管理扩展" };
+        for (int i = 0; i < 2; ++i) {
+            Rect trc{ seg_x + 3 + i * 85, 28, 85, 26 };
+            reg_hit(trc, i == 0 ? PLG_TAB_BROWSE : PLG_TAB_MANAGE, i);
+            const bool act = (g.plg_subtab == i);
+            const bool hov = in_rc(mx, my, trc);
+            if (act) {
+                fill_round_rect_aa(s, trc.x, trc.y, trc.w, trc.h, 13, mix_col(g.C_SURFACE, g.C_ACCENT, 0.30f));
+                stroke_round_rect_aa(s, trc.x, trc.y, trc.w, trc.h, 13, 1, g.C_ACCENT, 145);
+            } else if (hov) {
+                fill_round_rect_aa(s, trc.x, trc.y, trc.w, trc.h, 13, g.C_GLASS_HOV);
+            }
+            draw_text_centered_bold(s, f, 12.5f, trc.x, trc.x + trc.w, trc.y + 5,
+                                    act ? g.C_ACCENT : (hov ? g.C_TXT : g.C_TXT2), tabs[i]);
+        }
+    }
+
+    constexpr int top_y = HEADER_H;
+    const int vh = list_vis_h();
+    const int avail_w = std::max(320, rx - lx - 14);
+    g.ui_list_x0 = lx; g.ui_list_x1 = lx + avail_w; g.ui_list_y0 = top_y; g.ui_list_y1 = top_y + vh;
+    canvas_set_clip(s, lx - 8, top_y, rx, top_y + vh);
+
+    const int start_y = top_y + 4 - static_cast<int>(g.scroll_px);
+    int y = start_y;
+    auto vis_hit = [&](const Rect& r) { return r.y + r.h > top_y && r.y < top_y + vh; };
+
+    if (g.plg_subtab == 1 || g.plg_list.empty()) {
+        const int card_w = std::min(840, avail_w);
+        const int cx0 = lx + (avail_w - card_w) / 2;
+
+        fill_round_rect_shadow(s, cx0, y + 3, card_w, 86, 16, theme_shadow(54));
+        fill_frosted_round_rect(s, cx0, y, card_w, 86, 16, g.C_SURFACE, lt ? 186 : 162, 3, glass_rim(54, 210));
+        stroke_round_rect_aa(s, cx0, y, card_w, 86, 16, 1, g.C_DIV, col_a(g.C_DIV) + 14);
+        draw_text_bold(s, f, 15.0f, cx0 + 20, y + 14, g.C_TXT, "外部扩展插件目录（直接将 .lua 文件拖入窗口即可安装）");
+        std::string pdir = plugin_dir_path();
+        draw_text_max(s, f, 12.0f, cx0 + 20, y + 40, g.C_TXT2, pdir.c_str(), card_w - 240);
+
+        Rect rs_rc{ cx0 + card_w - 20 - 82, y + 27, 82, 32 };
+        Rect cl_rc{ rs_rc.x - 8 - 88, y + 27, 88, 32 };
+        {
+            const bool hov = vis_hit(rs_rc) && in_rc(mx, my, rs_rc);
+            fill_frosted_round_rect(s, rs_rc.x, rs_rc.y, rs_rc.w, rs_rc.h, 16,
+                                    mix_col(g.C_SURFACE, g.C_ACCENT, 0.22f), hov ? 204 : 184, 1, glass_rim(56, 210));
+            draw_text_centered_bold(s, f, 12.5f, rs_rc.x, rs_rc.x + rs_rc.w, rs_rc.y + 7, g.C_ACCENT, "扫描插件");
+            if (vis_hit(rs_rc)) reg_hit(rs_rc, PLG_RESCAN, 0);
+        }
+        {
+            const bool hov = vis_hit(cl_rc) && in_rc(mx, my, cl_rc);
+            fill_frosted_round_rect(s, cl_rc.x, cl_rc.y, cl_rc.w, cl_rc.h, 16, g.C_SURFACE,
+                                    hov ? 188 : (lt ? 156 : 132), 1, glass_rim(48, 200));
+            draw_text_centered_bold(s, f, 12.5f, cl_rc.x, cl_rc.x + cl_rc.w, cl_rc.y + 7, g.C_TXT2, "清理缓存");
+            if (vis_hit(cl_rc)) reg_hit(cl_rc, PLG_CLEAR_CACHE, 0);
+        }
+        y += 102;
+
+        if (g.plg_list.empty()) {
+            fill_round_rect_shadow(s, cx0, y + 3, card_w, 124, 16, theme_shadow(48));
+            fill_frosted_round_rect(s, cx0, y, card_w, 124, 16, g.C_SURFACE, lt ? 176 : 150, 3, glass_rim(48, 195));
+            draw_text_centered_bold(s, f, 16.0f, cx0, cx0 + card_w, y + 34, g.C_TXT, "尚未安装外部音源扩展");
+            draw_text_centered_bold(s, f, 12.5f, cx0, cx0 + card_w, y + 66, g.C_TXT2,
+                                    "可从外部导入兼容 Sirène Lua SDK 的 .lua 插件（支持搜索 / 歌单 / 扫码登录 / 流媒体播放）");
+            y += 138;
+        } else {
+            for (int pi = 0; pi < static_cast<int>(g.plg_list.size()); ++pi) {
+                const auto& plg = g.plg_list[pi];
+                const int nf = static_cast<int>(plg.config_fields.size());
+                const int ch = 96 + nf * 48;
+                fill_round_rect_shadow(s, cx0, y + 3, card_w, ch, 16, theme_shadow(54));
+                fill_frosted_round_rect(s, cx0, y, card_w, ch, 16, g.C_SURFACE, lt ? 186 : 162, 3, glass_rim(54, 210));
+                stroke_round_rect_aa(s, cx0, y, card_w, ch, 16, 1, g.C_DIV, col_a(g.C_DIV) + 14);
+
+                char hdr[192]{};
+                std::snprintf(hdr, sizeof(hdr), "%s  v%s%s%s",
+                              plg.name.c_str(), plg.version.c_str(),
+                              plg.author.empty() ? "" : " · ", plg.author.c_str());
+                draw_text_max_bold(s, f, 15.5f, cx0 + 20, y + 14, g.C_TXT, hdr, card_w - 280);
+                const char* desc = !plg.last_error.empty() ? plg.last_error.c_str()
+                                 : (!plg.description.empty() ? plg.description.c_str() : plg.id.c_str());
+                draw_text_max(s, f, 12.5f, cx0 + 20, y + 40, !plg.last_error.empty() ? g.C_HEART : g.C_TXT2, desc, card_w - 280);
+                if (plg.logged_in) {
+                    std::string lg = "已登录: " + plg.nickname;
+                    draw_text_bold(s, f, 12.0f, cx0 + 20, y + 64, g.C_ACCENT, lg.c_str());
+                } else {
+                    draw_text_bold(s, f, 12.0f, cx0 + 20, y + 64, plg.enabled ? g.C_TXT3 : g.C_HEART,
+                                   plg.enabled ? "已启用" : "已停用");
+                }
+
+                int bx = cx0 + card_w - 20;
+                Rect rm_rc{ bx - 56, y + 18, 56, 30 };
+                {
+                    const bool hov = vis_hit(rm_rc) && in_rc(mx, my, rm_rc);
+                    fill_frosted_round_rect(s, rm_rc.x, rm_rc.y, rm_rc.w, rm_rc.h, 15, g.C_SURFACE,
+                                            hov ? 188 : (lt ? 150 : 126), 1, glass_rim(44, 190));
+                    draw_text_centered_bold(s, f, 12.0f, rm_rc.x, rm_rc.x + rm_rc.w, rm_rc.y + 6,
+                                            hov ? g.C_HEART : g.C_TXT2, "移除");
+                    if (vis_hit(rm_rc)) reg_hit(rm_rc, PLG_REMOVE, pi, plg.id);
+                    bx = rm_rc.x - 8;
+                }
+                Rect sw_rc{ bx - 44, y + 21, 44, 24 };
+                draw_switch(sw_rc.x, sw_rc.y, plg.enabled ? 1.0f : 0.0f, g.C_ACCENT, mx, my);
+                if (vis_hit(sw_rc)) reg_hit(Rect{ sw_rc.x - 4, sw_rc.y - 4, 52, 32 }, PLG_TOGGLE, pi, plg.id);
+                bx = sw_rc.x - 10;
+
+                if (plg.supports_login) {
+                    Rect lg_rc{ bx - 84, y + 18, 84, 30 };
+                    const bool hov = vis_hit(lg_rc) && in_rc(mx, my, lg_rc);
+                    fill_frosted_round_rect(s, lg_rc.x, lg_rc.y, lg_rc.w, lg_rc.h, 15,
+                                            mix_col(g.C_SURFACE, g.C_ACCENT, 0.22f), hov ? 204 : 184, 1, glass_rim(54, 210));
+                    draw_text_centered_bold(s, f, 12.0f, lg_rc.x, lg_rc.x + lg_rc.w, lg_rc.y + 6, g.C_ACCENT,
+                                            plg.logged_in ? "退出登录" : "扫码登录");
+                    if (vis_hit(lg_rc)) reg_hit(lg_rc, plg.logged_in ? PLG_LOGOUT : PLG_LOGIN, pi, plg.id);
+                }
+
+                int fy = y + 92;
+                for (int fi = 0; fi < nf; ++fi) {
+                    const auto& cf = plg.config_fields[fi];
+                    fill_rect_a(s, cx0 + 18, fy - 4, card_w - 36, 1, g.C_DIV, col_a(g.C_DIV) + 10);
+                    draw_text_bold(s, f, 13.0f, cx0 + 20, fy + 10, g.C_TXT2, cf.label.c_str());
+                    Rect in_rc_box{ cx0 + 160, fy + 4, card_w - 180, 32 };
+                    const bool is_ed = (g.cfg_editing && g.cfg_edit_pid == plg.id && g.cfg_edit_key == cf.key);
+                    const std::string& disp = is_ed ? g.cfg_edit_val : (!cf.value.empty() ? cf.value : cf.placeholder);
+                    fill_frosted_round_rect(s, in_rc_box.x, in_rc_box.y, in_rc_box.w, in_rc_box.h, 10,
+                                            g.C_SURFACE, is_ed ? 210 : (lt ? 160 : 134), 1,
+                                            is_ed ? glass_rim(96, 235) : glass_rim(44, 185));
+                    if (is_ed) stroke_round_rect_aa(s, in_rc_box.x, in_rc_box.y, in_rc_box.w, in_rc_box.h, 10, 1, g.C_ACCENT, 200);
+                    draw_text_max(s, f, 12.5f, in_rc_box.x + 12, in_rc_box.y + 8,
+                                  (is_ed || !cf.value.empty()) ? g.C_TXT : g.C_TXT3, disp.c_str(), in_rc_box.w - 24);
+                    if (vis_hit(in_rc_box)) reg_hit(in_rc_box, PLG_CFG_EDIT, pi, plg.id + "\n" + cf.key);
+                    fy += 48;
+                }
+                y += ch + 16;
+            }
+        }
+    } else {
+        // Browse / Search online plugin content
+        int sx = lx;
+        const PluginInfo* cur_p = nullptr;
+        for (const auto& plg : g.plg_list) {
+            if (!plg.enabled || !plg.valid) continue;
+            const int pw = text_width_bold(f, 12.5f, plg.name.c_str()) + 24;
+            Rect pr{ sx, y, pw, 30 };
+            const bool act = (g.active_plugin_id == plg.id);
+            const bool hov = vis_hit(pr) && in_rc(mx, my, pr);
+            fill_frosted_round_rect(s, pr.x, pr.y, pr.w, pr.h, 15,
+                                    act ? mix_col(g.C_SURFACE, g.C_ACCENT, 0.28f) : g.C_SURFACE,
+                                    act ? 200 : (hov ? 186 : (lt ? 156 : 130)), 1, glass_rim(48, 200));
+            if (act) stroke_round_rect_aa(s, pr.x, pr.y, pr.w, pr.h, 15, 1, g.C_ACCENT, 145);
+            draw_text_centered_bold(s, f, 12.5f, pr.x, pr.x + pr.w, pr.y + 6, act ? g.C_ACCENT : g.C_TXT2, plg.name.c_str());
+            if (vis_hit(pr)) reg_hit(pr, PLG_SELECT, 0, plg.id);
+            sx += pw + 8;
+            if (act) cur_p = &plg;
+        }
+        if (cur_p) {
+            int rbx = lx + avail_w;
+            if (cur_p->supports_login) {
+                std::string ltxt = cur_p->logged_in ? ("账号: " + cur_p->nickname) : "扫码登录";
+                int lw = std::min(160, text_width_bold(f, 12.0f, ltxt.c_str()) + 24);
+                Rect lr{ rbx - lw, y, lw, 30 };
+                const bool hov = vis_hit(lr) && in_rc(mx, my, lr);
+                fill_frosted_round_rect(s, lr.x, lr.y, lr.w, lr.h, 15,
+                                        mix_col(g.C_SURFACE, g.C_ACCENT, 0.22f), hov ? 204 : 182, 1, glass_rim(54, 210));
+                draw_text_centered_bold(s, f, 12.0f, lr.x, lr.x + lr.w, lr.y + 6, g.C_ACCENT, ltxt.c_str());
+                if (vis_hit(lr)) reg_hit(lr, cur_p->logged_in ? PLG_LOGOUT : PLG_LOGIN, 0, cur_p->id);
+                rbx = lr.x - 8;
+            }
+            Rect hr{ rbx - 82, y, 82, 30 };
+            const bool hhov = vis_hit(hr) && in_rc(mx, my, hr);
+            fill_frosted_round_rect(s, hr.x, hr.y, hr.w, hr.h, 15, g.C_SURFACE, hhov ? 186 : (lt ? 156 : 130), 1, glass_rim(48, 200));
+            draw_text_centered_bold(s, f, 12.0f, hr.x, hr.x + hr.w, hr.y + 6, g.C_TXT2, "推荐歌单");
+            if (vis_hit(hr)) reg_hit(hr, PLG_HOME, 0, cur_p->id);
+            rbx = hr.x - 8;
+
+            if (!g.search_q.empty()) {
+                Rect sr{ rbx - 74, y, 74, 30 };
+                fill_round_rect_aa(s, sr.x, sr.y, sr.w, sr.h, 15, g.C_ACCENT);
+                draw_text_centered_bold(s, f, 12.0f, sr.x, sr.x + sr.w, sr.y + 6, g.C_ON_ACCENT, "搜在线");
+                if (vis_hit(sr)) reg_hit(sr, PLG_SEARCH_GO, 0, cur_p->id);
+            }
+        }
+        y += 42;
+
+        if (!g.plg_snap.playlists.empty()) {
+            draw_text_bold(s, f, 15.0f, lx, y, g.C_TXT, "歌单与推荐");
+            y += 28;
+            int px = lx;
+            int row_max_x = lx + avail_w;
+            for (int i = 0; i < static_cast<int>(g.plg_snap.playlists.size()); ++i) {
+                const auto& pl = g.plg_snap.playlists[i];
+                const int pw = std::clamp(text_width_bold(f, 13.0f, pl.name.c_str()) + 28, 100, 240);
+                if (px + pw > row_max_x && px > lx) { px = lx; y += 44; }
+                Rect pr{ px, y, pw, 36 };
+                if (pr.y + pr.h > top_y - 10 && pr.y < top_y + vh + 10) {
+                    const bool hov = vis_hit(pr) && in_rc(mx, my, pr);
+                    fill_frosted_round_rect(s, pr.x, pr.y, pr.w, pr.h, 12, g.C_SURFACE,
+                                            hov ? 190 : (lt ? 158 : 134), 2, glass_rim(48, 200));
+                    draw_text_max_bold(s, f, 13.0f, pr.x + 12, pr.y + 9, hov ? g.C_ACCENT : g.C_TXT, pl.name.c_str(), pr.w - 24);
+                    if (vis_hit(pr)) reg_hit(pr, PLG_PLAYLIST, i, pl.id);
+                }
+                px += pw + 10;
+            }
+            y += 50;
+        }
+
+        char sec[128]{};
+        std::snprintf(sec, sizeof(sec), "%s · %d 首",
+                      g.plg_snap.active_playlist_name.empty() ? "在线曲目" : g.plg_snap.active_playlist_name.c_str(),
+                      static_cast<int>(g.plg_snap.tracks.size()));
+        draw_text_bold(s, f, 16.5f, lx, y, g.C_TXT, sec);
+        if (g.plg_snap.is_busy) draw_text_right_bold(s, f, 12.5f, lx + avail_w, y + 3, g.C_ACCENT, "正在加载...");
+        y += 34;
+
+        if (g.plg_snap.tracks.empty()) {
+            draw_text_centered_bold(s, f, 14.0f, lx, lx + avail_w, y + 36, g.C_TXT3,
+                                    "点击左侧搜索框输入歌名/歌手并按回车，或点击上方「推荐歌单」");
+            y += 90;
+        } else {
+            int cols, gap, cw, ch;
+            calc_grid_metrics(cols, gap, cw, ch);
+            int thumb_queued = 0;
+            const int n = static_cast<int>(g.plg_snap.tracks.size());
+            const int rows = (n + cols - 1) / cols;
+            for (int p = 0; p < n; ++p) {
+                const int row = p / cols;
+                const int col = p % cols;
+                const int x = lx + col * (cw + gap);
+                const int ty = y + row * (ch + gap);
+                if (ty + ch < top_y - 16 || ty > top_y + vh + 16) continue;
+
+                auto& tr = g.plg_snap.tracks[p];
+                if (tr.thumb_state == 0 && !tr.cover_url.empty() && thumb_queued < 4) {
+                    tr.thumb_state = 1;
+                    plugin_async_thumb(tr.plugin_id, static_cast<size_t>(p), tr.cover_url);
+                    ++thumb_queued;
+                }
+                const Rect card_rc{ x, ty, cw, ch };
+                const bool in_v = in_rect(mx, my, lx - 4, top_y, avail_w + 8, vh - DOCK_CLEAR + 16);
+                const bool hov = in_v && in_rc(mx, my, card_rc);
+                const int cy = hov ? (ty - 4) : ty;
+
+                fill_round_rect_shadow_fast(s, x, cy + 3, cw, cw, 12, theme_shadow(64));
+                if (!tr.thumb.empty()) {
+                    blit_rgb_round_fit(s, x, cy, cw, cw, tr.thumb.data(), 160, 160, 12);
+                } else if (!g.poster_hero.empty()) {
+                    blit_rgb_round_fit(s, x, cy, cw, cw, g.poster_hero.data(), COVER_SRC_SZ, COVER_SRC_SZ, 12);
+                } else {
+                    fill_round_rect_aa(s, x, cy, cw, cw, 12, g.C_GLASS_ACT);
+                }
+                if (hov) {
+                    stroke_round_rect_aa(s, x, cy, cw, cw, 12, 1, g.C_ACCENT, 160);
+                    const int bx = x + cw - 39, by = cy + cw - 39;
+                    fill_round_rect_aa(s, bx, by, 32, 32, 16, g.C_ACCENT);
+                    icon_play(s, bx + 17, by + 16, 10, g.C_ON_ACCENT);
+                }
+                const int iy = cy + cw + 9;
+                draw_text_max_bold(s, f, 14.5f, x + 5, iy, hov ? g.C_ACCENT : g.C_TXT, tr.title.c_str(), cw - 10);
+                char ds[16] = "--:--";
+                if (tr.dur > 0.5) fmt_time(tr.dur, ds, sizeof(ds));
+                const int dw = text_width_bold(f, 12.0f, ds);
+                draw_text_right_bold(s, f, 12.0f, x + cw - 5, iy + 24, g.C_TXT3, ds);
+                draw_text_max_bold(s, f, 12.5f, x + 5, iy + 23, g.C_TXT2,
+                                   !tr.artist.empty() ? tr.artist.c_str() : tr.fmt, cw - 18 - dw);
+                if (vis_hit(card_rc)) reg_hit(card_rc, PLG_TRACK, p, tr.id);
+            }
+            y += rows * ch + (rows > 0 ? (rows - 1) * gap : 0) + 12;
+        }
+    }
+
+    g.plg_content_h = static_cast<float>(y - start_y);
+    canvas_reset_clip(s);
+
+    const float mscr = max_scroll_px();
+    if (mscr > 1.0f) {
+        const int sbx = g.W - 14;
+        const int sb_h = std::max(40, vh - DOCK_CLEAR);
+        g.rc_sb_track = Rect{ g.W - 26, top_y + 6, 24, sb_h };
+        const int th = g.rc_sb_track.h;
+        const int thumb_h = std::min(th, std::max(38, static_cast<int>(static_cast<float>(vh) / static_cast<float>(vh + mscr) * static_cast<float>(th))));
+        const int ty = g.rc_sb_track.y + static_cast<int>((g.scroll_px / mscr) * static_cast<float>(th - thumb_h));
+        fill_round_rect_aa(s, sbx, g.rc_sb_track.y, 6, th, 3, g.C_TRACK_BG);
+        fill_round_rect_aa(s, sbx, ty, 6, thumb_h, 3, g.sb_drag ? g.C_ACCENT : g.C_TXT3);
+    }
+}
+
+void draw_qr_modal(int mx, int my) {
+    PluginQrState qr = plugin_get_qr_state();
+    if (!qr.active) return;
+    Canvas* s = g.screen.get();
+    Font* f = g.font.get();
+    fill_rect_a(s, 0, 0, g.W, g.H, COL(8, 10, 14, 255), 140);
+    constexpr int mw = 340, mh = 396;
+    const int x = (g.W - mw) / 2, y = (g.H - mh) / 2;
+    fill_round_rect_shadow(s, x, y + 8, mw, mh, 20, 140);
+    fill_frosted_round_rect(s, x, y, mw, mh, 20, g.C_SURFACE, 232, 4, glass_rim(96, 235));
+    stroke_round_rect_aa(s, x, y, mw, mh, 20, 1, g.C_ACCENT, 130);
+    draw_text_centered_bold(s, f, 16.5f, x, x + mw, y + 20, g.C_TXT, "扩展账号扫码登录");
+
+    constexpr int box_sz = 208;
+    const int bx = x + (mw - box_sz) / 2;
+    const int by = y + 58;
+    fill_round_rect_aa(s, bx, by, box_sz, box_sz, 14, COL(255, 255, 255, 255));
+    if (qr.qr_size > 0 && static_cast<int>(qr.modules.size()) == qr.qr_size * qr.qr_size) {
+        const int pad = 12;
+        const int inner = box_sz - pad * 2;
+        const int cell = std::max(2, inner / qr.qr_size);
+        const int tot = cell * qr.qr_size;
+        const int qx0 = bx + (box_sz - tot) / 2;
+        const int qy0 = by + (box_sz - tot) / 2;
+        for (int r = 0; r < qr.qr_size; ++r) {
+            for (int c = 0; c < qr.qr_size; ++c) {
+                if (qr.modules[static_cast<size_t>(r) * qr.qr_size + c]) {
+                    fill_rect(s, qx0 + c * cell, qy0 + r * cell, cell, cell, COL(18, 22, 28, 255));
+                }
+            }
+        }
+    } else {
+        draw_text_centered_bold(s, f, 13.0f, bx, bx + box_sz, by + 94, COL(60, 68, 80, 255), "正在生成...");
+    }
+
+    draw_text_centered_bold(s, f, 13.0f, x + 20, x + mw - 20, y + 286,
+                            qr.status == "error" ? g.C_HEART : g.C_TXT2, qr.message.c_str());
+
+    g.rc_plg_qr_close = Rect{ x + (mw - 108) / 2, y + 332, 108, 36 };
+    const bool hov = in_rc(mx, my, g.rc_plg_qr_close);
+    fill_round_rect_aa(s, g.rc_plg_qr_close.x, g.rc_plg_qr_close.y, 108, 36, 18,
+                       hov ? mix_col(g.C_ACCENT, COL(255, 255, 255, 255), 0.14f) : g.C_ACCENT);
+    draw_text_centered_bold(s, f, 13.5f, g.rc_plg_qr_close.x, g.rc_plg_qr_close.x + 108,
+                            g.rc_plg_qr_close.y + 8, g.C_ON_ACCENT, "关闭");
+}
+
 void handle_text_input_events() {
     char ch[32]{};
     int act = 0;
     bool changed = false;
+    bool submitted = false;
     while (be_poll_text_char(ch, sizeof(ch), &act)) {
+        if (g.cfg_editing) {
+            if (act == 1) {
+                if (!g.cfg_edit_val.empty()) pop_utf8_cp(g.cfg_edit_val);
+            } else if (act == 2) {
+                plugin_set_config(g.cfg_edit_pid, g.cfg_edit_key, g.cfg_edit_val);
+                g.cfg_editing = 0;
+                g.plg_list = plugin_list();
+                be_text_input(0);
+                show_toast("已保存扩展配置");
+            } else if (act == 3) {
+                g.cfg_editing = 0;
+                be_text_input(0);
+            } else if (act == 0 && ch[0]) {
+                if (g.cfg_edit_val.size() + std::strlen(ch) < 256) g.cfg_edit_val += ch;
+            }
+            continue;
+        }
         if (act == 1) {
             if (!g.search_q.empty()) { pop_utf8_cp(g.search_q); changed = true; }
-        } else if (act == 2 || act == 3) {
+        } else if (act == 2) {
+            submitted = true;
+            g.search_focused = 0;
+            be_text_input(0);
+        } else if (act == 3) {
             g.search_focused = 0;
             be_text_input(0);
         } else if (act == 0 && ch[0]) {
@@ -2966,14 +3556,17 @@ void handle_text_input_events() {
             }
         }
     }
-    if (changed) {
+    if (changed && g.page == PAGE_LIBRARY) {
         rebuild_visible();
         g.scroll_px = g.scroll_target = 0.0f;
+    }
+    if (submitted && g.page == PAGE_PLUGINS && !g.active_plugin_id.empty()) {
+        plugin_async_search(g.active_plugin_id, g.search_q, 1);
     }
 }
 
 void toggle_play_pause_action() {
-    if (g.playing_idx >= 0) {
+    if (g.playing_idx >= 0 || g.playing_online) {
         if (audio_paused()) audio_resume();
         else audio_pause();
     } else if (!g.vis_idx.empty()) {
@@ -2984,6 +3577,10 @@ void toggle_play_pause_action() {
 }
 
 void update_hover_cursor(int mx, int my) {
+    if (in_rc(mx, my, g.rc_plg_qr_close)) {
+        if (!g.ui_cursor_hand) { g.ui_cursor_hand = 1; be_set_cursor(1); }
+        return;
+    }
     bool hand = in_rc(mx, my, g.rc_bar_fav) || in_rc(mx, my, g.rc_bar_prev) || in_rc(mx, my, g.rc_bar_play) ||
                 in_rc(mx, my, g.rc_bar_next) || in_rc(mx, my, g.rc_bar_mode) || in_rc(mx, my, g.rc_bar_lyr) ||
                 in_rc(mx, my, g.rc_bar_cov) || in_rc(mx, my, g.rc_bar_vol_ico) || in_rc(mx, my, g.rc_bar_vol_trk) ||
@@ -2995,14 +3592,18 @@ void update_hover_cursor(int mx, int my) {
     } else if (!hand) {
         if (in_rc(mx, my, g.rc_search_box) || in_rc(mx, my, g.rc_search_clear) ||
             in_rc(mx, my, g.rc_nav_all) || in_rc(mx, my, g.rc_nav_fav) || in_rc(mx, my, g.rc_nav_lyr) ||
-            in_rc(mx, my, g.rc_nav_rescan) || in_rc(mx, my, g.rc_nav_set) || in_rc(mx, my, g.rc_nav_add) ||
-            in_rc(mx, my, g.rc_nav_bg) || in_rc(mx, my, g.rc_nav_theme) || in_rc(mx, my, g.rc_sb_track)) {
+            in_rc(mx, my, g.rc_nav_plg) || in_rc(mx, my, g.rc_nav_rescan) || in_rc(mx, my, g.rc_nav_set) ||
+            in_rc(mx, my, g.rc_nav_add) || in_rc(mx, my, g.rc_nav_bg) || in_rc(mx, my, g.rc_nav_theme) ||
+            in_rc(mx, my, g.rc_sb_track)) {
             hand = true;
         }
         for (const auto& dr : g.rc_dir_rows) if (!hand && in_rc(mx, my, dr.rc)) hand = true;
         if (!hand && g.page == PAGE_SETTINGS) {
             if (in_rc(mx, my, g.rc_set_back)) hand = true;
             for (const auto& sh : g.set_hits) if (!hand && in_rc(mx, my, sh.rc)) hand = true;
+        } else if (!hand && g.page == PAGE_PLUGINS) {
+            if (in_rc(mx, my, g.rc_plg_back)) hand = true;
+            for (const auto& ph : g.plg_hits) if (!hand && in_rc(mx, my, ph.rc)) hand = true;
         } else if (!hand) {
             if (in_rc(mx, my, g.rc_sort_btn) || in_rc(mx, my, g.rc_view_pill) || in_rc(mx, my, g.rc_bg_btn) ||
                 in_rc(mx, my, g.rc_bg_clear) || in_rc(mx, my, g.rc_fs_btn) ||
@@ -3037,7 +3638,7 @@ void handle_input() {
     while ((dp = be_poll_dropped_path()) != nullptr) handle_dropped(dp);
 
     handle_text_input_events();
-    if (!g.search_q.empty() && g.search_focused && g.page != PAGE_LIBRARY) {
+    if (!g.search_q.empty() && g.search_focused && g.page != PAGE_LIBRARY && g.page != PAGE_PLUGINS) {
         g.page = PAGE_LIBRARY;
     }
 
@@ -3088,6 +3689,17 @@ void handle_input() {
         g.scroll_vel = 0.0f;
         g.lyr_scroll_vel = 0.0f;
 
+        if (plugin_get_qr_state().active) {
+            if (in_rc(ti.x, ti.y, g.rc_plg_qr_close)) plugin_qr_close();
+            return;
+        }
+        if (g.cfg_editing) {
+            plugin_set_config(g.cfg_edit_pid, g.cfg_edit_key, g.cfg_edit_val);
+            g.cfg_editing = 0;
+            g.plg_list = plugin_list();
+            be_text_input(0);
+        }
+
         if (g.search_focused && !in_rc(ti.x, ti.y, g.rc_search_box)) {
             g.search_focused = 0;
             be_text_input(0);
@@ -3101,7 +3713,7 @@ void handle_input() {
                 return;
             }
             if (in_rc(ti.x, ti.y, g.rc_search_box)) {
-                if (g.page != PAGE_LIBRARY) { capture_fade(); g.page = PAGE_LIBRARY; }
+                if (g.page != PAGE_LIBRARY && g.page != PAGE_PLUGINS) { capture_fade(); g.page = PAGE_LIBRARY; }
                 g.search_focused = 1;
                 be_text_input(1);
                 return;
@@ -3123,7 +3735,7 @@ void handle_input() {
             if (f > 0.02f) g.saved_vol = f;
             return;
         }
-        if (in_rc(ti.x, ti.y, g.rc_bar_prog) && g.playing_idx >= 0 && g.ui_px1 > g.ui_px0) {
+        if (in_rc(ti.x, ti.y, g.rc_bar_prog) && (g.playing_idx >= 0 || g.playing_online) && g.ui_px1 > g.ui_px0) {
             const double dur = audio_duration();
             if (dur > 0.1) {
                 g.scrub_drag = 1;
@@ -3133,9 +3745,29 @@ void handle_input() {
             return;
         }
         if (in_rc(ti.x, ti.y, g.rc_bar_fav))  { if (g.playing_idx >= 0) toggle_fav(g.playing_idx); return; }
-        if (in_rc(ti.x, ti.y, g.rc_bar_prev)) { if (!g.tracks.empty()) load_track(pick_prev(g.playing_idx)); return; }
+        if (in_rc(ti.x, ti.y, g.rc_bar_prev)) {
+            if (g.playing_online && !g.plg_snap.tracks.empty()) {
+                int np = (g.online_play_pos > 0) ? (g.online_play_pos - 1) : (static_cast<int>(g.plg_snap.tracks.size()) - 1);
+                g.online_play_pos = np;
+                plugin_async_play_track(g.plg_snap.tracks[np].plugin_id, g.plg_snap.tracks[np]);
+                show_toast("正在缓冲上一首在线曲目...");
+            } else if (!g.tracks.empty()) {
+                load_track(pick_prev(g.playing_idx));
+            }
+            return;
+        }
         if (in_rc(ti.x, ti.y, g.rc_bar_play)) { toggle_play_pause_action(); return; }
-        if (in_rc(ti.x, ti.y, g.rc_bar_next)) { if (!g.tracks.empty()) load_track(pick_next(g.playing_idx, 1)); return; }
+        if (in_rc(ti.x, ti.y, g.rc_bar_next)) {
+            if (g.playing_online && !g.plg_snap.tracks.empty()) {
+                int np = (g.online_play_pos + 1) % static_cast<int>(g.plg_snap.tracks.size());
+                g.online_play_pos = np;
+                plugin_async_play_track(g.plg_snap.tracks[np].plugin_id, g.plg_snap.tracks[np]);
+                show_toast("正在缓冲下一首在线曲目...");
+            } else if (!g.tracks.empty()) {
+                load_track(pick_next(g.playing_idx, 1));
+            }
+            return;
+        }
         if (in_rc(ti.x, ti.y, g.rc_bar_mode)) {
             g.play_mode = (g.play_mode + 1) % 3;
             save_settings();
@@ -3178,6 +3810,18 @@ void handle_input() {
             g.lib_tab = TAB_FAV; rebuild_visible(); g.scroll_px = g.scroll_target = g.scroll_vel = 0.0f; return;
         }
         if (in_rc(ti.x, ti.y, g.rc_nav_lyr)) { capture_fade(); g.page = PAGE_LYRICS; return; }
+        if (in_rc(ti.x, ti.y, g.rc_nav_plg)) {
+            capture_fade();
+            g.plg_list = plugin_list();
+            if (g.active_plugin_id.empty()) g.active_plugin_id = plugin_default_id();
+            g.page = PAGE_PLUGINS;
+            if (g.plg_list.empty()) g.plg_subtab = 1;
+            else if (g.plg_snap.playlists.empty() && g.plg_snap.tracks.empty() && !g.active_plugin_id.empty()) {
+                plugin_async_home(g.active_plugin_id);
+            }
+            g.scroll_px = g.scroll_target = g.scroll_vel = 0.0f;
+            return;
+        }
         if (in_rc(ti.x, ti.y, g.rc_nav_rescan)) { scan_library(1); return; }
         if (in_rc(ti.x, ti.y, g.rc_nav_set)) {
             capture_fade();
@@ -3194,6 +3838,109 @@ void handle_input() {
         }
         if (in_rc(ti.x, ti.y, g.rc_nav_bg))    { pick_bg_image_action(); return; }
         if (in_rc(ti.x, ti.y, g.rc_nav_theme)) { toggle_theme_smooth(); return; }
+
+        if (g.page == PAGE_PLUGINS) {
+            if (in_rc(ti.x, ti.y, g.rc_plg_back)) {
+                capture_fade(); g.page = PAGE_LIBRARY; g.scroll_px = g.scroll_target = g.scroll_vel = 0.0f; return;
+            }
+            for (size_t hi = 0; hi < g.plg_hits.size(); ++hi) {
+                const auto& ph = g.plg_hits[hi];
+                if (!in_rc(ti.x, ti.y, ph.rc)) continue;
+                const std::string& hkey = (hi < g.plg_hit_keys.size()) ? g.plg_hit_keys[hi] : std::string();
+                switch (ph.id) {
+                case PLG_TAB_BROWSE:
+                    g.plg_subtab = 0; g.scroll_px = g.scroll_target = g.scroll_vel = 0.0f; return;
+                case PLG_TAB_MANAGE:
+                    g.plg_list = plugin_list();
+                    g.plg_subtab = 1; g.scroll_px = g.scroll_target = g.scroll_vel = 0.0f; return;
+                case PLG_RESCAN:
+                    plugin_rescan();
+                    g.plg_list = plugin_list();
+                    if (g.active_plugin_id.empty()) g.active_plugin_id = plugin_default_id();
+                    show_toast("已重新扫描扩展目录");
+                    return;
+                case PLG_CLEAR_CACHE: {
+                    int n = plugin_clear_cache();
+                    char buf[64]{};
+                    std::snprintf(buf, sizeof(buf), "已清理 %d 个在线缓存文件", n);
+                    show_toast(buf);
+                    return;
+                }
+                case PLG_SELECT:
+                    g.active_plugin_id = hkey;
+                    plugin_async_home(hkey);
+                    return;
+                case PLG_TOGGLE:
+                    if (ph.arg >= 0 && ph.arg < static_cast<int>(g.plg_list.size())) {
+                        plugin_set_enabled(hkey, !g.plg_list[ph.arg].enabled);
+                        g.plg_list = plugin_list();
+                        if (g.active_plugin_id.empty()) g.active_plugin_id = plugin_default_id();
+                    }
+                    return;
+                case PLG_LOGIN:
+                    plugin_qr_start(hkey);
+                    g.qr_poll_timer = 1.0f;
+                    return;
+                case PLG_LOGOUT:
+                    plugin_logout(hkey);
+                    g.plg_list = plugin_list();
+                    show_toast("已退出扩展账号");
+                    return;
+                case PLG_REMOVE:
+                    if (plugin_remove(hkey)) {
+                        g.plg_list = plugin_list();
+                        if (g.active_plugin_id == hkey) g.active_plugin_id = plugin_default_id();
+                        show_toast("已移除扩展插件");
+                    }
+                    return;
+                case PLG_HOME:
+                    plugin_async_home(hkey);
+                    return;
+                case PLG_SEARCH_GO:
+                    plugin_async_search(hkey, g.search_q, 1);
+                    return;
+                case PLG_PLAYLIST:
+                    plugin_async_playlist_tracks(g.active_plugin_id, hkey);
+                    return;
+                case PLG_TRACK:
+                    if (ph.arg >= 0 && ph.arg < static_cast<int>(g.plg_snap.tracks.size())) {
+                        g.online_play_pos = ph.arg;
+                        plugin_async_play_track(g.plg_snap.tracks[ph.arg].plugin_id, g.plg_snap.tracks[ph.arg]);
+                        show_toast("正在缓冲在线音轨...");
+                    }
+                    return;
+                case PLG_CFG_EDIT: {
+                    auto nl = hkey.find('\n');
+                    if (nl != std::string::npos && ph.arg >= 0 && ph.arg < static_cast<int>(g.plg_list.size())) {
+                        g.cfg_edit_pid = hkey.substr(0, nl);
+                        g.cfg_edit_key = hkey.substr(nl + 1);
+                        g.cfg_edit_val.clear();
+                        for (const auto& cf : g.plg_list[ph.arg].config_fields) {
+                            if (cf.key == g.cfg_edit_key) { g.cfg_edit_val = cf.value; break; }
+                        }
+                        g.cfg_editing = 1;
+                        be_text_input(1);
+                    }
+                    return;
+                }
+                default: break;
+                }
+            }
+            if (in_rc(ti.x, ti.y, g.rc_sb_track)) {
+                g.sb_drag = 1;
+                g.drag_mode = DRAG_SB;
+                const float f = clampf(static_cast<float>(ti.y - g.rc_sb_track.y) / static_cast<float>(g.rc_sb_track.h), 0.0f, 1.0f);
+                g.scroll_target = g.scroll_px = f * max_scroll_px();
+                return;
+            }
+            if (in_rect(ti.x, ti.y, g.ui_list_x0, g.ui_list_y0, g.ui_list_x1 - g.ui_list_x0, g.ui_list_y1 - g.ui_list_y0)) {
+                g.drag_mode = DRAG_LIST;
+                g.drag_start_x = ti.x; g.drag_start_y = ti.y; g.drag_moved = 0;
+                g.drag_cand_track = -1; g.drag_cand_fav = 0; g.drag_cand_hero = 0;
+                g.scroll_target = g.scroll_px;
+            }
+            return;
+        }
 
         if (g.page == PAGE_SETTINGS) {
             if (in_rc(ti.x, ti.y, g.rc_set_back)) {
@@ -3463,9 +4210,15 @@ void render_frame(int mx, int my) {
         draw_nav_rail(mx, my);
         draw_settings_view(mx, my);
         draw_player_bar(mx, my);
+    } else if (g.page == PAGE_PLUGINS) {
+        draw_frosted_ambient_bg(0);
+        draw_nav_rail(mx, my);
+        draw_plugins_view(mx, my);
+        draw_player_bar(mx, my);
     } else {
         draw_immersive_view(mx, my);
     }
+    draw_qr_modal(mx, my);
 
     if (g.toast_timer > 0 && !g.toast_text.empty()) {
         Canvas* s = g.screen.get();
@@ -3531,6 +4284,9 @@ int main(int argc, char** argv) {
 
     load_settings();
     load_dirs_cfg();
+    plugin_init(be_config_dir());
+    g.plg_list = plugin_list();
+    g.active_plugin_id = plugin_default_id();
     step_palette_and_ambient();
     scan_library(0);
     for (int i = 0; i < 16 && i < static_cast<int>(g.vis_idx.size()); ++i) {
@@ -3561,7 +4317,40 @@ int main(int argc, char** argv) {
         sync_canvas_to_window();
         audio_pump();
 
-        if (audio_finished() && !g.tracks.empty()) load_track(pick_next(g.playing_idx, 0));
+        if (audio_finished()) {
+            if (g.playing_online && !g.plg_snap.tracks.empty()) {
+                int np = (g.play_mode == MODE_LOOP_ONE && g.online_play_pos >= 0)
+                         ? g.online_play_pos
+                         : ((g.online_play_pos + 1) % static_cast<int>(g.plg_snap.tracks.size()));
+                g.online_play_pos = np;
+                plugin_async_play_track(g.plg_snap.tracks[np].plugin_id, g.plg_snap.tracks[np]);
+            } else if (!g.tracks.empty()) {
+                load_track(pick_next(g.playing_idx, 0));
+            }
+        }
+
+        {
+            bool gp = false, gt = false, go = false;
+            plugin_poll_updates(g.plg_snap, gp, gt, go);
+            (void)gp; (void)gt;
+            if (g.plg_snap.plugins_updated) {
+                g.plg_list = plugin_list();
+                if (g.active_plugin_id.empty()) g.active_plugin_id = plugin_default_id();
+            }
+            if (!g.plg_snap.status_toast.empty()) {
+                show_toast(g.plg_snap.status_toast.c_str());
+                g.plg_snap.status_toast.clear();
+            }
+            if (go) play_online_ready(g.plg_snap.ready_play);
+            PluginQrState qrs = plugin_get_qr_state();
+            if (qrs.active && (qrs.status == "waiting" || qrs.status == "scanned")) {
+                g.qr_poll_timer -= static_cast<float>(g.dt);
+                if (g.qr_poll_timer <= 0.0f) {
+                    g.qr_poll_timer = 1.5f;
+                    plugin_qr_poll();
+                }
+            }
+        }
 
         if (g.lyr_req_id > 0) {
             Lyrics* ol = nullptr;
@@ -3581,7 +4370,7 @@ int main(int argc, char** argv) {
         const float k_bar = 1.0f - std::exp(-14.0f * static_cast<float>(g.dt));
         for (int i = 0; i < 28; ++i) g.bars[i] += (live_bars[i] - g.bars[i]) * k_bar;
 
-        const bool playing_active = (g.playing_idx >= 0 && !audio_paused());
+        const bool playing_active = ((g.playing_idx >= 0 || g.playing_online) && !audio_paused());
         g.wave_phase  += static_cast<float>(g.dt) * (playing_active ? 2.6f : 0.45f);
         g.ambient_t   += static_cast<float>(g.dt) * (playing_active ? 0.48f : 0.14f);
         g.scallop_rot += static_cast<float>(g.dt) * (playing_active ? 0.50f : 0.08f);
@@ -3678,10 +4467,10 @@ int main(int argc, char** argv) {
         handle_input();
         sync_canvas_to_window();
 
-        const double cur_dur = (g.playing_idx >= 0) ? audio_duration() : 0.0;
-        const double cur_pos = (g.playing_idx >= 0) ? (g.scrub_drag ? g.scrub_sec : audio_position()) : 0.0;
+        const double cur_dur = (g.playing_idx >= 0 || g.playing_online) ? audio_duration() : 0.0;
+        const double cur_pos = (g.playing_idx >= 0 || g.playing_online) ? (g.scrub_drag ? g.scrub_sec : audio_position()) : 0.0;
         const float cur_frac = (cur_dur > 0.1) ? clampf(static_cast<float>(cur_pos / cur_dur), 0.0f, 1.0f) : 0.0f;
-        be_set_media_state(g.playing_idx >= 0, g.playing_idx >= 0 && !audio_paused(), cur_frac,
+        be_set_media_state(g.playing_idx >= 0 || g.playing_online, (g.playing_idx >= 0 || g.playing_online) && !audio_paused(), cur_frac,
                            g.p_title.c_str(), g.p_artist.c_str());
 
         if (!be_is_minimized()) {
@@ -3712,6 +4501,7 @@ int main(int argc, char** argv) {
         }
     }
 
+    plugin_shutdown();
     g.tracks.clear();
     g.meta.clear();
     g.lyr.reset();

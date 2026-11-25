@@ -1,6 +1,6 @@
 CC ?= gcc
 CXX ?= g++
-COMMON_FLAGS := -O3 -fno-math-errno -Wall -Wextra -Isrc -Ideps
+COMMON_FLAGS := -O3 -fno-math-errno -Wall -Wextra -Isrc -Ideps -Idesktop_deps/lua -Idesktop_deps/qr
 
 C_SRCS := \
 	src/audio.c \
@@ -9,7 +9,8 @@ C_SRCS := \
 	src/draw_text.c \
 	src/lrc.c \
 	src/meta.c \
-	src/util.c
+	src/util.c \
+	desktop_src/desktop_lua.c
 
 S_SRCS := desktop_src/desktop_blobs.S
 
@@ -18,18 +19,18 @@ UNAME_S := $(shell uname -s 2>/dev/null || echo Windows)
 ifeq ($(OS),Windows_NT)
 	TARGET := Sirene.exe
 	WINDRES ?= windres
-	CXX_SRCS := desktop_src/desktop_main.cpp desktop_src/desktop_win.cpp
+	CXX_SRCS := desktop_src/desktop_main.cpp desktop_src/desktop_plugin.cpp desktop_src/desktop_win.cpp
 	RES_OBJ := desktop_src/sirene_res.o
 	LDFLAGS := -static -static-libgcc -static-libstdc++ -mwindows -lgdi32 -luser32 -lshell32 -lole32 -lcomdlg32 -lwinmm -luuid -lm
 else ifeq ($(findstring MINGW,$(UNAME_S)),MINGW)
 	TARGET := Sirene.exe
 	WINDRES ?= windres
-	CXX_SRCS := desktop_src/desktop_main.cpp desktop_src/desktop_win.cpp
+	CXX_SRCS := desktop_src/desktop_main.cpp desktop_src/desktop_plugin.cpp desktop_src/desktop_win.cpp
 	RES_OBJ := desktop_src/sirene_res.o
 	LDFLAGS := -static -static-libgcc -static-libstdc++ -mwindows -lgdi32 -luser32 -lshell32 -lole32 -lcomdlg32 -lwinmm -luuid -lm
 else ifeq ($(UNAME_S),Darwin)
 	TARGET := Sirene
-	CXX_SRCS := desktop_src/desktop_main.cpp desktop_src/desktop_sdl.cpp
+	CXX_SRCS := desktop_src/desktop_main.cpp desktop_src/desktop_plugin.cpp desktop_src/desktop_sdl.cpp
 	RES_OBJ :=
 	SDL_PREFIX := $(shell brew --prefix sdl2 2>/dev/null || echo /opt/homebrew/opt/sdl2)
 	COMMON_FLAGS += -I$(SDL_PREFIX)/include -I$(SDL_PREFIX)/include/SDL2 -D_THREAD_SAFE
@@ -41,7 +42,7 @@ else ifeq ($(UNAME_S),Darwin)
 	endif
 else
 	TARGET := Sirene
-	CXX_SRCS := desktop_src/desktop_main.cpp desktop_src/desktop_sdl.cpp
+	CXX_SRCS := desktop_src/desktop_main.cpp desktop_src/desktop_plugin.cpp desktop_src/desktop_sdl.cpp
 	RES_OBJ :=
 	COMMON_FLAGS += $(shell pkg-config --cflags sdl2 2>/dev/null || echo -I/usr/include/SDL2) -D_REENTRANT
 	LDFLAGS := $(shell pkg-config --libs sdl2 2>/dev/null || echo -lSDL2) -lpthread -lm -ldl
@@ -55,6 +56,9 @@ OBJS := $(C_SRCS:.c=.o) $(CXX_SRCS:.cpp=.o) $(S_SRCS:.S=.o) $(RES_OBJ)
 all: $(TARGET)
 
 src/%.o: src/%.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+desktop_src/%.o: desktop_src/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 desktop_src/%.o: desktop_src/%.cpp
