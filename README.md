@@ -5,7 +5,7 @@
 <h1 align="center">Sirène · 跨平台本地音频播放器（C++17 桌面学习版 v1.2.6）</h1>
 
 <p align="center">
-  <b>Windows · Linux · macOS（C++17 原生桌面播放器 × HiDPI 物理像素渲染）</b><br/>
+  <b>Windows · Linux · macOS（C++17 原生桌面播放器 × HiDPI 物理像素渲染）· Switch (Homebrew `.nro`)</b><br/>
   <b>半透明毛玻璃层级 × 自定义壁纸背景 × Segoe UI / 雅黑锐利排版 × 本地与在线双语歌词</b><br/>
   <b>支持本地 MP3 / FLAC / WAV / OGG / AIFF / M4A / AAC / MP4 / ALAC / OPUS / WMA / CAF</b>
 </p>
@@ -28,13 +28,14 @@
 | :---: | :---: |
 | ![桌面设置页](previews/desktop_set.png) | ![桌面沉浸歌词](previews/desktop_full.png) |
 
-## 多平台桌面版本（C++17 · v1.2.6）
+## 支持平台与版本（v1.2.6）
 
-| 平台 | 产物文件名 | 渲染与音频后端（C++17） | 交互与桌面特性亮点 |
+| 平台 | 产物文件名 | 渲染与音频后端 | 交互与特性亮点 |
 |---|---|---|---|
 | **Windows x64** | `Sirene-v1.2.6-Windows-x64.exe` | C++17 + Win32 GDI 原生物理像素（DPI V2）+ WinMM + Media Foundation | 缩放/全屏/高分屏 1:1 物理像素锐利渲染；`Segoe UI` + `Microsoft YaHei UI` 原生清晰排版；支持触控惯性滚动、桌面快捷方式自动创建、**任务栏悬停缩略图播控栏（上一首 / 播放·暂停 / 下一首）**、UTF-16 拖放、M4A/AAC/MP4/ALAC/OPUS/WMA 解码 |
 | **Linux x86_64** | `Sirene-v1.2.6-Linux-x86_64.tar.gz` | C++17 + SDL2 HiDPI + SDL2 Audio + FFmpeg 管道 | 原生 HiDPI 渲染、`SDL_SetWindowIcon` 图标、支持常见有损/无损音频格式 |
 | **macOS Apple Silicon** | `Sirene-v1.2.6-macOS-arm64.zip` | C++17 + SDL2 Retina + SDL2 Audio + AudioToolbox | 独立 `Sirène.app`（Retina 物理像素锐利渲染 + CoreAudio 原生解码） |
+| **Switch (Homebrew `.nro`)** | `Sirene-v1.2.6-Switch.nro` | C + `libnx` + SDL2 + `dr_libs` | 纯开源自制程序环境运行（无任何官方 SDK）；支持 1080p/720p 渲染、触屏与手柄按键控制、本地无损解码与 `.lrc` 歌词 |
 
 ## 核心学习与实现特性（v1.2.6）
 
