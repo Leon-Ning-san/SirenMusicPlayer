@@ -39,6 +39,7 @@ typedef struct {
     Glyph g[GLYPH_CACHE_PER_SIZE];
 #ifdef _WIN32
     HFONT hfont;
+    HFONT hfont_en;
     HFONT hfont_jp;
 #endif
 } Bucket;
@@ -104,18 +105,21 @@ static int raster_glyph_win(Bucket* b, Glyph* g, uint32_t cp) {
     if (!hdc) return 0;
 
     WCHAR wch = (WCHAR)cp;
-    HFONT use_font = b->hfont;
+    HFONT use_font = (cp < 0x0250u && b->hfont_en) ? b->hfont_en : b->hfont;
     HGDIOBJ old = SelectObject(hdc, use_font);
 
     WORD gi = 0xFFFF;
     if (GetGlyphIndicesW(hdc, &wch, 1, &gi, GGI_MARK_NONEXISTING_GLYPHS) == GDI_ERROR || gi == 0xFFFF) {
-        if (b->hfont_jp) {
+        int found = 0;
+        if (use_font != b->hfont && b->hfont) {
+            SelectObject(hdc, b->hfont);
+            if (GetGlyphIndicesW(hdc, &wch, 1, &gi, GGI_MARK_NONEXISTING_GLYPHS) != GDI_ERROR && gi != 0xFFFF) found = 1;
+        }
+        if (!found && b->hfont_jp) {
             SelectObject(hdc, b->hfont_jp);
-            if (GetGlyphIndicesW(hdc, &wch, 1, &gi, GGI_MARK_NONEXISTING_GLYPHS) == GDI_ERROR || gi == 0xFFFF) {
-                SelectObject(hdc, old);
-                return 0;
-            }
-        } else {
+            if (GetGlyphIndicesW(hdc, &wch, 1, &gi, GGI_MARK_NONEXISTING_GLYPHS) != GDI_ERROR && gi != 0xFFFF) found = 1;
+        }
+        if (!found) {
             SelectObject(hdc, old);
             return 0;
         }
@@ -176,6 +180,7 @@ static void bucket_destroy(Bucket* b) {
     for (int j = 0; j < b->used; j++) free(b->g[j].bmp);
 #ifdef _WIN32
     if (b->hfont) DeleteObject(b->hfont);
+    if (b->hfont_en) DeleteObject(b->hfont_en);
     if (b->hfont_jp) DeleteObject(b->hfont_jp);
 #endif
     free(b);
@@ -222,6 +227,9 @@ static Bucket* get_bucket_ex(Font* f, int px, int bold) {
         b->hfont = CreateFontW(-px, 0, 0, 0, weight, FALSE, FALSE, FALSE,
                                DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
                                ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Microsoft YaHei UI");
+        b->hfont_en = CreateFontW(-px, 0, 0, 0, weight, FALSE, FALSE, FALSE,
+                                  DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                  ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
         b->hfont_jp = CreateFontW(-px, 0, 0, 0, weight, FALSE, FALSE, FALSE,
                                   DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
                                   ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Yu Gothic UI");

@@ -1570,7 +1570,7 @@ std::vector<std::string> wrap_utf8_lines(const char* s, float px, int max_w, int
 
 void calc_grid_metrics(int& out_cols, int& out_gap, int& out_cw, int& out_ch) {
     const int avail = std::max(320, g.W - side_w() - 26 * 2 - 20);
-    constexpr int gap = 18;
+    constexpr int gap = 24;
     const int cols = std::clamp((avail + gap) / (168 + gap), 2, 8);
     const int cw = (avail - gap * (cols - 1)) / cols;
     const int ch = cw + 52;
@@ -2073,12 +2073,12 @@ void draw_section_bar(int x, int y, int w, int min_vis_y, int max_vis_y, int mx,
             fill_frosted_round_rect(s, rc.x, rc.y, rc.w, rc.h, 15, mix_col(g.C_SURFACE, g.C_ACCENT, 0.30f),
                                     202, 1, glass_rim(62, 210));
             stroke_round_rect_aa(s, rc.x, rc.y, rc.w, rc.h, 15, 1, g.C_ACCENT, 145);
-            draw_text_centered_bold(s, f, 12.5f, rc.x, rc.x + rc.w, rc.y + 7, g.C_ACCENT, chips[i]);
+            draw_text_centered_bold(s, f, 12.5f, rc.x, rc.x + rc.w, rc.y + 5, g.C_ACCENT, chips[i]);
         } else {
             fill_frosted_round_rect(s, rc.x, rc.y, rc.w, rc.h, 15, g.C_SURFACE,
                                     hov ? 186 : (lt ? 156 : 130), 1, glass_rim(48, 195));
             stroke_round_rect_aa(s, rc.x, rc.y, rc.w, rc.h, 15, 1, g.C_DIV, col_a(g.C_DIV) + 12);
-            draw_text_centered_bold(s, f, 12.5f, rc.x, rc.x + rc.w, rc.y + 7, hov ? g.C_TXT : g.C_TXT2, chips[i]);
+            draw_text_centered_bold(s, f, 12.5f, rc.x, rc.x + rc.w, rc.y + 5, hov ? g.C_TXT : g.C_TXT2, chips[i]);
         }
         cx += chip_w[i] + 8;
     }
@@ -2209,7 +2209,7 @@ void draw_grid_view(int mx, int my) {
         }
 
         const int info_y = cy + cw + 9;
-        draw_text_max_bold(s, f, 14.5f, x + 2, info_y, is_play ? g.C_ACCENT : g.C_TXT, tr.title.c_str(), cw - 4);
+        draw_text_max_bold(s, f, 14.5f, x + 5, info_y, is_play ? g.C_ACCENT : g.C_TXT, tr.title.c_str(), cw - 10);
         if (tr.cached_dur_w < 0 || std::fabs(tr.dur - tr.cached_dur_val) > 0.25) {
             if (tr.dur > 0.5) fmt_time(tr.dur, tr.cached_dur_s, sizeof(tr.cached_dur_s));
             else std::snprintf(tr.cached_dur_s, sizeof(tr.cached_dur_s), "--:--");
@@ -2217,9 +2217,9 @@ void draw_grid_view(int mx, int my) {
             tr.cached_dur_w = text_width_bold(f, 12.0f, tr.cached_dur_s);
         }
         const int dw = tr.cached_dur_w;
-        draw_text_right_bold(s, f, 12.0f, x + cw - 2, info_y + 24, is_play ? g.C_ACCENT : g.C_TXT3, tr.cached_dur_s);
+        draw_text_right_bold(s, f, 12.0f, x + cw - 5, info_y + 24, is_play ? g.C_ACCENT : g.C_TXT3, tr.cached_dur_s);
         const char* sub = !tr.artist.empty() ? tr.artist.c_str() : (!tr.album.empty() ? tr.album.c_str() : tr.fmt);
-        draw_text_max_bold(s, f, 12.5f, x + 2, info_y + 23, g.C_TXT2, sub, cw - 12 - dw);
+        draw_text_max_bold(s, f, 12.5f, x + 5, info_y + 23, g.C_TXT2, sub, cw - 18 - dw);
 
         if (static_cast<int>(g.grid_hits.size()) < MAX_GRID_HITS) {
             Rect hit_card = card_rc;
