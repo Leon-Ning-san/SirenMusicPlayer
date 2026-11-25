@@ -347,6 +347,23 @@ void be_input_update(void) {
                 if (k == SDLK_BACKSPACE) { push_text_ev(1, nullptr); break; }
                 if (k == SDLK_RETURN || k == SDLK_KP_ENTER) { push_text_ev(2, nullptr); break; }
                 if (k == SDLK_ESCAPE) { push_text_ev(3, nullptr); break; }
+                if (ctrl && k == SDLK_v) {
+                    char* clip = SDL_GetClipboardText();
+                    if (clip) {
+                        for (size_t i = 0; clip[i]; ) {
+                            const unsigned char c = static_cast<unsigned char>(clip[i]);
+                            const int len = (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 1;
+                            if (clip[i] != '\r' && clip[i] != '\n') {
+                                char ch[8] = {0};
+                                for (int j = 0; j < len && clip[i + j]; j++) ch[j] = clip[i + j];
+                                push_text_ev(0, ch);
+                            }
+                            i += static_cast<size_t>(len);
+                        }
+                        SDL_free(clip);
+                    }
+                    break;
+                }
                 break;
             }
             if (!ev.key.repeat) {

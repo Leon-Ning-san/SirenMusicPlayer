@@ -12,6 +12,11 @@ struct PluginConfigField {
     std::string value;
 };
 
+struct PluginQrMode {
+    std::string key;
+    std::string label;
+};
+
 struct PluginInfo {
     std::string id;
     std::string name;
@@ -22,6 +27,9 @@ struct PluginInfo {
     bool enabled = true;
     bool valid = false;
     bool supports_login = false;
+    bool supports_cookie_login = false;
+    std::string cookie_hint;
+    std::vector<PluginQrMode> qr_modes;
     bool logged_in = false;
     std::string nickname;
     std::string last_error;
@@ -36,6 +44,8 @@ struct OnlinePlaylist {
     std::string cover_url;
     std::string category;
     int track_count = 0;
+    std::vector<uint32_t> thumb;
+    int thumb_state = 0; // 0=idle, 1=loading, 2=ready, 3=failed
 };
 
 struct OnlineTrack {
@@ -57,6 +67,7 @@ struct OnlineTrack {
 struct PluginQrState {
     bool active = false;
     std::string plugin_id;
+    std::string mode;
     std::string qr_key;
     std::string qr_url;
     std::string status = "idle"; // idle, loading, waiting, scanned, ok, expired, error
@@ -99,11 +110,13 @@ void plugin_async_home(const std::string& plugin_id); // loads playlists + favor
 void plugin_async_playlist_tracks(const std::string& plugin_id, const std::string& playlist_id);
 void plugin_async_play_track(const std::string& plugin_id, const OnlineTrack& track, const std::string& quality = "high");
 void plugin_async_thumb(const std::string& plugin_id, size_t track_list_idx, const std::string& url);
+void plugin_async_playlist_thumb(const std::string& plugin_id, size_t playlist_idx, const std::string& url);
 
-// Async login QR flow
-void plugin_qr_start(const std::string& plugin_id);
+// Async login QR & credential flow
+void plugin_qr_start(const std::string& plugin_id, const std::string& mode = "");
 void plugin_qr_poll();
 void plugin_qr_close();
+void plugin_login_with_cookie(const std::string& plugin_id, const std::string& cookie);
 void plugin_logout(const std::string& plugin_id);
 PluginQrState plugin_get_qr_state();
 

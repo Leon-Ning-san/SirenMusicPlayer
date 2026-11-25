@@ -17,6 +17,7 @@ extern "C" {
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <map>
 #include <mutex>
 #include <queue>
@@ -53,6 +54,7 @@ struct HttpResp {
     int status = 0;
     std::string headers;
     std::string set_cookie;
+    std::string location;
     std::string body;
     std::string error;
 };
@@ -359,11 +361,124 @@ std::string sha256_hex(const std::string& msg) {
     return out;
 }
 
+std::string sha1_hex(const std::string& data) {
+    uint64_t bit_len = static_cast<uint64_t>(data.size()) * 8ULL;
+    std::vector<uint8_t> buf(data.begin(), data.end());
+    buf.push_back(0x80);
+    while (buf.size() % 64 != 56) buf.push_back(0);
+    for (int i = 7; i >= 0; --i) buf.push_back(static_cast<uint8_t>((bit_len >> (i * 8)) & 0xFFu));
+
+    uint32_t h[5] = { 0x67452301u, 0xEFCDAB89u, 0x98BADCFEu, 0x10325476u, 0xC3D2E1F0u };
+    auto rotl = [](uint32_t x, int n) { return (x << n) | (x >> (32 - n)); };
+    for (size_t off = 0; off < buf.size(); off += 64) {
+        uint32_t w[80]{};
+        for (int i = 0; i < 16; ++i) {
+            size_t j = off + static_cast<size_t>(i) * 4;
+            w[i] = (static_cast<uint32_t>(buf[j]) << 24) | (static_cast<uint32_t>(buf[j + 1]) << 16) |
+                   (static_cast<uint32_t>(buf[j + 2]) << 8) | static_cast<uint32_t>(buf[j + 3]);
+        }
+        for (int i = 16; i < 80; ++i) w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+        uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4];
+        for (int i = 0; i < 80; ++i) {
+            uint32_t f = 0, k = 0;
+            if (i < 20)      { f = (b & c) | ((~b) & d); k = 0x5A827999u; }
+            else if (i < 40) { f = b ^ c ^ d;            k = 0x6ED9EBA1u; }
+            else if (i < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8F1BBCDCu; }
+            else             { f = b ^ c ^ d;            k = 0xCA62C1D6u; }
+            uint32_t temp = rotl(a, 5) + f + e + k + w[i];
+            e = d; d = c; c = rotl(b, 30); b = a; a = temp;
+        }
+        h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e;
+    }
+    static const char* hx = "0123456789abcdef";
+    std::string out(40, '0');
+    for (int i = 0; i < 5; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            uint8_t byte = static_cast<uint8_t>((h[i] >> ((3 - j) * 8)) & 0xFFu);
+            out[static_cast<size_t>(i * 8 + j * 2)]     = hx[(byte >> 4) & 0xF];
+            out[static_cast<size_t>(i * 8 + j * 2 + 1)] = hx[byte & 0xF];
+        }
+    }
+    return out;
+}
+
+std::string aes_cbc_encrypt_b64(const std::string& plain, const std::string& key_in, const std::string& iv_in) {
+    static constexpr uint8_t sbox[256] = {
+        0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,
+        0xca,0x82,0xc9,0x7d,0xfa,0x59,0x47,0xf0,0xad,0xd4,0xa2,0xaf,0x9c,0xa4,0x72,0xc0,
+        0xb7,0xfd,0x93,0x26,0x36,0x3f,0xf7,0xcc,0x34,0xa5,0xe5,0xf1,0x71,0xd8,0x31,0x15,
+        0x04,0xc7,0x23,0xc3,0x18,0x96,0x05,0x9a,0x07,0x12,0x80,0xe2,0xeb,0x27,0xb2,0x75,
+        0x09,0x83,0x2c,0x1a,0x1b,0x6e,0x5a,0xa0,0x52,0x3b,0xd6,0xb3,0x29,0xe3,0x2f,0x84,
+        0x53,0xd1,0x00,0xed,0x20,0xfc,0xb1,0x5b,0x6a,0xcb,0xbe,0x39,0x4a,0x4c,0x58,0xcf,
+        0xd0,0xef,0xaa,0xfb,0x43,0x4d,0x33,0x85,0x45,0xf9,0x02,0x7f,0x50,0x3c,0x9f,0xa8,
+        0x51,0xa3,0x40,0x8f,0x92,0x9d,0x38,0xf5,0xbc,0xb6,0xda,0x21,0x10,0xff,0xf3,0xd2,
+        0xcd,0x0c,0x13,0xec,0x5f,0x97,0x44,0x17,0xc4,0xa7,0x7e,0x3d,0x64,0x5d,0x19,0x73,
+        0x60,0x81,0x4f,0xdc,0x22,0x2a,0x90,0x88,0x46,0xee,0xb8,0x14,0xde,0x5e,0x0b,0xdb,
+        0xe0,0x32,0x3a,0x0a,0x49,0x06,0x24,0x5c,0xc2,0xd3,0xac,0x62,0x91,0x95,0xe4,0x79,
+        0xe7,0xc8,0x37,0x6d,0x8d,0xd5,0x4e,0xa9,0x6c,0x56,0xf4,0xea,0x65,0x7a,0xae,0x08,
+        0xba,0x78,0x25,0x2e,0x1c,0xa6,0xb4,0xc6,0xe8,0xdd,0x74,0x1f,0x4b,0xbd,0x8b,0x8a,
+        0x70,0x3e,0xb5,0x66,0x48,0x03,0xf6,0x0e,0x61,0x35,0x57,0xb9,0x86,0xc1,0x1d,0x9e,
+        0xe1,0xf8,0x98,0x11,0x69,0xd9,0x8e,0x94,0x9b,0x1e,0x87,0xe9,0xce,0x55,0x28,0xdf,
+        0x8c,0xa1,0x89,0x0d,0xbf,0xe6,0x42,0x68,0x41,0x99,0x2d,0x0f,0xb0,0x54,0xbb,0x16
+    };
+    static constexpr uint8_t rcon[11] = { 0x00,0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x1b,0x36 };
+    const size_t nk = (key_in.size() >= 32) ? 8 : ((key_in.size() >= 24) ? 6 : 4);
+    const size_t nr = nk + 6;
+    uint8_t rk[240]{};
+    for (size_t i = 0; i < nk * 4 && i < key_in.size(); ++i) rk[i] = static_cast<uint8_t>(key_in[i]);
+    for (size_t i = nk; i < 4 * (nr + 1); ++i) {
+        uint8_t t[4]{ rk[(i - 1) * 4], rk[(i - 1) * 4 + 1], rk[(i - 1) * 4 + 2], rk[(i - 1) * 4 + 3] };
+        if (i % nk == 0) {
+            uint8_t tmp = t[0];
+            t[0] = sbox[t[1]] ^ rcon[i / nk]; t[1] = sbox[t[2]]; t[2] = sbox[t[3]]; t[3] = sbox[tmp];
+        } else if (nk > 6 && (i % nk == 4)) {
+            for (int j = 0; j < 4; ++j) t[j] = sbox[t[j]];
+        }
+        for (int j = 0; j < 4; ++j) rk[i * 4 + j] = rk[(i - nk) * 4 + j] ^ t[j];
+    }
+    auto xtime = [](uint8_t x) -> uint8_t { return static_cast<uint8_t>((x << 1) ^ (((x >> 7) & 1) * 0x1b)); };
+
+    std::vector<uint8_t> data(plain.begin(), plain.end());
+    uint8_t pad = static_cast<uint8_t>(16 - (data.size() % 16));
+    data.insert(data.end(), pad, pad);
+
+    uint8_t iv[16]{};
+    for (size_t i = 0; i < 16 && i < iv_in.size(); ++i) iv[i] = static_cast<uint8_t>(iv_in[i]);
+
+    for (size_t off = 0; off < data.size(); off += 16) {
+        uint8_t st[16];
+        for (int i = 0; i < 16; ++i) st[i] = data[off + i] ^ iv[i];
+        for (int i = 0; i < 16; ++i) st[i] ^= rk[i];
+        for (size_t rnd = 1; rnd <= nr; ++rnd) {
+            for (int i = 0; i < 16; ++i) st[i] = sbox[st[i]];
+            uint8_t tmp = st[1]; st[1] = st[5]; st[5] = st[9]; st[9] = st[13]; st[13] = tmp;
+            std::swap(st[2], st[10]); std::swap(st[6], st[14]);
+            tmp = st[15]; st[15] = st[11]; st[11] = st[7]; st[7] = st[3]; st[3] = tmp;
+            if (rnd < nr) {
+                for (int c = 0; c < 4; ++c) {
+                    int i = c * 4;
+                    uint8_t a = st[i], b = st[i + 1], cc = st[i + 2], d = st[i + 3];
+                    uint8_t xr = a ^ b ^ cc ^ d;
+                    st[i]     ^= xr ^ xtime(a ^ b);
+                    st[i + 1] ^= xr ^ xtime(b ^ cc);
+                    st[i + 2] ^= xr ^ xtime(cc ^ d);
+                    st[i + 3] ^= xr ^ xtime(d ^ a);
+                }
+            }
+            for (int i = 0; i < 16; ++i) st[i] ^= rk[rnd * 16 + i];
+        }
+        std::memcpy(data.data() + off, st, 16);
+        std::memcpy(iv, st, 16);
+    }
+    return base64_encode_bytes(data.data(), data.size());
+}
+
 // ---------------- Cross-Platform HTTP Engine ----------------
 
 HttpResp http_request_sync(const std::string& method, const std::string& url,
                            const std::vector<std::pair<std::string, std::string>>& headers,
-                           const std::string& body) {
+                           const std::string& body,
+                           bool follow_redirects = true) {
     HttpResp res;
     if (url.empty()) { res.error = "empty url"; return res; }
 #ifdef _WIN32
@@ -379,6 +494,7 @@ HttpResp http_request_sync(const std::string& method, const std::string& url,
     typedef BOOL (WINAPI *PFN_WinHttpCloseHandle)(HINTERNET);
     typedef BOOL (WINAPI *PFN_WinHttpSetTimeouts)(HINTERNET, int, int, int, int);
     typedef BOOL (WINAPI *PFN_WinHttpCrackUrl)(LPCWSTR, DWORD, DWORD, LPURL_COMPONENTS);
+    typedef BOOL (WINAPI *PFN_WinHttpSetOption)(HINTERNET, DWORD, LPVOID, DWORD);
 
     HMODULE hMod = GetModuleHandleW(L"winhttp.dll");
     if (!hMod) hMod = LoadLibraryW(L"winhttp.dll");
@@ -396,6 +512,7 @@ HttpResp http_request_sync(const std::string& method, const std::string& url,
     auto pClose   = reinterpret_cast<PFN_WinHttpCloseHandle>(reinterpret_cast<void*>(GetProcAddress(hMod, "WinHttpCloseHandle")));
     auto pTimeout = reinterpret_cast<PFN_WinHttpSetTimeouts>(reinterpret_cast<void*>(GetProcAddress(hMod, "WinHttpSetTimeouts")));
     auto pCrack   = reinterpret_cast<PFN_WinHttpCrackUrl>(reinterpret_cast<void*>(GetProcAddress(hMod, "WinHttpCrackUrl")));
+    auto pSetOpt  = reinterpret_cast<PFN_WinHttpSetOption>(reinterpret_cast<void*>(GetProcAddress(hMod, "WinHttpSetOption")));
     if (!pOpen || !pConn || !pReq || !pSend || !pRecv || !pQryHdr || !pAvail || !pRead || !pClose || !pCrack) {
         res.error = "winhttp symbols missing";
         return res;
@@ -424,6 +541,10 @@ HttpResp http_request_sync(const std::string& method, const std::string& url,
     const DWORD flags = (uc.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
     HINTERNET hReq = pReq(hCon, wmeth.c_str(), wpath[0] ? wpath : L"/", nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
     if (!hReq) { pClose(hCon); pClose(hSes); res.error = "WinHttpOpenRequest failed"; return res; }
+    if (!follow_redirects && pSetOpt) {
+        DWORD dis = WINHTTP_DISABLE_REDIRECTS;
+        pSetOpt(hReq, WINHTTP_OPTION_DISABLE_FEATURE, &dis, sizeof(dis));
+    }
 
     if (pAddHdr && !headers.empty()) {
         std::string hblock;
@@ -465,6 +586,12 @@ HttpResp http_request_sync(const std::string& method, const std::string& url,
                         if (!res.set_cookie.empty()) res.set_cookie += "; ";
                         res.set_cookie += ck;
                     }
+                } else if (line.size() > 9 &&
+                           (line.compare(0, 9, "Location:") == 0 || line.compare(0, 9, "location:") == 0)) {
+                    std::string loc = line.substr(9);
+                    while (!loc.empty() && (loc.front() == ' ' || loc.front() == '\t')) loc.erase(loc.begin());
+                    while (!loc.empty() && (loc.back() == '\r' || loc.back() == '\n')) loc.pop_back();
+                    res.location = loc;
                 }
             }
         }
@@ -491,10 +618,10 @@ HttpResp http_request_sync(const std::string& method, const std::string& url,
     if (has_body) write_file_bytes(tmp_body, body.data(), body.size());
 
     std::vector<std::string> args = {
-        "curl", "-sSL", "--max-time", "20",
-        "-D", tmp_hdr, "-o", tmp_out,
-        "-X", method.empty() ? "GET" : method
+        "curl", "-sS"
     };
+    if (follow_redirects) args.push_back("-L");
+    args.insert(args.end(), { "--max-time", "20", "-D", tmp_hdr, "-o", tmp_out, "-X", method.empty() ? "GET" : method });
     for (const auto& kv : headers) {
         args.push_back("-H");
         args.push_back(kv.first + ": " + kv.second);
@@ -534,6 +661,12 @@ HttpResp http_request_sync(const std::string& method, const std::string& url,
                         if (!res.set_cookie.empty()) res.set_cookie += "; ";
                         res.set_cookie += ck;
                     }
+                } else if (line.size() > 9 &&
+                           (line.compare(0, 9, "Location:") == 0 || line.compare(0, 9, "location:") == 0)) {
+                    std::string loc = line.substr(9);
+                    while (!loc.empty() && (loc.front() == ' ' || loc.front() == '\t')) loc.erase(loc.begin());
+                    while (!loc.empty() && (loc.back() == '\r' || loc.back() == '\n')) loc.pop_back();
+                    res.location = loc;
                 }
             }
             res.ok = (res.status >= 200 && res.status < 400);
@@ -816,6 +949,7 @@ int l_sirene_http(lua_State* L) {
     luaL_checktype(L, 1, LUA_TTABLE);
     std::string method = "GET", url, body;
     std::vector<std::pair<std::string, std::string>> hdrs;
+    bool follow_redirects = true;
 
     lua_getfield(L, 1, "method");
     if (lua_isstring(L, -1)) method = lua_tostring(L, -1);
@@ -823,6 +957,10 @@ int l_sirene_http(lua_State* L) {
 
     lua_getfield(L, 1, "url");
     if (lua_isstring(L, -1)) url = lua_tostring(L, -1);
+    lua_pop(L, 1);
+
+    lua_getfield(L, 1, "follow_redirects");
+    if (lua_isboolean(L, -1)) follow_redirects = (lua_toboolean(L, -1) != 0);
     lua_pop(L, 1);
 
     lua_getfield(L, 1, "body");
@@ -845,7 +983,7 @@ int l_sirene_http(lua_State* L) {
     }
     lua_pop(L, 1);
 
-    HttpResp resp = http_request_sync(method, url, hdrs, body);
+    HttpResp resp = http_request_sync(method, url, hdrs, body, follow_redirects);
     lua_newtable(L);
     lua_pushboolean(L, resp.ok ? 1 : 0);
     lua_setfield(L, -2, "ok");
@@ -855,6 +993,8 @@ int l_sirene_http(lua_State* L) {
     lua_setfield(L, -2, "body");
     lua_pushlstring(L, resp.set_cookie.data(), resp.set_cookie.size());
     lua_setfield(L, -2, "set_cookie");
+    lua_pushlstring(L, resp.location.data(), resp.location.size());
+    lua_setfield(L, -2, "location");
     lua_pushlstring(L, resp.headers.data(), resp.headers.size());
     lua_setfield(L, -2, "headers");
     lua_pushstring(L, resp.error.c_str());
@@ -953,6 +1093,29 @@ int l_sirene_sha256(lua_State* L) {
     return 1;
 }
 
+int l_sirene_sha1(lua_State* L) {
+    size_t len = 0;
+    const char* s = luaL_checklstring(L, 1, &len);
+    std::string h = sha1_hex(std::string(s, len));
+    lua_pushlstring(L, h.data(), h.size());
+    return 1;
+}
+
+int l_sirene_aes_cbc_enc(lua_State* L) {
+    size_t plen = 0, klen = 0, ivlen = 0;
+    const char* p  = luaL_checklstring(L, 1, &plen);
+    const char* k  = luaL_checklstring(L, 2, &klen);
+    const char* iv = luaL_optlstring(L, 3, "", &ivlen);
+    std::string out = aes_cbc_encrypt_b64(std::string(p, plen), std::string(k, klen), std::string(iv, ivlen));
+    lua_pushlstring(L, out.data(), out.size());
+    return 1;
+}
+
+int l_sirene_timestamp(lua_State* L) {
+    lua_pushinteger(L, static_cast<lua_Integer>(std::time(nullptr)));
+    return 1;
+}
+
 int l_sirene_base64_enc(lua_State* L) {
     size_t len = 0;
     const char* s = luaL_checklstring(L, 1, &len);
@@ -1003,10 +1166,13 @@ lua_State* create_sandboxed_vm(PluginEntry* entry, const std::string& script_pat
     lua_pushcfunction(L, l_sirene_http);       lua_setfield(L, -2, "http");
     lua_pushcfunction(L, l_sirene_json_decode); lua_setfield(L, -2, "json_decode");
     lua_pushcfunction(L, l_sirene_json_encode); lua_setfield(L, -2, "json_encode");
-    lua_pushcfunction(L, l_sirene_md5);        lua_setfield(L, -2, "md5");
-    lua_pushcfunction(L, l_sirene_sha256);     lua_setfield(L, -2, "sha256");
-    lua_pushcfunction(L, l_sirene_base64_enc); lua_setfield(L, -2, "base64_encode");
-    lua_pushcfunction(L, l_sirene_base64_dec); lua_setfield(L, -2, "base64_decode");
+    lua_pushcfunction(L, l_sirene_md5);          lua_setfield(L, -2, "md5");
+    lua_pushcfunction(L, l_sirene_sha1);         lua_setfield(L, -2, "sha1");
+    lua_pushcfunction(L, l_sirene_sha256);       lua_setfield(L, -2, "sha256");
+    lua_pushcfunction(L, l_sirene_aes_cbc_enc);  lua_setfield(L, -2, "aes_cbc_encrypt");
+    lua_pushcfunction(L, l_sirene_timestamp);    lua_setfield(L, -2, "timestamp");
+    lua_pushcfunction(L, l_sirene_base64_enc);   lua_setfield(L, -2, "base64_encode");
+    lua_pushcfunction(L, l_sirene_base64_dec);   lua_setfield(L, -2, "base64_decode");
     lua_pushcfunction(L, l_sirene_url_enc);    lua_setfield(L, -2, "url_encode");
 
     lua_pushlightuserdata(L, entry); lua_pushcclosure(L, l_sirene_kv_get, 1); lua_setfield(L, -2, "kv_get");
@@ -1124,6 +1290,28 @@ void inspect_plugin_entry(PluginEntry* entry) {
     entry->info.author = lua_str_field(L, t, "author");
     entry->info.description = lua_str_field(L, t, "description");
     entry->info.supports_login = lua_bool_field(L, t, "supports_login", false);
+    entry->info.supports_cookie_login = lua_bool_field(L, t, "supports_cookie_login", false);
+    entry->info.cookie_hint = lua_str_field(L, t, "cookie_hint", "粘贴凭证 Cookie");
+
+    entry->info.qr_modes.clear();
+    lua_getfield(L, t, "qr_modes");
+    if (lua_istable(L, -1)) {
+        int qm_idx = lua_gettop(L);
+        lua_Integer n = static_cast<lua_Integer>(lua_rawlen(L, qm_idx));
+        for (lua_Integer i = 1; i <= n; ++i) {
+            lua_rawgeti(L, qm_idx, i);
+            if (lua_istable(L, -1)) {
+                int it = lua_gettop(L);
+                PluginQrMode m;
+                m.key = lua_str_field(L, it, "key");
+                if (m.key.empty()) m.key = lua_str_field(L, it, "id");
+                m.label = lua_str_field(L, it, "label", m.key.c_str());
+                if (!m.key.empty()) entry->info.qr_modes.push_back(std::move(m));
+            }
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
 
     entry->info.config_fields.clear();
     lua_getfield(L, t, "config_fields");
@@ -1533,6 +1721,10 @@ void plugin_async_home(const std::string& plugin_id) {
                 g_snap.tracks = std::move(favs);
                 g_snap.active_playlist_name = "我的喜欢 / 推荐";
                 g_got_tracks = true;
+            } else if (!g_snap.tracks.empty() && g_snap.tracks[0].plugin_id != plugin_id) {
+                g_snap.tracks.clear();
+                g_snap.active_playlist_name.clear();
+                g_got_tracks = true;
             }
             g_snap.is_busy = false;
             if (!err.empty()) g_snap.status_toast = err;
@@ -1685,7 +1877,7 @@ void plugin_async_play_track(const std::string& plugin_id, const OnlineTrack& tr
                 else if (play_url.find(".ogg") != std::string::npos) ext = "ogg";
                 else if (play_url.find(".wav") != std::string::npos) ext = "wav";
             }
-            std::string cache_path = g_stream_dir + "/" + safe_id_str(plugin_id) + "_" + hash_hex_str(track.id) + "." + ext;
+            std::string cache_path = g_stream_dir + "/" + safe_id_str(plugin_id) + "_" + hash_hex_str(track.id + "_" + quality) + "." + ext;
             if (!file_exists_nonempty(cache_path)) {
                 HttpResp dl = http_request_sync("GET", play_url, hdrs, "");
                 if (dl.ok && !dl.body.empty()) {
@@ -1722,43 +1914,62 @@ void plugin_async_play_track(const std::string& plugin_id, const OnlineTrack& tr
     }).detach();
 }
 
+static std::vector<uint32_t> load_and_scale_thumb(const std::string& url) {
+    ensure_dir_recursive(g_cover_dir.c_str());
+    std::string cov_path = g_cover_dir + "/" + hash_hex_str(url) + ".img";
+    std::string bytes;
+    if (!read_file_bytes(cov_path, bytes)) {
+        HttpResp ci = http_request_sync("GET", url, {}, "");
+        if (ci.ok && !ci.body.empty()) {
+            write_file_bytes(cov_path, ci.body.data(), ci.body.size());
+            bytes = std::move(ci.body);
+        }
+    }
+    std::vector<uint32_t> rgba;
+    if (!bytes.empty()) {
+        int w = 0, h = 0, ch = 0;
+        unsigned char* img = stbi_load_from_memory(reinterpret_cast<const unsigned char*>(bytes.data()),
+                                                   static_cast<int>(bytes.size()), &w, &h, &ch, 4);
+        if (img && w > 0 && h > 0) {
+            rgba.resize(static_cast<size_t>(THUMB_PX) * THUMB_PX);
+            const int side = std::min(w, h);
+            const float sx0 = static_cast<float>(w - side) * 0.5f;
+            const float sy0 = static_cast<float>(h - side) * 0.5f;
+            const float scale = static_cast<float>(side) / static_cast<float>(THUMB_PX);
+            for (int y = 0; y < THUMB_PX; ++y) {
+                const float fy = std::clamp(sy0 + (static_cast<float>(y) + 0.5f) * scale - 0.5f, 0.0f, static_cast<float>(h - 1));
+                const int y0 = static_cast<int>(fy);
+                const int y1 = std::min(h - 1, y0 + 1);
+                const float wy = fy - static_cast<float>(y0);
+                for (int x = 0; x < THUMB_PX; ++x) {
+                    const float fx = std::clamp(sx0 + (static_cast<float>(x) + 0.5f) * scale - 0.5f, 0.0f, static_cast<float>(w - 1));
+                    const int x0 = static_cast<int>(fx);
+                    const int x1 = std::min(w - 1, x0 + 1);
+                    const float wx = fx - static_cast<float>(x0);
+                    const unsigned char* p00 = img + (static_cast<size_t>(y0) * w + x0) * 4;
+                    const unsigned char* p10 = img + (static_cast<size_t>(y0) * w + x1) * 4;
+                    const unsigned char* p01 = img + (static_cast<size_t>(y1) * w + x0) * 4;
+                    const unsigned char* p11 = img + (static_cast<size_t>(y1) * w + x1) * 4;
+                    const float w00 = (1.0f - wx) * (1.0f - wy), w10 = wx * (1.0f - wy);
+                    const float w01 = (1.0f - wx) * wy,          w11 = wx * wy;
+                    const uint32_t r = static_cast<uint32_t>(p00[0] * w00 + p10[0] * w10 + p01[0] * w01 + p11[0] * w11 + 0.5f);
+                    const uint32_t g = static_cast<uint32_t>(p00[1] * w00 + p10[1] * w10 + p01[1] * w01 + p11[1] * w11 + 0.5f);
+                    const uint32_t b = static_cast<uint32_t>(p00[2] * w00 + p10[2] * w10 + p01[2] * w01 + p11[2] * w11 + 0.5f);
+                    rgba[static_cast<size_t>(y) * THUMB_PX + x] =
+                        0xFF000000u | (std::min(255u, b) << 16) | (std::min(255u, g) << 8) | std::min(255u, r);
+                }
+            }
+        }
+        if (img) stbi_image_free(img);
+    }
+    return rgba;
+}
+
 void plugin_async_thumb(const std::string& plugin_id, size_t track_list_idx, const std::string& url) {
     if (url.empty()) return;
     ++g_active_jobs;
     std::thread([plugin_id, track_list_idx, url]() {
-        ensure_dir_recursive(g_cover_dir.c_str());
-        std::string cov_path = g_cover_dir + "/" + hash_hex_str(url) + ".img";
-        std::string bytes;
-        if (!read_file_bytes(cov_path, bytes)) {
-            HttpResp ci = http_request_sync("GET", url, {}, "");
-            if (ci.ok && !ci.body.empty()) {
-                write_file_bytes(cov_path, ci.body.data(), ci.body.size());
-                bytes = std::move(ci.body);
-            }
-        }
-        std::vector<uint32_t> rgba;
-        if (!bytes.empty()) {
-            int w = 0, h = 0, ch = 0;
-            unsigned char* img = stbi_load_from_memory(reinterpret_cast<const unsigned char*>(bytes.data()),
-                                                       static_cast<int>(bytes.size()), &w, &h, &ch, 4);
-            if (img && w > 0 && h > 0) {
-                rgba.resize(static_cast<size_t>(THUMB_PX) * THUMB_PX);
-                int side = std::min(w, h);
-                int sx0 = (w - side) / 2;
-                int sy0 = (h - side) / 2;
-                for (int y = 0; y < THUMB_PX; ++y) {
-                    int sy = sy0 + (y * side) / THUMB_PX;
-                    for (int x = 0; x < THUMB_PX; ++x) {
-                        int sx = sx0 + (x * side) / THUMB_PX;
-                        const unsigned char* sp = img + (static_cast<size_t>(sy) * w + sx) * 4;
-                        rgba[static_cast<size_t>(y) * THUMB_PX + x] =
-                            0xFF000000u | (static_cast<uint32_t>(sp[2]) << 16) |
-                            (static_cast<uint32_t>(sp[1]) << 8) | static_cast<uint32_t>(sp[0]);
-                    }
-                }
-            }
-            if (img) stbi_image_free(img);
-        }
+        std::vector<uint32_t> rgba = load_and_scale_thumb(url);
         if (!g_quit.load()) {
             std::lock_guard<std::mutex> lk(g_mgr_mtx);
             if (track_list_idx < g_snap.tracks.size() &&
@@ -1777,20 +1988,47 @@ void plugin_async_thumb(const std::string& plugin_id, size_t track_list_idx, con
     }).detach();
 }
 
-void plugin_qr_start(const std::string& plugin_id) {
+void plugin_async_playlist_thumb(const std::string& plugin_id, size_t playlist_idx, const std::string& url) {
+    if (url.empty()) return;
+    ++g_active_jobs;
+    std::thread([plugin_id, playlist_idx, url]() {
+        std::vector<uint32_t> rgba = load_and_scale_thumb(url);
+        if (!g_quit.load()) {
+            std::lock_guard<std::mutex> lk(g_mgr_mtx);
+            if (playlist_idx < g_snap.playlists.size() &&
+                g_snap.playlists[playlist_idx].plugin_id == plugin_id &&
+                g_snap.playlists[playlist_idx].cover_url == url) {
+                if (!rgba.empty()) {
+                    g_snap.playlists[playlist_idx].thumb = std::move(rgba);
+                    g_snap.playlists[playlist_idx].thumb_state = 2;
+                } else {
+                    g_snap.playlists[playlist_idx].thumb_state = 3;
+                }
+                g_got_playlists = true;
+            }
+        }
+        --g_active_jobs;
+    }).detach();
+}
+
+void plugin_qr_start(const std::string& plugin_id, const std::string& mode) {
     std::string spath;
     std::map<std::string, std::string> kv;
+    std::string use_mode = mode;
     {
         std::lock_guard<std::mutex> lk(g_mgr_mtx);
-        if (!find_entry_copy_locked(plugin_id, &spath, &kv)) return;
+        PluginEntry* ent = find_entry_copy_locked(plugin_id, &spath, &kv);
+        if (!ent) return;
+        if (use_mode.empty() && !ent->info.qr_modes.empty()) use_mode = ent->info.qr_modes[0].key;
         g_qr = PluginQrState{};
         g_qr.active = true;
         g_qr.plugin_id = plugin_id;
+        g_qr.mode = use_mode;
         g_qr.status = "loading";
         g_qr.message = "正在请求登录二维码...";
     }
     ++g_active_jobs;
-    std::thread([plugin_id, spath, kv]() {
+    std::thread([plugin_id, spath, kv, use_mode]() {
         PluginEntry local_ent;
         local_ent.info.id = plugin_id;
         local_ent.info.path = spath;
@@ -1801,7 +2039,8 @@ void plugin_qr_start(const std::string& plugin_id) {
             lua_getglobal(L, "plugin");
             lua_getfield(L, -1, "login_qr_start");
             if (lua_isfunction(L, -1)) {
-                if (lua_pcall(L, 0, 1, 0) == LUA_OK && lua_istable(L, -1)) {
+                lua_pushstring(L, use_mode.c_str());
+                if (lua_pcall(L, 1, 1, 0) == LUA_OK && lua_istable(L, -1)) {
                     qr_key = lua_str_field(L, -1, "key");
                     qr_url = lua_str_field(L, -1, "url");
                     msg    = lua_str_field(L, -1, "message", "请打开对应手机客户端扫码登录");
@@ -1815,6 +2054,7 @@ void plugin_qr_start(const std::string& plugin_id) {
         }
         if (!g_quit.load()) {
             std::lock_guard<std::mutex> lk(g_mgr_mtx);
+            for (auto* p : g_plugins) if (p->info.id == plugin_id) { p->kv = local_ent.kv; save_entry_kv(p); break; }
             if (g_qr.active && g_qr.plugin_id == plugin_id) {
                 if (!qr_url.empty()) {
                     g_qr.qr_key = qr_key;
@@ -1827,6 +2067,69 @@ void plugin_qr_start(const std::string& plugin_id) {
                     g_qr.message = err.empty() ? "无法获取二维码地址" : err;
                 }
             }
+        }
+        --g_active_jobs;
+    }).detach();
+}
+
+void plugin_login_with_cookie(const std::string& plugin_id, const std::string& cookie) {
+    if (plugin_id.empty() || cookie.empty()) return;
+    std::string spath;
+    std::map<std::string, std::string> kv;
+    {
+        std::lock_guard<std::mutex> lk(g_mgr_mtx);
+        if (!find_entry_copy_locked(plugin_id, &spath, &kv)) return;
+        g_snap.is_busy = true;
+    }
+    ++g_active_jobs;
+    std::thread([plugin_id, spath, kv, cookie]() {
+        PluginEntry local_ent;
+        local_ent.info.id = plugin_id;
+        local_ent.info.path = spath;
+        local_ent.kv = kv;
+        std::string err, nick, msg;
+        bool ok = false;
+        lua_State* L = create_sandboxed_vm(&local_ent, spath, err);
+        if (L) {
+            lua_getglobal(L, "plugin");
+            lua_getfield(L, -1, "login_with_cookie");
+            if (lua_isfunction(L, -1)) {
+                lua_pushstring(L, cookie.c_str());
+                if (lua_pcall(L, 1, 1, 0) == LUA_OK && lua_istable(L, -1)) {
+                    ok   = lua_bool_field(L, -1, "ok", false);
+                    nick = lua_str_field(L, -1, "nickname");
+                    msg  = lua_str_field(L, -1, "message");
+                } else {
+                    err = lua_isstring(L, -1) ? lua_tostring(L, -1) : "cookie login failed";
+                }
+            } else {
+                local_ent.kv["cookie"] = cookie;
+                ok = true;
+                nick = "Cookie 凭证";
+            }
+            lua_close(L);
+        }
+        if (!g_quit.load()) {
+            std::lock_guard<std::mutex> lk(g_mgr_mtx);
+            for (auto* p : g_plugins) {
+                if (p->info.id == plugin_id) {
+                    p->kv = local_ent.kv;
+                    if (ok) {
+                        p->info.logged_in = true;
+                        p->info.nickname = nick.empty() ? "已登录用户" : nick;
+                        p->kv["__nickname"] = p->info.nickname;
+                    }
+                    save_entry_kv(p);
+                    g_snap.plugins_updated = true;
+                    break;
+                }
+            }
+            if (ok && g_qr.active && g_qr.plugin_id == plugin_id) {
+                g_qr.status = "ok";
+                g_qr.message = "登录成功！";
+            }
+            g_snap.is_busy = false;
+            g_snap.status_toast = ok ? "扩展账号登录成功" : (!msg.empty() ? msg : (!err.empty() ? err : "凭证校验失败"));
         }
         --g_active_jobs;
     }).detach();

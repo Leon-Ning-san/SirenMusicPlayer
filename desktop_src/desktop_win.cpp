@@ -748,8 +748,8 @@ LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     if (hd) {
                         const auto* ws = static_cast<const wchar_t*>(GlobalLock(hd));
                         if (ws) {
-                            char u8[256]{};
-                            plat_wide_to_utf8(ws, u8, sizeof(u8));
+                            std::vector<char> u8(4096, 0);
+                            plat_wide_to_utf8(ws, u8.data(), static_cast<int>(u8.size()));
                             for (size_t i = 0; u8[i]; ) {
                                 const unsigned char c = static_cast<unsigned char>(u8[i]);
                                 const int len = (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 1;

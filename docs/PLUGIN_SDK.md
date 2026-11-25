@@ -102,10 +102,19 @@ return plugin
 
 | API | 说明 |
 |---|---|
-| `sirene.http(req)` | 发起 HTTP/HTTPS 请求，`req = { method, url, headers, body }`，返回 `{ ok, status, body, headers, set_cookie, error }` |
+| `sirene.http(req)` | 发起 HTTP/HTTPS 请求，`req = { method, url, headers, body, follow_redirects }`，返回 `{ ok, status, body, headers, set_cookie, location, error }` |
 | `sirene.json_decode(str)` / `sirene.json_encode(val)` | UTF-8 JSON 解析与序列化 |
 | `sirene.kv_get(key, default)` / `sirene.kv_set(key, val)` | 读写当前插件专属的本地持久化键值配置（仅存本地 `plugin_data/`） |
-| `sirene.md5(str)` / `sirene.sha256(str)` | 计算标准摘要（小写十六进制） |
+| `sirene.md5(str)` / `sirene.sha1(str)` / `sirene.sha256(str)` | 计算标准摘要（小写十六进制） |
+| `sirene.aes_cbc_encrypt(data, key16, iv16)` | AES-128-CBC PKCS7 加密并返回 Base64（用于标准 API 签名协议） |
+| `sirene.timestamp()` | 返回当前 Unix 秒级/毫秒级时间戳（整数秒，兼容标准时间窗签名） |
 | `sirene.base64_encode(str)` / `sirene.base64_decode(str)` | Base64 编解码 |
 | `sirene.url_encode(str)` | URL 百分比编码 |
 | `sirene.log(msg)` | 记录一条状态信息显示在插件卡片上 |
+
+### 可选登录与多端鉴权字段
+
+在 `plugin` 表中可声明：
+- `supports_login = true`：启用账号面板与登录弹窗。
+- `supports_cookie_login = true` & `cookie_hint = "..."`：在登录弹窗开启 **Cookie / 凭证直连** 标签页，调用 `plugin.login_with_cookie(cookie_str)`（返回 `{ ok, nickname, message }`）。
+- `qr_modes = { { key = "app", label = "App 扫码" }, ... }`：在扫码标签页提供多个登录通道，点击切换后传给 `plugin.login_qr_start(mode_key)`。

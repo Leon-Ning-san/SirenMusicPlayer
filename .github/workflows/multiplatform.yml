@@ -1,4 +1,4 @@
-name: Multi-Platform Release Build (v1.2.7)
+name: Multi-Platform Release Build (v1.2.8)
 
 on:
   push:
@@ -38,12 +38,12 @@ jobs:
           g++ -std=c++17 -O3 -fno-math-errno -Wall -Wextra -Isrc -Ideps -Idesktop_deps/lua -Idesktop_deps/qr -c desktop_src/desktop_win.cpp -o desktop_src/desktop_win.o
           g++ src/audio.o src/decode.o src/draw.o src/draw_text.o src/lrc.o src/meta.o src/util.o \
             desktop_src/desktop_lua.o desktop_src/desktop_main.o desktop_src/desktop_plugin.o desktop_src/desktop_win.o desktop_src/desktop_blobs.o desktop_src/sirene_res.o \
-            -o Sirene-v1.2.7-Windows-x64.exe \
+            -o Sirene-v1.2.8-Windows-x64.exe \
             -static -static-libgcc -static-libstdc++ -mwindows -lgdi32 -luser32 -lshell32 -lole32 -lcomdlg32 -lwinmm -luuid -lm
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x64
-          path: Sirene-v1.2.7-Windows-x64.exe
+          path: Sirene-v1.2.8-Windows-x64.exe
 
   build-linux:
     runs-on: ubuntu-latest
@@ -65,11 +65,11 @@ jobs:
           wait "$SPID" || true
           mkdir -p dist-linux
           cp Sirene icon.jpg README.md dist-linux/
-          tar -czvf Sirene-v1.2.7-Linux-x86_64.tar.gz -C dist-linux .
+          tar -czvf Sirene-v1.2.8-Linux-x86_64.tar.gz -C dist-linux .
       - uses: actions/upload-artifact@v4
         with:
           name: linux-x86_64
-          path: Sirene-v1.2.7-Linux-x86_64.tar.gz
+          path: Sirene-v1.2.8-Linux-x86_64.tar.gz
 
   build-macos:
     runs-on: macos-latest
@@ -97,11 +97,11 @@ jobs:
           kill -0 "$SPID"
           kill -TERM "$SPID"
           wait "$SPID" || true
-          zip -ry Sirene-v1.2.7-macOS-arm64.zip Sirène.app
+          zip -ry Sirene-v1.2.8-macOS-arm64.zip Sirène.app
       - uses: actions/upload-artifact@v4
         with:
           name: macos-arm64
-          path: Sirene-v1.2.7-macOS-arm64.zip
+          path: Sirene-v1.2.8-macOS-arm64.zip
 
   build-switch:
     runs-on: ubuntu-latest
@@ -115,11 +115,11 @@ jobs:
           export DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
           export PATH="$DEVKITPRO/tools/bin:$DEVKITPRO/devkitA64/bin:$PATH"
           make clean && make -j$(nproc)
-          mv PureMusic.nro Sirene-v1.2.7-Switch.nro
+          mv PureMusic.nro Sirene-v1.2.8-Switch.nro
       - uses: actions/upload-artifact@v4
         with:
           name: switch-nro
-          path: Sirene-v1.2.7-Switch.nro
+          path: Sirene-v1.2.8-Switch.nro
 
   publish-to-release:
     needs: [ build-windows, build-linux, build-macos, build-switch ]
@@ -128,26 +128,37 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-      - name: Upload all platform packages to Release v1.2.7
+      - name: Upload all platform packages to Release v1.2.8
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           NOTES=$(cat <<'EOF'
-          Sirène v1.2.7 跨平台学习研究版（Windows / Linux / macOS / Switch Homebrew .nro）。
+          Sirène v1.2.8 跨平台现代 UI 重构与学习研究版（Windows / Linux / macOS / Switch Homebrew .nro）。
 
-          > **学习研究与免责声明**：本项目为纯个人技术学习与开源研究作品（非商业用途），与任何硬件厂商或第三方平台无任何官方关联，不包含任何非授权系统修改或绕过机制；Switch `.nro` 仅基于 `libnx` / `SDL2` / `dr_libs` 等纯开源自制工具链构建，仅用于合法本地音频学习测试。一切下载、编译与运行风险均由使用者自行承担，与原作者无关（详见 `DISCLAIMER.md`）。
+          ### v1.2.8 核心更新
+          - **现代动画与苹果风格视觉升级**：
+            - **播放/暂停平滑形变按钮**：四顶点子像素抗锯齿矢量插值，切换丝滑自然。
+            - **4 柱动态均衡器与微交互**：封面与在线曲目列表集成非对称阻尼 4 柱音频律动条、红心弹性缩放以及页面切换淡入微抬过渡动画。
+            - **流体多层动态封面背景**：5 层旋转/轨道采样、有机噪声域畸变、音频低频脉动与切歌 1.2s 交叉淡入淡出。
+            - **弹簧瀑布流逐句歌词与间奏呼吸点**：逐行五次多项式曲线错峰波浪延迟与阻尼谐波弹簧定位，长间奏显示呼吸律动圆点。
+          - **云端扩展 Hub 与播放器联动全面修复**：
+            - 修复在线插件曲目的进度条刷新、播放时长显示与拖拽跳转、封面同步、上一首/下一首队列联动及任务栏媒体控制。
+            - 升级插件中心为现代苹果风格列表：内置独立在线搜索框、标准/极高/无损音质分级切换、歌单高清封面卡片、Shimmer 骨架屏加载态以及扫码/Cookie 凭证双模式弹窗（支持 `Ctrl+V` 完整粘贴，扩展脚本引擎新增 `sirene.sha1`、`aes_cbc_encrypt`、`timestamp` 等沙盒能力）。
+          - **Switch Homebrew `.nro` 独立构建**：保留完整的 `Sirene-v1.2.8-Switch.nro` 纯开源自制工具链构建产物。
+
+          > **学习研究与免责声明（Switch 与桌面端通用）**：本项目为纯个人技术学习与开源研究作品（非商业用途），主仓库**不包含**任何第三方音乐平台私有域名/协议，也与任何硬件厂商、游戏机厂商或第三方公司无任何官方关联，不包含任何非授权系统修改或绕过机制；Switch `.nro` 仅基于 `libnx` / `SDL2` / `dr_libs` 等纯开源自制工具链构建，仅用于合法本地音频学习测试。一切下载、编译与运行风险均由使用者自行承担，与原作者无关（详见 `DISCLAIMER.md`）。
           EOF
           )
           NOTES="$(printf '%s' "$NOTES" | sed 's/^          //')"
-          if ! gh release view v1.2.7 --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            gh release create v1.2.7 --repo "${{ github.repository }}" --title "Sirène v1.2.7 (Lua Plugins · Frameless Lyrics · Lightweight Sidebar · Switch .nro)" --notes "$NOTES"
+          if ! gh release view v1.2.8 --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create v1.2.8 --repo "${{ github.repository }}" --title "Sirène v1.2.8 (Modern Animations · Fluid Lyrics · Cloud Hub · Switch .nro)" --notes "$NOTES"
           else
-            gh release edit v1.2.7 --repo "${{ github.repository }}" --notes "$NOTES"
+            gh release edit v1.2.8 --repo "${{ github.repository }}" --notes "$NOTES"
           fi
-          gh release upload v1.2.7 \
-            artifacts/windows-x64/Sirene-v1.2.7-Windows-x64.exe \
-            artifacts/linux-x86_64/Sirene-v1.2.7-Linux-x86_64.tar.gz \
-            artifacts/macos-arm64/Sirene-v1.2.7-macOS-arm64.zip \
-            artifacts/switch-nro/Sirene-v1.2.7-Switch.nro \
+          gh release upload v1.2.8 \
+            artifacts/windows-x64/Sirene-v1.2.8-Windows-x64.exe \
+            artifacts/linux-x86_64/Sirene-v1.2.8-Linux-x86_64.tar.gz \
+            artifacts/macos-arm64/Sirene-v1.2.8-macOS-arm64.zip \
+            artifacts/switch-nro/Sirene-v1.2.8-Switch.nro \
             --repo "${{ github.repository }}" \
             --clobber

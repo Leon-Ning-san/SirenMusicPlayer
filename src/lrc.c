@@ -1203,7 +1203,7 @@ static int http_get_utf8(const char* host, const char* path_query, char** out_bu
     plat_utf8_to_wide(host, whost, 256);
     plat_utf8_to_wide(path_query, wpath, 2048);
 
-    HINTERNET hSes = pOpen(L"Sirene/1.2.7", 0, NULL, NULL, 0);
+    HINTERNET hSes = pOpen(L"Sirene/1.2.8", 0, NULL, NULL, 0);
     if (!hSes) return 0;
     if (pTimeouts) pTimeouts(hSes, 3000, 4000, 4000, 5000);
     HINTERNET hCon = pConn(hSes, whost, 443, 0);
@@ -1247,7 +1247,7 @@ static int http_get_utf8(const char* host, const char* path_query, char** out_bu
         close(pfd[1]);
         char* argv[] = {
             "curl", "-fsSL", "--max-time", "6",
-            "-A", "Sirene/1.2.7",
+            "-A", "Sirene/1.2.8",
             url, NULL
         };
         execvp("curl", argv);

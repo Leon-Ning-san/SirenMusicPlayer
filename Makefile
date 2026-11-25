@@ -17,7 +17,7 @@ INCLUDES := src deps
 APP_TITLE := Sirène
 APP_DESCRIPTION := Minimalist local audio player for UI & audio study
 APP_AUTHOR := Sirène
-APP_VERSION := 1.2.7
+APP_VERSION := 1.2.8
 APP_ICON := icon.jpg
 
 #---------------------------------------------------------------------------------
