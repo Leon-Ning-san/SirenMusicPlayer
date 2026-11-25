@@ -127,6 +127,12 @@ struct Track {
     int fav = 0;
     int meta_state = 0; // 0=none, 1=quick text/art, 2=duration probed
     std::vector<uint32_t> thumb;
+    int cov_cache_px = 0;
+    std::vector<uint32_t> cov_cache;
+    int fmt_w = -1;
+    double cached_dur_val = -1.0;
+    char cached_dur_s[16] = "--:--";
+    int cached_dur_w = -1;
 };
 
 enum { DRAG_NONE = 0, DRAG_ISLAND_PROG = 1, DRAG_HERO_PROG = 2, DRAG_VOL = 3, DRAG_SB = 4, DRAG_LIST = 5, DRAG_LYRICS = 6 };
@@ -190,7 +196,10 @@ struct AppState {
     std::vector<uint32_t> poster_mini;
     std::vector<uint32_t> poster_hero;
     std::vector<uint32_t> poster_ico;
+    int poster_card_px = 0;
+    std::vector<uint32_t> poster_card_cache;
     int cover_ready = 0;
+    float scroll_rest_timer = 1.0f;
 
     float cur_qf[4][3] = { { 34, 88, 62 }, { 64, 128, 72 }, { 22, 48, 44 }, { 42, 92, 68 } };
     float tgt_qf[4][3] = { { 34, 88, 62 }, { 64, 128, 72 }, { 22, 48, 44 }, { 42, 92, 68 } };
@@ -1150,17 +1159,38 @@ void ensure_track_meta(int idx, int probe_dur) {
 }
 
 void trim_thumbs(int center_pos) {
-    int cnt = 0;
-    for (const auto& tr : g.tracks) if (!tr.thumb.empty()) ++cnt;
-    if (cnt <= MAX_THUMBS) return;
-    int far_i = -1, max_dist = -1;
-    for (int p = 0; p < static_cast<int>(g.vis_idx.size()); ++p) {
-        const int idx = g.vis_idx[p];
-        if (idx == g.playing_idx || g.tracks[idx].thumb.empty()) continue;
-        const int d = std::abs(p - center_pos);
-        if (d > max_dist) { max_dist = d; far_i = idx; }
+    int cnt = 0, cov_cnt = 0;
+    for (const auto& tr : g.tracks) {
+        if (!tr.thumb.empty()) ++cnt;
+        if (!tr.cov_cache.empty()) ++cov_cnt;
     }
-    if (far_i >= 0) std::vector<uint32_t>().swap(g.tracks[far_i].thumb);
+    if (cnt > MAX_THUMBS) {
+        int far_i = -1, max_dist = -1;
+        for (int p = 0; p < static_cast<int>(g.vis_idx.size()); ++p) {
+            const int idx = g.vis_idx[p];
+            if (idx == g.playing_idx || g.tracks[idx].thumb.empty()) continue;
+            const int d = std::abs(p - center_pos);
+            if (d > max_dist) { max_dist = d; far_i = idx; }
+        }
+        if (far_i >= 0) {
+            std::vector<uint32_t>().swap(g.tracks[far_i].thumb);
+            std::vector<uint32_t>().swap(g.tracks[far_i].cov_cache);
+            g.tracks[far_i].cov_cache_px = 0;
+        }
+    }
+    while (cov_cnt > 72) {
+        int far_i = -1, max_dist = -1;
+        for (int p = 0; p < static_cast<int>(g.vis_idx.size()); ++p) {
+            const int idx = g.vis_idx[p];
+            if (idx == g.playing_idx || g.tracks[idx].cov_cache.empty()) continue;
+            const int d = std::abs(p - center_pos);
+            if (d > max_dist) { max_dist = d; far_i = idx; }
+        }
+        if (far_i < 0) break;
+        std::vector<uint32_t>().swap(g.tracks[far_i].cov_cache);
+        g.tracks[far_i].cov_cache_px = 0;
+        --cov_cnt;
+    }
 }
 
 void build_posters() {
@@ -1547,11 +1577,11 @@ void pump_background_meta() {
         first_row = std::max(0, static_cast<int>(g.scroll_px / static_cast<float>(ROW_H)));
     }
     const int win = g.view_grid ? 18 : 16;
-    for (int p = first_row; p < nvis && p < first_row + win && loaded < 3; ++p) {
+    for (int p = first_row; p < nvis && p < first_row + win && loaded < 1; ++p) {
         const int idx = g.vis_idx[p];
         if (g.tracks[idx].meta_state == 0) { ensure_track_meta(idx, 1); ++loaded; }
     }
-    for (int step = 0; step < 3 && loaded < 2; ++step) {
+    for (int step = 0; step < 2 && loaded < 1; ++step) {
         if (g.probe_cursor >= nvis) g.probe_cursor = 0;
         const int idx = g.vis_idx[g.probe_cursor++];
         if (g.tracks[idx].meta_state < 2) { ensure_track_meta(idx, 1); ++loaded; }
@@ -1772,12 +1802,12 @@ void draw_library_header(int mx, int my) {
         const bool act = (g.fmt_filter == i);
         const bool hov = in_rc(mx, my, g.rc_filt_chips[i]);
         if (act) {
-            fill_frosted_round_rect(s, cx, cy, cw, 36, 18, mix_col(g.C_SURFACE, g.C_ACCENT, 0.32f), 202, 2, glass_rim(66, 215));
+            fill_frosted_round_rect(s, cx, cy, cw, 36, 18, mix_col(g.C_SURFACE, g.C_ACCENT, 0.32f), 202, 1, glass_rim(66, 215));
             stroke_round_rect_aa(s, cx, cy, cw, 36, 18, 1, g.C_ACCENT, 145);
             fill_ellipse_aa(s, cx + 14, cy + 18, 4, 4, g.C_ACCENT);
             draw_text_bold(s, f, 13.5f, cx + 24, cy + 9, g.C_ACCENT, chips[i]);
         } else {
-            fill_frosted_round_rect(s, cx, cy, cw, 36, 18, g.C_SURFACE, hov ? 185 : (lt ? 156 : 130), 2, glass_rim(50, 200));
+            fill_frosted_round_rect(s, cx, cy, cw, 36, 18, g.C_SURFACE, hov ? 185 : (lt ? 156 : 130), 1, glass_rim(50, 200));
             stroke_round_rect_aa(s, cx, cy, cw, 36, 18, 1, g.C_DIV, col_a(g.C_DIV) + 12);
             draw_text_centered_bold(s, f, 13.5f, cx, cx + cw, cy + 9, hov ? g.C_TXT : g.C_TXT2, chips[i]);
         }
@@ -1796,7 +1826,7 @@ void draw_library_header(int mx, int my) {
             const bool hov = in_rc(mx, my, g.rc_dir_chip);
             fill_frosted_round_rect(s, g.rc_dir_chip.x, g.rc_dir_chip.y, dw, 36, 18,
                                     act ? mix_col(g.C_SURFACE, g.C_ACCENT, 0.28f) : g.C_SURFACE,
-                                    act ? 202 : (hov ? 185 : (lt ? 156 : 130)), 2, glass_rim(52, 205));
+                                    act ? 202 : (hov ? 185 : (lt ? 156 : 130)), 1, glass_rim(52, 205));
             stroke_round_rect_aa(s, g.rc_dir_chip.x, g.rc_dir_chip.y, dw, 36, 18, 1, act ? g.C_ACCENT : g.C_DIV, act ? 145 : (col_a(g.C_DIV) + 12));
             draw_text_centered_bold(s, f, 13.5f, g.rc_dir_chip.x, g.rc_dir_chip.x + dw, cy + 9,
                                     act ? g.C_ACCENT : g.C_TXT2, dlabel.c_str());
@@ -1812,7 +1842,7 @@ void draw_hero_card(Rect hero, int mx, int my) {
     g.rc_hero_card = hero;
     constexpr int r = 24;
     fill_round_rect_shadow(s, hero.x, hero.y + 4, hero.w, hero.h, r, theme_shadow(84));
-    fill_frosted_round_rect(s, hero.x, hero.y, hero.w, hero.h, r, g.C_HERO_L, lt ? 168 : 150, 3, glass_rim(62, 215));
+    fill_frosted_round_rect(s, hero.x, hero.y, hero.w, hero.h, r, g.C_HERO_L, lt ? 168 : 150, 2, glass_rim(62, 215));
 
     const int split_x = hero.x + static_cast<int>(hero.w * 0.65f);
     const float wave_amp = clampf(static_cast<float>(hero.h) * 0.032f, 6.0f, 10.0f);
@@ -1928,6 +1958,18 @@ void draw_grid_view(int mx, int my) {
     int next_hov = -1;
     const int row0_rem = cols >= 3 ? (cols - 2) : 0;
     const int nvis = static_cast<int>(g.vis_idx.size());
+    constexpr int cov_pad = 6;
+    const int cov_sz = cw - cov_pad * 2;
+    const int cov_px = (std::fabs(s->s - 1.0f) < 0.001f)
+                       ? cov_sz
+                       : std::max(1, static_cast<int>(std::floor(static_cast<float>(cov_sz) * s->s + 0.5f)));
+    if (!g.poster_hero.empty() &&
+        (g.poster_card_px != cov_px || g.poster_card_cache.size() != static_cast<size_t>(cov_px) * cov_px)) {
+        g.poster_card_cache.resize(static_cast<size_t>(cov_px) * cov_px);
+        resample_bilinear(g.poster_hero.data(), COVER_SRC_SZ, COVER_SRC_SZ, g.poster_card_cache.data(), cov_px, cov_px);
+        g.poster_card_px = cov_px;
+    }
+    int cov_builds = 0;
 
     for (int p = 0; p < nvis; ++p) {
         int row, col;
@@ -1944,7 +1986,7 @@ void draw_grid_view(int mx, int my) {
         if (y + ch < top_y - 16 || y > top_y + vh + 16) continue;
 
         const int idx = g.vis_idx[p];
-        const Track& tr = g.tracks[idx];
+        Track& tr = g.tracks[idx];
         const Rect card_rc{ x, y, cw, ch };
         const bool in_view = in_rect(mx, my, lx - 4, top_y, g.grid_w + 8, vh);
         const bool is_hov = in_view && in_rc(mx, my, card_rc);
@@ -1954,25 +1996,48 @@ void draw_grid_view(int mx, int my) {
         const int cy = y - lift;
         const bool is_play = (idx == g.playing_idx);
 
-        fill_round_rect_shadow(s, x, cy + 4, cw, ch, 18, theme_shadow(is_play ? 110 : 64));
+        fill_round_rect_shadow_fast(s, x, cy + 4, cw, ch, 18, theme_shadow(is_play ? 110 : 64));
         const uint32_t card_tint = is_play ? mix_col(g.C_SURFACE, g.C_ACCENT, 0.16f)
                                            : (is_hov ? mix_col(g.C_SURFACE, 0xFFFFFFFFu, 0.05f * (1.0f - g.light_t)) : g.C_SURFACE);
         const uint8_t card_alpha = is_play ? static_cast<uint8_t>(180 + 18 * g.light_t)
                                            : (is_hov ? static_cast<uint8_t>(168 + 20 * g.light_t)
                                                      : static_cast<uint8_t>(142 + 34 * g.light_t));
-        fill_frosted_round_rect(s, x, cy, cw, ch, 18, card_tint, card_alpha, 2,
-                                is_play ? glass_rim(96, 230) : glass_rim(44, 195));
-
-        constexpr int cov_pad = 6;
-        const int cov_sz = cw - cov_pad * 2;
         const int cx0 = x + cov_pad;
         const int cy0 = cy + cov_pad;
-        const uint32_t* art = !tr.thumb.empty() ? tr.thumb.data() : (!g.poster_hero.empty() ? g.poster_hero.data() : nullptr);
-        const int art_sz = !tr.thumb.empty() ? THUMB_SZ : COVER_SRC_SZ;
+        fill_frosted_round_rect_skip(s, x, cy, cw, ch, 18,
+                                     cx0, cy0 + 14, cov_sz, std::max(0, cov_sz - 28),
+                                     card_tint, card_alpha, (is_play || is_hov) ? 2 : 0,
+                                     is_play ? glass_rim(96, 230) : glass_rim(44, 195));
+
+        const uint32_t* art = nullptr;
+        int art_sz = COVER_SRC_SZ;
+        if (!tr.thumb.empty()) {
+            if (tr.cov_cache_px == cov_px && tr.cov_cache.size() == static_cast<size_t>(cov_px) * cov_px) {
+                art = tr.cov_cache.data();
+                art_sz = cov_px;
+            } else if (cov_builds < 4) {
+                tr.cov_cache.resize(static_cast<size_t>(cov_px) * cov_px);
+                resample_bilinear(tr.thumb.data(), THUMB_SZ, THUMB_SZ, tr.cov_cache.data(), cov_px, cov_px);
+                tr.cov_cache_px = cov_px;
+                art = tr.cov_cache.data();
+                art_sz = cov_px;
+                ++cov_builds;
+            } else {
+                art = tr.thumb.data();
+                art_sz = THUMB_SZ;
+            }
+        } else if (!g.poster_card_cache.empty()) {
+            art = g.poster_card_cache.data();
+            art_sz = cov_px;
+        } else if (!g.poster_hero.empty()) {
+            art = g.poster_hero.data();
+            art_sz = COVER_SRC_SZ;
+        }
         if (art) blit_rgb_round_fit(s, cx0, cy0, cov_sz, cov_sz, art, art_sz, art_sz, 14);
         else     fill_round_rect_aa(s, cx0, cy0, cov_sz, cov_sz, 14, g.C_GLASS_ACT);
 
-        const int fpw = text_width_bold(f, 12.0f, tr.fmt) + 16;
+        if (tr.fmt_w < 0) tr.fmt_w = text_width_bold(f, 12.0f, tr.fmt);
+        const int fpw = tr.fmt_w + 16;
         fill_round_rect_aa_a(s, cx0 + 8, cy0 + 8, fpw, 22, 8, COL(12, 16, 22, 255), 186);
         draw_text_centered_bold(s, f, 12.0f, cx0 + 8, cx0 + 8 + fpw, cy0 + 11,
                                 is_play ? g.C_ACCENT : COL(244, 248, 255, 255), tr.fmt);
@@ -1988,7 +2053,7 @@ void draw_grid_view(int mx, int my) {
         if (is_play || is_hov) {
             const int bx = cx0 + cov_sz - 40;
             const int by = cy0 + cov_sz - 40;
-            fill_round_rect_shadow(s, bx, by + 2, 34, 34, 17, 90);
+            fill_round_rect_shadow_fast(s, bx, by + 2, 34, 34, 17, 90);
             fill_round_rect_aa(s, bx, by, 34, 34, 17, g.C_ACCENT);
             if (is_play && !audio_paused()) {
                 for (int b = 0; b < 3; ++b) {
@@ -2002,14 +2067,18 @@ void draw_grid_view(int mx, int my) {
         }
 
         if (is_play) stroke_round_rect_aa(s, x, cy, cw, ch, 18, 2, g.C_ACCENT, 210);
-        else         stroke_round_rect_aa(s, x, cy, cw, ch, 18, 1, g.C_DIV, is_hov ? 68 : col_a(g.C_DIV));
+        else if (is_hov) stroke_round_rect_aa(s, x, cy, cw, ch, 18, 1, g.C_DIV, 68);
 
         const int info_y = cy0 + cov_sz + 7;
         draw_text_max_bold(s, f, 15.5f, x + 10, info_y, is_play ? g.C_ACCENT : g.C_TXT, tr.title.c_str(), cw - 20);
-        char dur_s[16] = "--:--";
-        if (tr.dur > 0.5) fmt_time(tr.dur, dur_s, sizeof(dur_s));
-        const int dw = text_width_bold(f, 12.5f, dur_s);
-        draw_text_right_bold(s, f, 12.5f, x + cw - 10, info_y + 26, is_play ? g.C_ACCENT : g.C_TXT3, dur_s);
+        if (tr.cached_dur_w < 0 || std::fabs(tr.dur - tr.cached_dur_val) > 0.25) {
+            if (tr.dur > 0.5) fmt_time(tr.dur, tr.cached_dur_s, sizeof(tr.cached_dur_s));
+            else std::snprintf(tr.cached_dur_s, sizeof(tr.cached_dur_s), "--:--");
+            tr.cached_dur_val = tr.dur;
+            tr.cached_dur_w = text_width_bold(f, 12.5f, tr.cached_dur_s);
+        }
+        const int dw = tr.cached_dur_w;
+        draw_text_right_bold(s, f, 12.5f, x + cw - 10, info_y + 26, is_play ? g.C_ACCENT : g.C_TXT3, tr.cached_dur_s);
         const char* sub = !tr.artist.empty() ? tr.artist.c_str() : (!tr.album.empty() ? tr.album.c_str() : tr.fmt);
         draw_text_max_bold(s, f, 13.0f, x + 10, info_y + 25, g.C_TXT2, sub, cw - 26 - dw);
 
@@ -2772,28 +2841,40 @@ void handle_input() {
             const float f = clampf(static_cast<float>(ti.y - g.rc_sb_track.y) / static_cast<float>(g.rc_sb_track.h), 0.0f, 1.0f);
             g.scroll_target = g.scroll_px = f * max_scroll_px();
         } else if (g.drag_mode == DRAG_LIST) {
-            const int thr = be_input_is_touch() ? 12 : 8;
+            const int thr = be_input_is_touch() ? 10 : 8;
             if (!g.drag_moved && (std::abs(ti.y - g.drag_start_y) > thr || std::abs(ti.x - g.drag_start_x) > thr)) {
                 g.drag_moved = 1;
+                g.scroll_rest_timer = 0.0f;
             }
             if (g.drag_moved && max_scroll_px() > 0.0f) {
+                g.scroll_rest_timer = 0.0f;
                 g.scroll_px = clampf(g.scroll_px - static_cast<float>(ti.dy), 0.0f, max_scroll_px());
                 g.scroll_target = g.scroll_px;
-                const float dt_s = std::max(0.004f, static_cast<float>(g.dt));
-                const float inst_v = -static_cast<float>(ti.dy) / dt_s;
-                g.scroll_vel = (ti.dy == 0) ? (g.scroll_vel * 0.65f) : (g.scroll_vel * 0.50f + inst_v * 0.50f);
+                const float dt_s = std::clamp(static_cast<float>(g.dt), 0.004f, 0.050f);
+                if (ti.dy != 0) {
+                    const float inst_v = clampf(-static_cast<float>(ti.dy) / dt_s, -3400.0f, 3400.0f);
+                    const float k_v = clampf(dt_s * 24.0f, 0.25f, 0.78f);
+                    g.scroll_vel += (inst_v - g.scroll_vel) * k_v;
+                } else {
+                    g.scroll_vel *= std::exp(-12.0f * dt_s);
+                }
             }
         } else if (g.drag_mode == DRAG_LYRICS) {
-            const int thr = be_input_is_touch() ? 12 : 8;
+            const int thr = be_input_is_touch() ? 10 : 8;
             if (!g.drag_moved && (std::abs(ti.y - g.drag_start_y) > thr || std::abs(ti.x - g.drag_start_x) > thr)) {
                 g.drag_moved = 1;
             }
             if (g.drag_moved) {
                 g.lyr_cam_y = clampf(g.lyr_cam_y - static_cast<float>(ti.dy), 0.0f, std::max(0.0f, g.lyr_max_scroll));
                 g.lyr_manual_timer = 4.5f;
-                const float dt_s = std::max(0.004f, static_cast<float>(g.dt));
-                const float inst_v = -static_cast<float>(ti.dy) / dt_s;
-                g.lyr_scroll_vel = (ti.dy == 0) ? (g.lyr_scroll_vel * 0.65f) : (g.lyr_scroll_vel * 0.50f + inst_v * 0.50f);
+                const float dt_s = std::clamp(static_cast<float>(g.dt), 0.004f, 0.050f);
+                if (ti.dy != 0) {
+                    const float inst_v = clampf(-static_cast<float>(ti.dy) / dt_s, -3000.0f, 3000.0f);
+                    const float k_v = clampf(dt_s * 24.0f, 0.25f, 0.78f);
+                    g.lyr_scroll_vel += (inst_v - g.lyr_scroll_vel) * k_v;
+                } else {
+                    g.lyr_scroll_vel *= std::exp(-12.0f * dt_s);
+                }
             }
         }
     }
@@ -3043,8 +3124,10 @@ int main(int argc, char** argv) {
         const bool scroll_moving = (g.drag_mode != DRAG_NONE) || g.scrub_drag || g.vol_drag || g.sb_drag ||
                                    (std::fabs(g.scroll_vel) > 3.0f) || (std::fabs(g.lyr_scroll_vel) > 3.0f) ||
                                    (std::fabs(g.scroll_target - g.scroll_px) > 1.0f);
+        if (scroll_moving) g.scroll_rest_timer = 0.0f;
+        else g.scroll_rest_timer += static_cast<float>(g.dt);
         const bool theme_moving  = std::fabs(g.theme_pos - (g.is_light ? 1.0f : 0.0f)) > 0.001f;
-        if (!scroll_moving && !theme_moving && !g.fade_armed) {
+        if (!scroll_moving && !theme_moving && !g.fade_armed && g.scroll_rest_timer >= 0.22f) {
             pump_background_meta();
         }
         be_set_idle_mode((!dump_mode && !playing_active && !scroll_moving && !theme_moving &&
@@ -3104,7 +3187,7 @@ int main(int argc, char** argv) {
         if (!be_is_minimized()) {
             int mx = 0, my = 0;
             be_mouse_pos(&mx, &my);
-            const bool suppress_hover = g.drag_moved || (be_input_is_touch() && mx < 0);
+            const bool suppress_hover = (g.drag_mode != DRAG_NONE) || g.drag_moved || be_input_is_touch();
             const int eff_mx = suppress_hover ? -1 : mx;
             const int eff_my = suppress_hover ? -1 : my;
             update_hover_cursor(eff_mx, eff_my);

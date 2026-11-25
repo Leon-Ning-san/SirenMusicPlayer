@@ -642,8 +642,13 @@ LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
             ScreenToClient(hwnd, &pt);
             map_mouse_xy(pt.x, pt.y, &g_win.m_x, &g_win.m_y);
-            g_win.hover_x = g_win.m_x;
-            g_win.hover_y = g_win.m_y;
+            if (ptype == PT_TOUCH) {
+                g_win.hover_x = -1;
+                g_win.hover_y = -1;
+            } else {
+                g_win.hover_x = g_win.m_x;
+                g_win.hover_y = g_win.m_y;
+            }
             g_win.m_held = 1;
             g_win.m_down = 1;
             SetFocus(hwnd);
@@ -655,7 +660,10 @@ LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         ScreenToClient(hwnd, &pt);
         map_mouse_xy(pt.x, pt.y, &g_win.m_x, &g_win.m_y);
         if (msg == WM_POINTERUPDATE) {
-            if (g_win.m_held) {
+            if (ptype == PT_TOUCH) {
+                g_win.hover_x = -1;
+                g_win.hover_y = -1;
+            } else if (g_win.m_held) {
                 g_win.hover_x = g_win.m_x;
                 g_win.hover_y = g_win.m_y;
             }
@@ -987,9 +995,19 @@ void be_end(void) {
     if (g_win.hwnd && !g_win.minimized && !IsIconic(g_win.hwnd) &&
         !g_win.backbuf.empty() && !g_win.bgra.empty() && g_win.buf_w > 0 && g_win.buf_h > 0) {
         const size_t n = static_cast<size_t>(g_win.buf_w) * g_win.buf_h;
-        for (size_t i = 0; i < n; ++i) {
-            const uint32_t p = g_win.backbuf[i];
-            g_win.bgra[i] = (p & 0xFF00FF00u) | ((p & 0xFFu) << 16) | ((p >> 16) & 0xFFu);
+        const uint32_t* __restrict__ sp = g_win.backbuf.data();
+        uint32_t* __restrict__ dp = g_win.bgra.data();
+        size_t i = 0;
+        for (; i + 3 < n; i += 4) {
+            const uint32_t p0 = sp[i + 0], p1 = sp[i + 1], p2 = sp[i + 2], p3 = sp[i + 3];
+            dp[i + 0] = (p0 & 0xFF00FF00u) | ((p0 & 0xFFu) << 16) | ((p0 >> 16) & 0xFFu);
+            dp[i + 1] = (p1 & 0xFF00FF00u) | ((p1 & 0xFFu) << 16) | ((p1 >> 16) & 0xFFu);
+            dp[i + 2] = (p2 & 0xFF00FF00u) | ((p2 & 0xFFu) << 16) | ((p2 >> 16) & 0xFFu);
+            dp[i + 3] = (p3 & 0xFF00FF00u) | ((p3 & 0xFFu) << 16) | ((p3 >> 16) & 0xFFu);
+        }
+        for (; i < n; ++i) {
+            const uint32_t p = sp[i];
+            dp[i] = (p & 0xFF00FF00u) | ((p & 0xFFu) << 16) | ((p >> 16) & 0xFFu);
         }
         g_win.has_frame = 1;
         HDC hdc = GetDC(g_win.hwnd);

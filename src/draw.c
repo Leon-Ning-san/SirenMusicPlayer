@@ -1146,12 +1146,15 @@ void blit_rgb_round(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, in
 void blit_rgb_round_fit(Canvas* dst, int dx, int dy, int dw, int dh,
                         const uint32_t* src, int sw, int sh, int corner) {
     if (!dst || !src || dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) return;
-    if (fabsf(dst->s - 1.0f) < 0.001f && dw == sw && dh == sh) {
-        blit_rgb_round_px(dst, dx, dy, src, sw, sh, corner);
+    float s = dst->s > 0.0f ? dst->s : 1.0f;
+    if (fabsf(s - 1.0f) < 0.001f) {
+        if (dw == sw && dh == sh) blit_rgb_round_px(dst, dx, dy, src, sw, sh, corner);
+        else blit_scaled_round_px(dst, dx, dy, dw, dh, src, sw, sh, corner, 255, 1);
     } else {
-        blit_scaled_round_px(dst, sc_i(dst->s, dx), sc_i(dst->s, dy),
-                             sc_sz(dst->s, dw), sc_sz(dst->s, dh),
-                             src, sw, sh, sc_i(dst->s, corner), 255, 1);
+        int px = sc_i(s, dx), py = sc_i(s, dy);
+        int pdw = sc_sz(s, dw), pdh = sc_sz(s, dh), pr = sc_i(s, corner);
+        if (pdw == sw && pdh == sh) blit_rgb_round_px(dst, px, py, src, sw, sh, pr);
+        else blit_scaled_round_px(dst, px, py, pdw, pdh, src, sw, sh, pr, 255, 1);
     }
 }
 void blit_rgba_round_a(Canvas* dst, int dx, int dy, const uint32_t* src, int sw, int sh, int corner, uint8_t a) {
@@ -1185,8 +1188,42 @@ void fill_round_rect_shadow(Canvas* c, int x, int y, int w, int h, int r, uint8_
     else fill_round_rect_shadow_px(c, sc_i(c->s, x), sc_i(c->s, y), sc_sz(c->s, w), sc_sz(c->s, h), sc_i(c->s, r), max_alpha);
 }
 
-void fill_frosted_round_rect(Canvas* c, int x, int y, int w, int h, int r,
-                             uint32_t tint_col, uint8_t tint_alpha, int blur_radius, uint8_t rim_alpha) {
+void fill_round_rect_shadow_fast(Canvas* c, int x, int y, int w, int h, int r, uint8_t max_alpha) {
+    if (!c || max_alpha == 0) return;
+    float s = c->s > 0.0f ? c->s : 1.0f;
+    int px = (fabsf(s - 1.0f) < 0.001f) ? x : sc_i(s, x);
+    int py = (fabsf(s - 1.0f) < 0.001f) ? y : sc_i(s, y);
+    int pw = (fabsf(s - 1.0f) < 0.001f) ? w : sc_sz(s, w);
+    int ph = (fabsf(s - 1.0f) < 0.001f) ? h : sc_sz(s, h);
+    int pr = (fabsf(s - 1.0f) < 0.001f) ? r : sc_i(s, r);
+    int k1 = (int)(1 * s + 0.5f), k2 = (int)(2 * s + 0.5f), k4 = (int)(4 * s + 0.5f);
+    int inset = (pr + 1) / 2;
+    if (inset < k4) inset = k4;
+    fill_round_layer_skip(c, px - k1, py + k2, pw + k2, ph + k4, pr + k2,
+                          (uint8_t)(max_alpha / 2), px + inset, py + inset, pw - 2 * inset, ph - 2 * inset);
+}
+
+static inline void frost_fill_span(uint32_t* drow, int vx0, int k0, int k1,
+                                   const uint32_t* sr0, const uint32_t* sr1,
+                                   const int* p_ix0, const int* p_ix1, const int* p_wx,
+                                   uint32_t uwy, uint32_t unwy) {
+    for (int k = k0; k < k1; k++) {
+        int p0 = p_ix0[k], p1 = p_ix1[k];
+        uint32_t uwx = (uint32_t)p_wx[k], unwx = 256u - uwx;
+        uint32_t c00 = sr0[p0], c10 = sr0[p1], c01 = sr1[p0], c11 = sr1[p1];
+        uint32_t top_rb = (((c00 & 0x00FF00FFu) * unwx + (c10 & 0x00FF00FFu) * uwx + 0x00800080u) >> 8) & 0x00FF00FFu;
+        uint32_t bot_rb = (((c01 & 0x00FF00FFu) * unwx + (c11 & 0x00FF00FFu) * uwx + 0x00800080u) >> 8) & 0x00FF00FFu;
+        uint32_t out_rb = ((top_rb * unwy + bot_rb * uwy + 0x00800080u) >> 8) & 0x00FF00FFu;
+        uint32_t top_g  = ((((c00 >> 8) & 0xFFu) * unwx + ((c10 >> 8) & 0xFFu) * uwx + 128u) >> 8);
+        uint32_t bot_g  = ((((c01 >> 8) & 0xFFu) * unwx + ((c11 >> 8) & 0xFFu) * uwx + 128u) >> 8);
+        uint32_t out_g  = (top_g * unwy + bot_g * uwy + 128u) & 0x0000FF00u;
+        drow[vx0 + k] = 0xFF000000u | out_g | out_rb;
+    }
+}
+
+void fill_frosted_round_rect_skip(Canvas* c, int x, int y, int w, int h, int r,
+                                  int skip_x, int skip_y, int skip_w, int skip_h,
+                                  uint32_t tint_col, uint8_t tint_alpha, int blur_radius, uint8_t rim_alpha) {
     if (!c || !c->px || w <= 0 || h <= 0) return;
     float s = c->s > 0.0f ? c->s : 1.0f;
     int px = (fabsf(s - 1.0f) < 0.001f) ? x : sc_i(s, x);
@@ -1209,21 +1246,53 @@ void fill_frosted_round_rect(Canvas* c, int x, int y, int w, int h, int r,
     int vh = vy1 - vy0;
     if (vw <= 0 || vh <= 0) return;
 
+    int has_skip_rect = (skip_w > 0 && skip_h > 0);
+    int skx0 = 0, sky0 = 0, skx1 = 0, sky1 = 0;
+    if (has_skip_rect) {
+        skx0 = (fabsf(s - 1.0f) < 0.001f) ? skip_x : sc_i(s, skip_x);
+        sky0 = (fabsf(s - 1.0f) < 0.001f) ? skip_y : sc_i(s, skip_y);
+        skx1 = skx0 + ((fabsf(s - 1.0f) < 0.001f) ? skip_w : sc_sz(s, skip_w));
+        sky1 = sky0 + ((fabsf(s - 1.0f) < 0.001f) ? skip_h : sc_sz(s, skip_h));
+        if (skx1 <= vx0 || skx0 >= vx1 || sky1 <= vy0 || sky0 >= vy1) has_skip_rect = 0;
+    }
+
     if (vw < 8 || vh < 8 || blur_radius <= 0) {
-        fill_round_rect_aa_a_px(c, px, py, pw, ph, pr, tint_col, tint_alpha);
+        if (has_skip_rect && sky0 >= py + pr && sky1 <= py + ph - pr && skx0 > px && skx1 < px + pw) {
+            int ocx0 = c->clip_x0, ocy0 = c->clip_y0, ocx1 = c->clip_x1, ocy1 = c->clip_y1;
+            int ny0 = sky0 < vy1 ? sky0 : vy1;
+            int ny1 = sky1 > vy0 ? sky1 : vy0;
+            if (vy0 < ny0) {
+                canvas_set_clip_px(c, cx0, cy0, cx1, ny0);
+                fill_round_rect_aa_a_px(c, px, py, pw, ph, pr, tint_col, tint_alpha);
+            }
+            canvas_set_clip_px(c, cx0, cy0, cx1, cy1);
+            if (ny1 > ny0) {
+                fill_rect_a_px(c, px, ny0, skx0 - px, ny1 - ny0, tint_col, tint_alpha);
+                fill_rect_a_px(c, skx1, ny0, (px + pw) - skx1, ny1 - ny0, tint_col, tint_alpha);
+            }
+            if (ny1 < vy1) {
+                canvas_set_clip_px(c, cx0, ny1, cx1, cy1);
+                fill_round_rect_aa_a_px(c, px, py, pw, ph, pr, tint_col, tint_alpha);
+            }
+            c->clip_x0 = ocx0; c->clip_y0 = ocy0; c->clip_x1 = ocx1; c->clip_y1 = ocy1;
+        } else {
+            fill_round_rect_aa_a_px(c, px, py, pw, ph, pr, tint_col, tint_alpha);
+        }
         if (rim_alpha > 0 && pr > 0) {
             stroke_round_rect_aa_px(c, px, py, pw, ph, pr, sc_sz(s, 1), COL(255, 255, 255, 255), rim_alpha);
         }
         return;
     }
 
-    int ds = (int)(s * (blur_radius >= 3 ? 6.0f : 4.5f) + 0.5f);
+    int max_bw = (has_skip_rect && blur_radius <= 1) ? 36 : 72;
+    int max_bh = (has_skip_rect && blur_radius <= 1) ? 24 : 44;
+    int ds = (int)(s * (blur_radius >= 3 ? 6.0f : (has_skip_rect ? 7.0f : 5.0f)) + 0.5f);
     if (ds < 4) ds = 4;
-    while ((vw / ds) > 80 || (vh / ds) > 48) ds++;
-    int bw = vw / ds; if (bw < 6) bw = (vw < 6 ? vw : 6); if (bw > 80) bw = 80;
-    int bh = vh / ds; if (bh < 6) bh = (vh < 6 ? vh : 6); if (bh > 48) bh = 48;
+    while ((vw / ds) > max_bw || (vh / ds) > max_bh) ds++;
+    int bw = vw / ds; if (bw < 6) bw = (vw < 6 ? vw : 6); if (bw > max_bw) bw = max_bw;
+    int bh = vh / ds; if (bh < 6) bh = (vh < 6 ? vh : 6); if (bh > max_bh) bh = max_bh;
 
-    uint32_t buf_a[80 * 48], buf_b[80 * 48];
+    uint32_t buf_a[72 * 44], buf_b[72 * 44];
     for (int by = 0; by < bh; by++) {
         int sy0 = vy0 + (by * vh) / bh;
         int sy1 = vy0 + ((by + 1) * vh - 1) / bh;
@@ -1236,44 +1305,42 @@ void fill_frosted_round_rect(Canvas* c, int x, int y, int w, int h, int r,
             int sx1 = vx0 + ((bx + 1) * vw - 1) / bw;
             if (sx0 >= c->w) sx0 = c->w - 1;
             if (sx1 >= c->w) sx1 = c->w - 1;
-            uint32_t p0 = r0[sx0], p1 = r0[sx1], p2 = r1[sx0], p3 = r1[sx1];
-            uint32_t sr = (p0 & 0xFFu) + (p1 & 0xFFu) + (p2 & 0xFFu) + (p3 & 0xFFu);
-            uint32_t sg = ((p0 >> 8) & 0xFFu) + ((p1 >> 8) & 0xFFu) + ((p2 >> 8) & 0xFFu) + ((p3 >> 8) & 0xFFu);
-            uint32_t sb = ((p0 >> 16) & 0xFFu) + ((p1 >> 16) & 0xFFu) + ((p2 >> 16) & 0xFFu) + ((p3 >> 16) & 0xFFu);
-            buf_a[(size_t)by * bw + bx] = 0xFF000000u | ((sb >> 2) << 16) | ((sg >> 2) << 8) | (sr >> 2);
+            uint32_t p0 = r0[sx0], p3 = r1[sx1];
+            buf_a[(size_t)by * bw + bx] = ((p0 & p3) + (((p0 ^ p3) & 0xFEFEFEFEu) >> 1)) | 0xFF000000u;
         }
     }
 
+    static const uint32_t kRecip[8] = { 0u, 65536u, 32768u, 21846u, 16384u, 13108u, 10923u, 9363u };
     int rad = (blur_radius > 3) ? 3 : blur_radius;
-    int passes = 2;
+    int passes = (has_skip_rect && blur_radius == 1) ? 1 : 2;
     for (int p = 0; p < passes; p++) {
         for (int by = 0; by < bh; by++) {
             const uint32_t* sr = buf_a + (size_t)by * bw;
             uint32_t* dr = buf_b + (size_t)by * bw;
             for (int bx = 0; bx < bw; bx++) {
-                uint32_t rsum = 0, gsum = 0, bsum = 0, cnt = 0;
+                uint32_t rsum = 0, gsum = 0, bsum = 0;
                 int k0 = bx - rad; if (k0 < 0) k0 = 0;
                 int k1 = bx + rad; if (k1 >= bw) k1 = bw - 1;
                 for (int k = k0; k <= k1; k++) {
                     uint32_t c0 = sr[k];
                     rsum += c0 & 0xFFu; gsum += (c0 >> 8) & 0xFFu; bsum += (c0 >> 16) & 0xFFu;
-                    cnt++;
                 }
-                dr[bx] = 0xFF000000u | ((bsum / cnt) << 16) | ((gsum / cnt) << 8) | (rsum / cnt);
+                uint32_t rec = kRecip[k1 - k0 + 1];
+                dr[bx] = 0xFF000000u | (((bsum * rec) >> 16) << 16) | (((gsum * rec) >> 16) << 8) | ((rsum * rec) >> 16);
             }
         }
         for (int by = 0; by < bh; by++) {
             int k0 = by - rad; if (k0 < 0) k0 = 0;
             int k1 = by + rad; if (k1 >= bh) k1 = bh - 1;
+            uint32_t rec = kRecip[k1 - k0 + 1];
             uint32_t* dr = buf_a + (size_t)by * bw;
             for (int bx = 0; bx < bw; bx++) {
-                uint32_t rsum = 0, gsum = 0, bsum = 0, cnt = 0;
+                uint32_t rsum = 0, gsum = 0, bsum = 0;
                 for (int k = k0; k <= k1; k++) {
                     uint32_t c0 = buf_b[(size_t)k * bw + bx];
                     rsum += c0 & 0xFFu; gsum += (c0 >> 8) & 0xFFu; bsum += (c0 >> 16) & 0xFFu;
-                    cnt++;
                 }
-                dr[bx] = 0xFF000000u | ((bsum / cnt) << 16) | ((gsum / cnt) << 8) | (rsum / cnt);
+                dr[bx] = 0xFF000000u | (((bsum * rec) >> 16) << 16) | (((gsum * rec) >> 16) << 8) | ((rsum * rec) >> 16);
             }
         }
     }
@@ -1335,21 +1402,24 @@ void fill_frosted_round_rect(Canvas* c, int x, int y, int w, int h, int r,
             else if (j >= ph - pr) cy_dist = j - (ph - 1 - pr);
         }
 
+        int row_has_skip = (has_skip_rect && gy >= sky0 && gy < sky1);
+        int ks0 = 0, ks1 = 0;
+        if (row_has_skip) {
+            ks0 = skx0 - vx0; if (ks0 < 0) ks0 = 0; if (ks0 > vw) ks0 = vw;
+            ks1 = skx1 - vx0; if (ks1 < ks0) ks1 = ks0; if (ks1 > vw) ks1 = vw;
+            if (ks1 <= ks0) row_has_skip = 0;
+        }
+
         if (cy_dist == 0) {
-            for (int k = 0; k < vw; k++) {
-                int p0 = p_ix0[k], p1 = p_ix1[k];
-                uint32_t uwx = (uint32_t)p_wx[k], unwx = 256u - uwx;
-                uint32_t c00 = sr0[p0], c10 = sr0[p1], c01 = sr1[p0], c11 = sr1[p1];
-                uint32_t top_rb = (((c00 & 0x00FF00FFu) * unwx + (c10 & 0x00FF00FFu) * uwx + 0x00800080u) >> 8) & 0x00FF00FFu;
-                uint32_t bot_rb = (((c01 & 0x00FF00FFu) * unwx + (c11 & 0x00FF00FFu) * uwx + 0x00800080u) >> 8) & 0x00FF00FFu;
-                uint32_t out_rb = ((top_rb * unwy + bot_rb * uwy + 0x00800080u) >> 8) & 0x00FF00FFu;
-                uint32_t top_g  = ((((c00 >> 8) & 0xFFu) * unwx + ((c10 >> 8) & 0xFFu) * uwx + 128u) >> 8);
-                uint32_t bot_g  = ((((c01 >> 8) & 0xFFu) * unwx + ((c11 >> 8) & 0xFFu) * uwx + 128u) >> 8);
-                uint32_t out_g  = (top_g * unwy + bot_g * uwy + 128u) & 0x0000FF00u;
-                drow[vx0 + k] = 0xFF000000u | out_g | out_rb;
+            if (!row_has_skip) {
+                frost_fill_span(drow, vx0, 0, vw, sr0, sr1, p_ix0, p_ix1, p_wx, uwy, unwy);
+            } else {
+                if (ks0 > 0) frost_fill_span(drow, vx0, 0, ks0, sr0, sr1, p_ix0, p_ix1, p_wx, uwy, unwy);
+                if (ks1 < vw) frost_fill_span(drow, vx0, ks1, vw, sr0, sr1, p_ix0, p_ix1, p_wx, uwy, unwy);
             }
         } else {
             for (int k = 0; k < vw; k++) {
+                if (row_has_skip && k == ks0) { k = ks1 - 1; continue; }
                 int gx = vx0 + k;
                 int li = gx - px;
                 int cov = 255;
@@ -1379,6 +1449,11 @@ void fill_frosted_round_rect(Canvas* c, int x, int y, int w, int h, int r,
     if (rim_alpha > 0 && pr > 0) {
         stroke_round_rect_aa_px(c, px, py, pw, ph, pr, sc_sz(s, 1), COL(255, 255, 255, 255), rim_alpha);
     }
+}
+
+void fill_frosted_round_rect(Canvas* c, int x, int y, int w, int h, int r,
+                             uint32_t tint_col, uint8_t tint_alpha, int blur_radius, uint8_t rim_alpha) {
+    fill_frosted_round_rect_skip(c, x, y, w, h, r, 0, 0, 0, 0, tint_col, tint_alpha, blur_radius, rim_alpha);
 }
 void stroke_circle_aa(Canvas* c, int cx, int cy, int r, int thickness, uint32_t col, uint8_t alpha) {
     if (!c) return;
