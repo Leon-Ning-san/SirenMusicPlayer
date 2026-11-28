@@ -115,7 +115,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: masagrator/libtesla
-          ref: add38a6
+          ref: add38a67996eb3e5ae147fbb5f5d5ac14a44ad35
           path: overlay/libs/libtesla
       - name: Build Sirene NRO + sys-sirene + Tesla Overlay (Open-Source Homebrew)
         run: |
