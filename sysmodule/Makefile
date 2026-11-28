@@ -17,7 +17,7 @@ ARCH := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 
 CFLAGS := -g -O2 -fno-math-errno -Wall -ffunction-sections -fdata-sections $(ARCH) \
           -D__SWITCH__ -DSIRENE_SYSMODULE \
-          -I$(CURDIR)/source -I$(CURDIR)/../common -I$(CURDIR)/../src -I$(CURDIR)/../deps \
+          -I$(TOPDIR)/source -I$(TOPDIR)/../common -I$(TOPDIR)/../src -I$(TOPDIR)/../deps \
           -I$(DEVKITPRO)/libnx/include -I$(PORTLIBS)/include
 
 ASFLAGS := -g $(ARCH)

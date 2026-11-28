@@ -22,7 +22,8 @@ NO_ICON  := 1
 ARCH := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 
 CFLAGS   := -g -Wall -O2 -ffunction-sections -fdata-sections $(ARCH) -D__SWITCH__ \
-            $(INCLUDE) -I$(DEVKITPRO)/libnx/include -I$(PORTLIBS)/include
+            -I$(TOPDIR)/source -I$(TOPDIR)/../common -I$(TOPDIR)/libs/libtesla/include \
+            -I$(DEVKITPRO)/libnx/include -I$(PORTLIBS)/include
 CXXFLAGS := $(CFLAGS) -fno-exceptions -std=c++20
 ASFLAGS  := -g $(ARCH)
 LDFLAGS  =  -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,--gc-sections -Wl,-Map,$(notdir $*.map)
