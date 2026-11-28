@@ -26,6 +26,7 @@
   <p>
     <a href="#界面预览">界面预览</a> ·
     <a href="#核心特性">核心特性</a> ·
+    <a href="#后台听歌插件与游戏内浮层">后台听歌插件</a> ·
     <a href="#快速上手-nro">快速上手</a> ·
     <a href="#按键与触控操作">操作指南</a> ·
     <a href="#从源码构建-nro">源码构建</a> ·
@@ -78,6 +79,35 @@
   - 自动解析内嵌封面、ID3 / FLAC Vorbis 内嵌歌词以及同名外挂 `.lrc` 歌词，支持 UTF-8 / GBK 自动编码识别与双语合并高亮。
 - **完整本地曲库管理**
   - 自动扫描 SD 卡音乐目录（上限 8192 首），内置 **红心收藏**、**原生软键盘关键词搜索**、**列表循环 / 单曲循环 / 随机播放** 以及 **一键自检面板**。
+- **可选后台听歌插件（`sys-sirene`）+ Tesla 游戏内浮层（`.ovl`）**
+  - 安装轻量后台服务模块后，退出 `Sirène.nro` 可一键选择 **「后台继续听 [A]」**，回到桌面或游玩游戏时音乐不中断；再次打开 `Sirène.nro` 自动无缝接回同步歌词与进度。
+  - 配合 `SireneOverlay.ovl`（支持 Tesla / Ultrahand 浮层加载器），游戏中随时呼出切歌、暂停、调音量、切循环模式与选曲。
+
+---
+
+## 后台听歌插件与游戏内浮层
+
+想在**桌面或游戏过程中后台听歌**，只需下载 Releases 中的 **`Sirene-v1.2.10-Homebrew-Full.zip`**，直接解压合并到 SD 卡根目录即可（无需手动建目录）：
+
+```text
+sdmc:/
+├── atmosphere/
+│   └── contents/
+│       └── 4200000000051234/
+│           ├── exefs.nsp        # sys-sirene 极轻量后台音频模块（2 MiB 静态堆）
+│           ├── toolbox.json     # 支持在 Toolbox / Ultrahand 中一键开关
+│           └── flags/
+│               └── boot2.flag   # 开机自启标记（删掉即改为手动启停）
+└── switch/
+    ├── Sirene/
+    │   └── Sirene.nro           # Sirène 主播放器（自动探测并接力后台）
+    └── .overlays/
+        └── SireneOverlay.ovl    # Tesla / Ultrahand 游戏内快捷浮层
+```
+
+- **前后台无缝接力**：重启生效后，在 `Sirène.nro` 播放音乐时按 `B` 或点「退出」，选择 **`后台继续听 [A]`** 即可将当前曲目、精确播放进度、歌单与音量移交后台；下次再进 `Sirène.nro` 会自动接回继续显示双语歌词。
+- **游戏内控制**：呼出 Tesla / Ultrahand 浮层（默认 `L + ↓ + 右摇杆按下`）进入 **Sirène**，即可查看进度条、播放/暂停、上一曲/下一曲、`ZL/ZR` 调音量、切换循环模式、选曲或直接扫描 `sdmc:/music`。
+- **低内存设计**：`sys-sirene` 采用 2 MiB 静态堆与纯 `libnx` + `audout` 流式解码，空闲/暂停时自动停用音频通道，不占前端显存；未安装后台插件时 `Sirène.nro` 仍可完全独立运行。
 
 ---
 
@@ -124,8 +154,14 @@
 export DEVKITPRO=/opt/devkitpro
 export PATH="$DEVKITPRO/tools/bin:$DEVKITPRO/devkitA64/bin:$PATH"
 
+# 1. 主播放器 (.nro)
 make clean && make -j$(nproc)
-# 构建产物：PureMusic.nro（可按需重命名为 Sirene.nro）
+
+# 2. 后台音频模块 (sys-sirene -> sysmodule/sys-sirene.nsp)
+make -C sysmodule clean && make -C sysmodule -j$(nproc)
+
+# 3. 游戏内浮层 (需先将 libtesla 放入 overlay/libs/libtesla)
+make -C overlay clean && make -C overlay -j$(nproc)
 ```
 
 ---

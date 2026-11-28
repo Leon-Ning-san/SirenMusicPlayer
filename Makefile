@@ -11,8 +11,8 @@ include $(DEVKITPRO)/libnx/switch_rules
 
 TARGET := PureMusic
 BUILD := build
-SOURCES := src
-INCLUDES := src deps
+SOURCES := src common
+INCLUDES := src deps common
 
 APP_TITLE := Sirène
 APP_DESCRIPTION := Minimalist local audio player for UI & audio study

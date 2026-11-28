@@ -16,6 +16,9 @@
 #include "lrc.h"
 #include "util.h"
 #include "decode.h"
+#ifdef __SWITCH__
+#include "sirene_ipc.h"
+#endif
 
 extern const unsigned char font_ttf_start[];
 extern const unsigned char font_ttf_end[];
@@ -310,7 +313,8 @@ static Rect rc_pod_card, rc_mini_bar, rc_empty_rescan, rc_p_back, rc_btn_fav_p;
 static Rect rc_btn_vol, rc_btn_ori, rc_btn_search, rc_btn_theme, rc_btn_diag, rc_btn_exit;
 static Rect rc_vol_box, rc_vol_minus, rc_vol_plus, rc_vol_mute, rc_vol_close;
 static int  vol_sx0, vol_sx1, vol_sy;
-static Rect rc_exit_box, rc_exit_ok, rc_exit_cancel;
+static Rect rc_exit_box, rc_exit_ok, rc_exit_cancel, rc_exit_bg;
+static int  g_bg_available = 0;
 static Rect rc_diag_close, rc_diag_box;
 static Rect rc_sr_box, rc_sr_ok, rc_sr_clear, rc_sr_cancel;
 
@@ -1534,9 +1538,88 @@ static void handle_touch_vol_panel(TouchInfo* t) {
     }
 }
 
+static void bg_handoff_and_exit(void) {
+#ifdef __SWITCH__
+    if (g_bg_available && playing_idx >= 0 && playing_idx < ntracks) {
+        double pos = audio_position();
+        int was_paused = audio_paused();
+        audio_pause();
+
+        sirene_ipc_queue_clear();
+        int start = 0;
+        if (ntracks > SIRENE_BG_MAX_QUEUE) {
+            start = playing_idx - (SIRENE_BG_MAX_QUEUE / 2);
+            if (start < 0) start = 0;
+            if (start + SIRENE_BG_MAX_QUEUE > ntracks) start = ntracks - SIRENE_BG_MAX_QUEUE;
+        }
+        int end = start + SIRENE_BG_MAX_QUEUE;
+        if (end > ntracks) end = ntracks;
+
+        int32_t bg_idx = -1;
+        for (int i = start; i < end; i++) {
+            if (i == playing_idx) bg_idx = (int32_t)(i - start);
+            sirene_ipc_queue_add(tracks[i].path);
+        }
+
+        sirene_ipc_set_volume(audio_volume());
+        sirene_ipc_set_mode((uint32_t)play_mode);
+        if (bg_idx >= 0) {
+            sirene_ipc_queue_play_index(bg_idx, pos);
+        } else {
+            sirene_ipc_play_path(tracks[playing_idx].path, pos);
+        }
+        if (was_paused) {
+            sirene_ipc_set_paused(1);
+        }
+    }
+#endif
+    g_want_exit = 1;
+}
+
+static void bg_try_takeover_on_launch(void) {
+#ifdef __SWITCH__
+    if (sirene_ipc_connect() != 0) {
+        g_bg_available = 0;
+        return;
+    }
+    g_bg_available = 1;
+    SireneBgStatus st;
+    if (sirene_ipc_get_status(&st) != 0) return;
+    if ((st.state != SIR_STATE_PLAYING && st.state != SIR_STATE_PAUSED) || !st.path[0]) return;
+
+    int match = -1;
+    for (int i = 0; i < ntracks; i++) {
+        if (strcmp(tracks[i].path, st.path) == 0) { match = i; break; }
+    }
+    if (match < 0) return;
+
+    if (st.play_mode < MODE_COUNT) play_mode = (int)st.play_mode;
+    if (st.volume >= 0.0f && st.volume <= 1.0f) audio_set_volume(st.volume);
+
+    sirene_ipc_stop();
+    sel = match;
+    ensure_pos_visible(sel_pos());
+    load_track(match);
+    if (st.position_sec > 0.5) {
+        for (int tries = 0; tries < 80 && audio_status() != 2; tries++) {
+            plat_sleep_ms(10);
+        }
+        if (audio_status() == 2) audio_seek(st.position_sec);
+    }
+    if (st.state == SIR_STATE_PAUSED) {
+        audio_pause();
+    }
+    show_toast("已从后台接管播放");
+#endif
+}
+
 static void handle_touch_exit_confirm(TouchInfo* t) {
     if (!t->down) return;
     int x = t->x, y = t->y;
+    if (g_bg_available && playing_idx >= 0 && in_rc(x, y, rc_exit_bg)) {
+        bg_handoff_and_exit();
+        return;
+    }
     if (in_rc(x, y, rc_exit_ok)) {
         g_want_exit = 1;
         return;
@@ -3158,28 +3241,53 @@ static void draw_vol_panel(void) {
 
 static void draw_exit_confirm(void) {
     fill_rect_a(screen, 0, 0, SCR_W, SCR_H, COL(0, 0, 0, 255), 150);
-    int cw = portrait() ? 460 : 420;
-    int ch = 190;
+    int has_bg = (g_bg_available && playing_idx >= 0);
+    int cw = portrait() ? 480 : (has_bg ? 500 : 420);
+    int ch = has_bg ? 226 : 190;
     int cx = (SCR_W - cw) / 2;
     int cy = (SCR_H - ch) / 2;
     rc_exit_box = (Rect){ cx, cy, cw, ch };
+    rc_exit_bg  = (Rect){ 0, 0, 0, 0 };
     fill_round_rect_shadow(screen, cx, cy, cw, ch, 26, 58);
     fill_round_rect_aa(screen, cx, cy, cw, ch, 26, C_SURFACE);
     stroke_round_rect_aa(screen, cx, cy, cw, ch, 26, 1, C_WHEEL_RING, 160);
 
-    draw_text_centered(screen, font, 21, cx + 20, cx + cw - 20, cy + 32, C_TXT, "退出 Sirène 播放器？");
-    draw_text_centered(screen, font, 14, cx + 20, cx + cw - 20, cy + 68, C_TXT2,
-                       "触屏点击“确认退出”或按 A 键即可返回桌面");
+    draw_text_centered(screen, font, 21, cx + 20, cx + cw - 20, cy + 30, C_TXT, "退出 Sirène 播放器？");
+    if (has_bg) {
+        draw_text_centered(screen, font, 14, cx + 20, cx + cw - 20, cy + 66, C_TXT2,
+                           "已检测到 sys-sirene，可交给后台继续播放并可在游戏内用浮层控制");
 
-    int bw = (cw - 68) / 2, bh = 44, by = cy + ch - 68;
-    fill_round_rect_aa(screen, cx + 24, by, bw, bh, 22, C_SURF_SUB);
-    draw_text_centered(screen, font, 15.5f, cx + 24, cx + 24 + bw, by + 13, C_TXT2, "取消 [B]");
-    rc_exit_cancel = (Rect){ cx + 24, by, bw, bh };
+        int bh = 44;
+        int by1 = cy + 104;
+        int bw1 = cw - 48;
+        fill_round_rect_aa(screen, cx + 24, by1, bw1, bh, 22, C_ACCENT);
+        draw_text_centered(screen, font, 15.5f, cx + 24, cx + 24 + bw1, by1 + 13, C_ON_ACCENT, "后台继续听 [A]");
+        rc_exit_bg = (Rect){ cx + 24, by1, bw1, bh };
 
-    int ox = cx + 24 + bw + 20;
-    fill_round_rect_aa(screen, ox, by, bw, bh, 22, C_HEART);
-    draw_text_centered(screen, font, 15.5f, ox, ox + bw, by + 13, COL(255, 255, 255, 255), "确认退出 [A]");
-    rc_exit_ok = (Rect){ ox, by, bw, bh };
+        int bw = (cw - 68) / 2;
+        int by2 = by1 + bh + 14;
+        fill_round_rect_aa(screen, cx + 24, by2, bw, bh, 22, C_SURF_SUB);
+        draw_text_centered(screen, font, 15.0f, cx + 24, cx + 24 + bw, by2 + 13, C_TXT2, "取消 [B]");
+        rc_exit_cancel = (Rect){ cx + 24, by2, bw, bh };
+
+        int ox = cx + 24 + bw + 20;
+        fill_round_rect_aa(screen, ox, by2, bw, bh, 22, C_HEART);
+        draw_text_centered(screen, font, 15.0f, ox, ox + bw, by2 + 13, COL(255, 255, 255, 255), "停止退出 [X]");
+        rc_exit_ok = (Rect){ ox, by2, bw, bh };
+    } else {
+        draw_text_centered(screen, font, 14, cx + 20, cx + cw - 20, cy + 68, C_TXT2,
+                           "触屏点击“确认退出”或按 A 键即可返回桌面");
+
+        int bw = (cw - 68) / 2, bh = 44, by = cy + ch - 68;
+        fill_round_rect_aa(screen, cx + 24, by, bw, bh, 22, C_SURF_SUB);
+        draw_text_centered(screen, font, 15.5f, cx + 24, cx + 24 + bw, by + 13, C_TXT2, "取消 [B]");
+        rc_exit_cancel = (Rect){ cx + 24, by, bw, bh };
+
+        int ox = cx + 24 + bw + 20;
+        fill_round_rect_aa(screen, ox, by, bw, bh, 22, C_HEART);
+        draw_text_centered(screen, font, 15.5f, ox, ox + bw, by + 13, COL(255, 255, 255, 255), "确认退出 [A]");
+        rc_exit_ok = (Rect){ ox, by, bw, bh };
+    }
 }
 
 static void draw_diag(void) {
@@ -3214,6 +3322,13 @@ static void draw_diag(void) {
     if (lyr) snprintf(lyr_info, sizeof(lyr_info), "歌词状态：已解析 %d 行 (%s)", lyr->n, lyr->source);
     else snprintf(lyr_info, sizeof(lyr_info), "歌词状态：%s", lyrics_last_diag());
     draw_text_max(screen, font, 15.5f, cx + 32, yy + 40, C_TONAL_TXT, lyr_info, cw - 64);
+
+    if (!be_is_desktop()) {
+        draw_text_max(screen, font, 15.0f, cx + 32, yy + 70, C_TXT2,
+                      g_bg_available ? "后台播放插件 (sys-sirene)：已连接，可切后台听歌"
+                                     : "后台播放插件 (sys-sirene)：未检测到（安装后支持后台听歌）",
+                      cw - 64);
+    }
 
     draw_text_max(screen, font, 13.5f, cx + 32, cy + ch - 44, C_TXT3,
                   be_is_desktop()
@@ -3400,6 +3515,7 @@ int main(int argc, char** argv) {
     tracks = (Track*)calloc(MAX_TRACKS, sizeof(Track));
     scan_library(0);
     memset(&meta, 0, sizeof(meta));
+    bg_try_takeover_on_launch();
 
     const char* init_drop = be_poll_dropped_path();
     if (init_drop) handle_dropped_path(init_drop);
@@ -3471,7 +3587,12 @@ int main(int argc, char** argv) {
                 capture_fade(); show_diag = 0;
             }
         } else if (show_exit_confirm) {
-            if (down & BTN_A) g_want_exit = 1;
+            if (g_bg_available && playing_idx >= 0) {
+                if (down & BTN_A) bg_handoff_and_exit();
+                else if (down & BTN_X) g_want_exit = 1;
+            } else {
+                if (down & BTN_A) g_want_exit = 1;
+            }
             if (down & BTN_B) { capture_fade(); show_exit_confirm = 0; }
             handle_touch_exit_confirm(&touch_now);
         } else if (show_vol_panel) {
@@ -3628,6 +3749,9 @@ int main(int argc, char** argv) {
     }
 
     audio_exit();
+#ifdef __SWITCH__
+    sirene_ipc_disconnect();
+#endif
     be_exit();
     if (font) font_free(font);
     if (screen) canvas_free(screen);

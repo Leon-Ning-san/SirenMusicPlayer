@@ -5,6 +5,9 @@ on:
     branches: [ main ]
     paths:
       - 'src/**'
+      - 'common/**'
+      - 'sysmodule/**'
+      - 'overlay/**'
       - 'desktop_src/**'
       - 'desktop_deps/**'
       - 'Makefile'
@@ -109,17 +112,50 @@ jobs:
       image: devkitpro/devkita64:latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build Sirene Switch NRO (Open-Source Homebrew)
+      - uses: actions/checkout@v4
+        with:
+          repository: masagrator/libtesla
+          ref: add38a6
+          path: overlay/libs/libtesla
+      - name: Build Sirene NRO + sys-sirene + Tesla Overlay (Open-Source Homebrew)
         run: |
           source /etc/profile.d/devkit-env.sh || true
           export DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
           export PATH="$DEVKITPRO/tools/bin:$DEVKITPRO/devkitA64/bin:$PATH"
+
+          # 1. Main .nro player
           make clean && make -j$(nproc)
           mv PureMusic.nro Sirene-v1.2.10-Switch.nro
+
+          # 2. Background audio sysmodule (sys-sirene -> exefs.nsp)
+          make -C sysmodule clean && make -C sysmodule -j$(nproc)
+
+          # 3. Tesla in-game overlay (SireneOverlay.ovl)
+          make -C overlay clean && make -C overlay -j$(nproc)
+
+          # 4. Assemble SD-card-ready Homebrew bundle
+          rm -rf dist-homebrew
+          mkdir -p dist-homebrew/atmosphere/contents/4200000000051234/flags
+          mkdir -p dist-homebrew/switch/Sirene
+          mkdir -p dist-homebrew/switch/.overlays
+          cp sysmodule/sys-sirene.nsp dist-homebrew/atmosphere/contents/4200000000051234/exefs.nsp
+          cp sysmodule/toolbox.json dist-homebrew/atmosphere/contents/4200000000051234/toolbox.json
+          touch dist-homebrew/atmosphere/contents/4200000000051234/flags/boot2.flag
+          cp Sirene-v1.2.10-Switch.nro dist-homebrew/switch/Sirene/Sirene.nro
+          cp overlay/SireneOverlay.ovl dist-homebrew/switch/.overlays/SireneOverlay.ovl
+          cp README.md DISCLAIMER.md dist-homebrew/switch/Sirene/
+          if command -v zip >/dev/null 2>&1; then
+            (cd dist-homebrew && zip -r ../Sirene-v1.2.10-Homebrew-Full.zip .)
+          else
+            python3 -c "import os, zipfile; z=zipfile.ZipFile('Sirene-v1.2.10-Homebrew-Full.zip','w',zipfile.ZIP_DEFLATED); [z.write(os.path.join(r,f), os.path.relpath(os.path.join(r,f),'dist-homebrew')) for r,_,fs in os.walk('dist-homebrew') for f in fs]; z.close()"
+          fi
+          ls -lh Sirene-v1.2.10-Switch.nro sysmodule/sys-sirene.nsp overlay/SireneOverlay.ovl Sirene-v1.2.10-Homebrew-Full.zip
       - uses: actions/upload-artifact@v4
         with:
           name: switch-nro
-          path: Sirene-v1.2.10-Switch.nro
+          path: |
+            Sirene-v1.2.10-Switch.nro
+            Sirene-v1.2.10-Homebrew-Full.zip
 
   publish-to-release:
     needs: [ build-windows, build-linux, build-macos, build-switch ]
@@ -133,19 +169,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           NOTES=$(cat <<'EOF'
-          Sirène v1.2.10 跨平台现代 UI 重构与学习研究版（Windows / Linux / macOS / Switch Homebrew .nro）。
+          Sirène v1.2.10 开源掌机音乐播放器（Homebrew `.nro` + `sys-sirene` 后台播放插件 + Tesla 游戏内浮层 `.ovl` + 桌面伴生版）。
 
           ### v1.2.10 核心更新
-          - **Unicode 多语种排版与歌词解码强化**：延续并强化 Windows 多字体回退链、NFD 组合假名合并与双语歌词边界安全解码。
-          - **播放体验与稳定性维护优化**：优化播放状态判断、扩展凭证竞态保护以及界面交互细节。
-          - **Switch Homebrew `.nro` 独立构建**：保留完整的 `Sirene-v1.2.10-Switch.nro` 纯开源自制工具链构建产物。
+          - **新增后台听歌插件套件（`Sirene-v1.2.10-Homebrew-Full.zip`）**：
+            - **`sys-sirene` 极轻量后台音频模块**（TID `4200000000051234`，2 MiB 静态堆，纯 `libnx` + `audout` 流式解码，支持 FLAC / MP3 / WAV / OGG / AIFF）；
+            - **`Sirène.nro` 无缝前后台接力**：退出时一键「后台继续听」移交当前曲目、进度与歌单，重新打开主程序自动接管同步歌词；
+            - **`SireneOverlay.ovl` Tesla 浮层**：游戏中随时呼出切歌、播放/暂停、调音量、切换循环模式与浏览曲库。
+          - **桌面端伴生构建**：同步保留 Windows / Linux / macOS 三端 C++17 原生构建产物。
 
-          > **学习研究与免责声明（Switch 与桌面端通用）**：本项目为纯个人技术学习与开源研究作品（非商业用途），主仓库**不包含**任何第三方音乐平台私有域名/协议，也与任何硬件厂商、游戏机厂商或第三方公司无任何官方关联，不包含任何非授权系统修改或绕过机制；Switch `.nro` 仅基于 `libnx` / `SDL2` / `dr_libs` 等纯开源自制工具链构建，仅用于合法本地音频学习测试。一切下载、编译与运行风险均由使用者自行承担，与原作者无关（详见 `DISCLAIMER.md`）。
+          > **独立开源与合规声明**：本项目基于 `devkitA64` / `libnx` / `dr_libs` / `stb` 等公开开源工具链从零编写，不含任何官方闭源 SDK、密钥或系统绕过机制，与任何硬件/游戏机制造商无官方关联，不提供任何受版权保护音频资源。下载与运行风险均由使用者自行承担（详见 `DISCLAIMER.md`）。
           EOF
           )
           NOTES="$(printf '%s' "$NOTES" | sed 's/^          //')"
           if ! gh release view v1.2.10 --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            gh release create v1.2.10 --repo "${{ github.repository }}" --title "Sirène v1.2.10 (Cross-Platform Study Edition · Switch .nro)" --notes "$NOTES"
+            gh release create v1.2.10 --repo "${{ github.repository }}" --title "Sirène v1.2.10 (Homebrew .nro + Background Audio Plugin)" --notes "$NOTES"
           else
             gh release edit v1.2.10 --repo "${{ github.repository }}" --notes "$NOTES"
           fi
@@ -154,5 +192,6 @@ jobs:
             artifacts/linux-x86_64/Sirene-v1.2.10-Linux-x86_64.tar.gz \
             artifacts/macos-arm64/Sirene-v1.2.10-macOS-arm64.zip \
             artifacts/switch-nro/Sirene-v1.2.10-Switch.nro \
+            artifacts/switch-nro/Sirene-v1.2.10-Homebrew-Full.zip \
             --repo "${{ github.repository }}" \
             --clobber
